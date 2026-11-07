@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -100,16 +100,20 @@ impl Drop for Waiting<'_> {
     }
 }
 
+/// One side of a newline-delimited JSON-RPC pipe: requests may overlap, each
+/// waits for its own answer, and what the other side sends of its own comes
+/// out of the channel `start` returns.
 pub struct Peer {
-    who: &'static str,
+    who: Arc<str>,
     writer: Mutex<Box<dyn AsyncWrite + Send + Unpin>>,
     waiters: Waiters,
     next: AtomicI64,
+    closed: Arc<AtomicBool>,
 }
 
 impl Peer {
     pub fn start<R, W>(
-        who: &'static str,
+        who: impl Into<Arc<str>>,
         reader: R,
         writer: W,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<Incoming>)
@@ -117,20 +121,42 @@ impl Peer {
         R: AsyncRead + Send + Unpin + 'static,
         W: AsyncWrite + Send + Unpin + 'static,
     {
+        let who: Arc<str> = who.into();
         let waiters: Waiters = Arc::default();
+        let closed = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::unbounded_channel();
         let peer = Arc::new(Self {
-            who,
+            who: who.clone(),
             writer: Mutex::new(Box::new(writer)),
             waiters: waiters.clone(),
             next: AtomicI64::new(1),
+            closed: closed.clone(),
         });
-        tokio::spawn(read_loop(who, reader, waiters, tx));
+        tokio::spawn(read_loop(who, reader, waiters, closed, tx));
         (peer, rx)
     }
 
+    /// Whether the other side's output has ended; nothing more will answer.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    /// An id for [`Peer::request_as`], so the caller can name the request
+    /// later (to cancel it, say).
+    pub fn fresh_id(&self) -> i64 {
+        self.next.fetch_add(1, Ordering::Relaxed)
+    }
+
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        self.request_as(self.fresh_id(), method, params).await
+    }
+
+    pub async fn request_as(
+        &self,
+        id: i64,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcError> {
         let (tx, rx) = oneshot::channel();
         if let Ok(mut w) = self.waiters.lock() {
             w.insert(id, tx);
@@ -139,8 +165,12 @@ impl Peer {
             waiters: &self.waiters,
             id,
         };
+        if self.is_closed() {
+            return Err(RpcError::closed(&self.who));
+        }
         self.write(&envelope(Some(id), method, params)).await?;
-        rx.await.unwrap_or_else(|_| Err(RpcError::closed(self.who)))
+        rx.await
+            .unwrap_or_else(|_| Err(RpcError::closed(&self.who)))
     }
 
     pub async fn request_within(
@@ -254,9 +284,10 @@ where
 }
 
 async fn read_loop<R>(
-    who: &'static str,
+    who: Arc<str>,
     reader: R,
     waiters: Waiters,
+    closed: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<Incoming>,
 ) where
     R: AsyncRead + Send + Unpin + 'static,
@@ -290,9 +321,10 @@ async fn read_loop<R>(
         };
         dispatch(v, &waiters, &tx);
     }
+    closed.store(true, Ordering::SeqCst);
     if let Ok(mut w) = waiters.lock() {
         for (_, waiter) in w.drain() {
-            let _ = waiter.send(Err(RpcError::closed(who)));
+            let _ = waiter.send(Err(RpcError::closed(&who)));
         }
     }
 }
@@ -387,6 +419,53 @@ mod tests {
         assert_eq!(err.code, RpcError::CLOSED);
         assert!(err.message.contains("Test"), "names the program: {err}");
         assert!(peer.waiters.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn after_the_peer_closes_a_new_request_fails_at_once() {
+        let (client_io, server_io) = tokio::io::duplex(1024);
+        let (cr, cw) = tokio::io::split(client_io);
+        let (peer, mut incoming) = Peer::start(String::from("conn"), cr, cw);
+        drop(server_io);
+        assert!(
+            incoming.recv().await.is_none(),
+            "the channel ends with the output"
+        );
+        assert!(peer.is_closed());
+        let err = tokio::time::timeout(Duration::from_secs(2), peer.request("x", json!({})))
+            .await
+            .expect("no hang")
+            .unwrap_err();
+        assert_eq!(err.code, RpcError::CLOSED);
+        assert!(err.message.contains("conn"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn overlapping_requests_each_get_their_own_answer() {
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let (cr, cw) = tokio::io::split(client_io);
+        let (peer, _incoming) = Peer::start("Test", cr, cw);
+        let (sr, mut sw) = tokio::io::split(server_io);
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(sr).lines();
+            let a: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let b: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            for r in [&b, &a] {
+                let answer = json!({"jsonrpc": "2.0", "id": r["id"], "result": r["method"]});
+                sw.write_all(format!("{answer}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        let id = peer.fresh_id();
+        let (a, b) = tokio::join!(
+            peer.request_as(id, "first", json!({})),
+            peer.request("second", json!({}))
+        );
+        assert_eq!(a.unwrap(), "first");
+        assert_eq!(b.unwrap(), "second");
     }
 
     #[tokio::test]

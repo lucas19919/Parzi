@@ -102,10 +102,6 @@ export async function handleLinkClick(e: MouseEvent, folder = "", noteDir: strin
     toast(link.reason, true);
     return true;
   }
-  if (link.kind === "tab") {
-    document.dispatchEvent(new CustomEvent<string>("parzi:open-page", { detail: link.url }));
-    return true;
-  }
   document.dispatchEvent(new CustomEvent<string>("parzi:open-page", { detail: link.url }));
   return true;
 }

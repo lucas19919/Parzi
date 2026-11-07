@@ -4,6 +4,7 @@ import {
   addQuote,
   deriveItems,
   groupItems,
+  itemNote,
   itemState,
   linkedByItem,
   MAX_QUOTES,
@@ -209,4 +210,37 @@ test("the composer quotes an item once, and at most four", () => {
   for (const id of ["b", "c", "d"]) list = addQuote(list, { project: "parzi", id, title: id });
   assert.equal(list.length, MAX_QUOTES);
   assert.equal(addQuote(list, { project: "parzi", id: "e", title: "E" }), list);
+});
+
+test("each item says in one line what it waits on, who is on it, or where it stands", () => {
+  const p = plan([
+    item("a", { state: "active" }),
+    item("b", { state: "active" }),
+    item("c", { state: "active", branch: "plan/c" }),
+    item("d", { needs: ["a"] }),
+    item("e", { state: "active" }),
+    item("f"),
+  ]);
+  const threads = [
+    session("sa", { plan_item: "a", title: "Session names", status: "active" }),
+    session("sb", { plan_item: "b", title: "Plan panel" }),
+    session("se", { plan_item: "e", title: "Quote chips" }),
+  ];
+  const [a, b, c, d, e, f] = derive(p, {
+    threads,
+    running: new Set(["sa"]),
+    waiting: new Map([["sb", "Waiting for your approval"]]),
+    prs: [pr(42, "plan/c")],
+  });
+  assert.equal(itemNote(a), "Session names is on it");
+  assert.equal(itemNote(b), "Waiting for your approval");
+  assert.equal(itemNote(c), "In review, PR 42");
+  assert.equal(itemNote(d), "After A");
+  assert.equal(itemNote(e), "Started in Quote chips");
+  assert.equal(itemNote(f), "");
+  const [same] = derive(plan([item("g", { title: "Quote chips", state: "active" })]), {
+    threads: [session("sg", { plan_item: "g", title: "Quote chips", status: "active" })],
+    running: new Set(["sg"]),
+  });
+  assert.equal(itemNote(same), "Working", "a session named after its item adds nothing");
 });

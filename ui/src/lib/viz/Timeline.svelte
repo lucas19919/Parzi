@@ -7,8 +7,8 @@
 </script>
 
 <ol class="timeline" aria-label={label || undefined}>
-  {#each items as it}
-    <li>
+  {#each items as it, i}
+    <li class="rise" style:--i={i}>
       <span class="rail">
         {#if it.status}
           <span class="dot {it.tone}" role="img" aria-label={it.status} />

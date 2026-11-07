@@ -377,6 +377,17 @@ impl Orchestrator {
         if super::headless() {
             allowed.retain(|t| !t.starts_with("browser.") && !t.starts_with("desk."));
         }
+        // Every enabled connector; each tool's own choice and the session's
+        // approval mode still decide whether a call runs.
+        let mut connectors: Vec<String> = cfg
+            .mcp
+            .servers
+            .iter()
+            .filter(|(_, s)| s.enabled)
+            .map(|(name, _)| crate::tools::connector_entry(name))
+            .collect();
+        connectors.sort();
+        allowed.extend(connectors);
         (mode, allowed)
     }
 
@@ -523,6 +534,9 @@ impl Orchestrator {
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
         let mut instructions = system_parts(&cwd);
+        if let Some(note) = p.mcp.status_note() {
+            instructions.push(note);
+        }
         if let Ok(dir) = parzi_core::paths::scratch_dir(&q.session_id) {
             if std::path::Path::new(&cwd) != dir.as_path() && std::fs::create_dir_all(&dir).is_ok()
             {
@@ -553,7 +567,7 @@ impl Orchestrator {
                 display_name(&provider_id)
             )));
         }
-        let host = Arc::new(ToolHost::new(ToolHostParts {
+        let parts = ToolHostParts {
             session_id: q.session_id.clone(),
             mode,
             edits_auto,
@@ -571,7 +585,8 @@ impl Orchestrator {
             harness: Some(bridge),
             sink: sink.clone(),
             cancel: cancel.clone(),
-        }));
+        };
+        let host = Arc::new(ToolHost::new(parts).calling_as(&provider_id));
         let run = EngineRun::new(EngineRunParts {
             session_id: q.session_id.clone(),
             provider_id,
@@ -737,6 +752,44 @@ mod tests {
         assert!(
             allowed.iter().all(|a| !a.starts_with("lane.")),
             "no lanes left"
+        );
+    }
+
+    #[test]
+    fn enabled_connectors_join_the_session_and_off_ones_stay_out() {
+        let mut cfg = ParziConfig::default();
+        cfg.mcp.servers.insert(
+            "shell".into(),
+            parzi_core::config::McpServerCfg {
+                command: "x".into(),
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        cfg.mcp.servers.insert(
+            "linear".into(),
+            parzi_core::config::McpServerCfg {
+                url: "https://mcp.linear.app/mcp".into(),
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        cfg.lanes.no_shell = true;
+        let (_, allowed) = Orchestrator::tool_policy(&cfg);
+        let tools = ToolExecutor {
+            cwd: String::new(),
+            mcp: Arc::new(crate::mcp::McpManager::new(cfg.mcp.servers.clone(), 60)),
+            allowed,
+        };
+        assert!(
+            tools.connector_allowed("diagonaldiagrams"),
+            "the default one"
+        );
+        assert!(tools.connector_allowed("shell"));
+        assert!(!tools.connector_allowed("linear"), "switched off");
+        assert!(
+            !tools.is_allowed("shell.exec"),
+            "a connector named shell does not bring the shell back"
         );
     }
 

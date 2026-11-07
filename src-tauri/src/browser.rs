@@ -58,7 +58,6 @@ struct Fit {
     width: f64,
     height: f64,
     scale: f64,
-    focus: bool,
 }
 
 enum Work {
@@ -323,6 +322,13 @@ fn hide_pages(app: &AppHandle, keep: &str) {
     }
 }
 
+/// Hides every page. None of them counts as shown any more, so all of them
+/// can be trimmed and put to sleep while hidden.
+fn hide_all_pages(app: &AppHandle) {
+    locked(&SHOWN).clear();
+    hide_pages(app, "");
+}
+
 fn rest_pages(app: &AppHandle) {
     let shown = locked(&SHOWN).clone();
     let awake: Vec<String> = locked(&TABS)
@@ -419,7 +425,6 @@ pub fn browser_show(
     height: f64,
     url: &str,
     owner: Option<String>,
-    focus: Option<bool>,
 ) -> Result<(), String> {
     let label = page_label(&tab)?;
     let gen = GEN.fetch_add(1, Ordering::Relaxed) + 1;
@@ -428,11 +433,11 @@ pub fn browser_show(
         return Ok(());
     };
     let Some((x, y, width, height)) = page_bounds(&window, x, y, width, height) else {
-        hide_pages(&app, "");
+        hide_all_pages(&app);
         return Ok(());
     };
     if app.get_webview(&label).is_none() {
-        let url = http_page(url).inspect_err(|_| hide_pages(&app, ""))?;
+        let url = http_page(url).inspect_err(|_| hide_all_pages(&app))?;
         let agent = owner.is_some_and(|o| !o.is_empty());
         locked(&TABS)
             .entry(label.clone())
@@ -447,7 +452,6 @@ pub fn browser_show(
         width,
         height,
         scale: window.scale_factor().unwrap_or(1.0),
-        focus: focus.unwrap_or(false),
     };
     work(Work::Show(app, job));
     Ok(())
@@ -512,7 +516,6 @@ fn open_background(app: &AppHandle, label: String, evict: bool) {
         width: f64::from(inner.width) / scale,
         height: f64::from(inner.height) / scale,
         scale,
-        focus: false,
     };
     let Some(wv) = open_page(app, &window, &job) else {
         return;
@@ -565,13 +568,7 @@ fn mount_page(app: &AppHandle, job: &Fit) -> bool {
         crate::dwm::wake_page(&wv);
     }
     evict_lru(app, &[&job.label]);
-    let mut shown = locked(&SHOWN);
-    if *shown != job.label {
-        shown.clone_from(&job.label);
-        if job.focus {
-            let _ = wv.set_focus();
-        }
-    }
+    locked(&SHOWN).clone_from(&job.label);
     true
 }
 
@@ -1037,14 +1034,9 @@ pub async fn browser_external(id: String, open: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn browser_permission(
-    app: AppHandle,
-    id: String,
-    allow: bool,
-    remember: bool,
-) -> Result<(), String> {
+pub async fn browser_permission(app: AppHandle, id: String, allow: bool) -> Result<(), String> {
     let asked = locked(&ASKING).remove(&id);
-    if let (true, Some((origin, kind))) = (remember, asked) {
+    if let Some((origin, kind)) = asked {
         crate::siteprefs::remember(origin, kind, allow).await?;
     }
     #[cfg(windows)]
@@ -1073,7 +1065,6 @@ pub fn apply_devtools(app: &AppHandle, on: bool) {
 pub fn warm_up() {
     std::thread::spawn(|| {
         let _ = crate::siteprefs::get();
-        let _ = crate::downloads::browser_downloads();
     });
 }
 
@@ -1175,8 +1166,7 @@ pub async fn browser_snapshot(app: AppHandle, tab: String) -> Result<String, Str
 #[tauri::command]
 pub fn browser_hide(app: AppHandle) {
     GEN.fetch_add(1, Ordering::Relaxed);
-    locked(&SHOWN).clear();
-    hide_pages(&app, "");
+    hide_all_pages(&app);
 }
 
 #[tauri::command]

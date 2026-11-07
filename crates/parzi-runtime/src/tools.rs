@@ -40,11 +40,19 @@ pub struct ToolCallInfo {
 pub enum Approval {
     Allow,
     Deny,
+    /// Nobody answered before the card's wait ran out.
+    Expired,
 }
 
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
     async fn approve(&self, call: &ToolCallInfo) -> Approval;
+
+    /// Whether a person sees the cards. One that refuses unseen says so, so
+    /// its refusals never read as the person's own.
+    fn asks_a_person(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +86,10 @@ impl Approver for DenyApprover {
     async fn approve(&self, _call: &ToolCallInfo) -> Approval {
         Approval::Deny
     }
+
+    fn asks_a_person(&self) -> bool {
+        false
+    }
 }
 
 pub struct ToolExecutor {
@@ -98,6 +110,19 @@ impl ToolExecutor {
             return None;
         }
         let (server, tool) = name.split_once('.')?;
+        self.connector_mode(server, tool)
+    }
+
+    /// Whether this session may use the connector `server` at all.
+    pub fn connector_allowed(&self, server: &str) -> bool {
+        self.allowed
+            .iter()
+            .any(|p| p == "*" || p.strip_prefix(CONNECTOR_ENTRY) == Some(server))
+    }
+
+    /// The person's choice for one connector tool (Settings › Connections);
+    /// `None` leaves it to the session's approval mode.
+    pub(crate) fn connector_mode(&self, server: &str, tool: &str) -> Option<ApprovalMode> {
         match self.mcp.tool_mode(server, tool).as_deref() {
             Some("auto") => Some(ApprovalMode::Auto),
             Some("deny") => Some(ApprovalMode::Deny),
@@ -113,18 +138,18 @@ impl ToolExecutor {
     }
 
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
-        if !self.is_allowed(name) {
-            return (
+        let off = || {
+            (
                 false,
-                format!("tool `{name}` is not allowed here (Settings)"),
-            );
+                format!("`{name}` is not enabled for agents in Settings; do it another way, or ask the person to turn it on"),
+            )
+        };
+        if !self.is_allowed(name) {
+            return off();
         }
         if let Some((server, tool)) = name.split_once('.') {
             if is_vendor_category(name) {
-                return (
-                    false,
-                    format!("tool `{name}` is not allowed here (Settings)"),
-                );
+                return off();
             }
             if is_ui_tool(name)
                 || is_brain_tool(name)
@@ -136,13 +161,13 @@ impl ToolExecutor {
             if !self.mcp.is_tool_exposed(server, tool) {
                 return (
                     false,
-                    format!("tool `{name}` is disabled for this connector"),
+                    format!("`{tool}` is turned off for the {server} connector in Settings; ask the person to turn it on"),
                 );
             }
             if self.mcp.tool_mode(server, tool).as_deref() == Some("deny") {
                 return (
                     false,
-                    format!("tool `{name}` is blocked by connector policy"),
+                    format!("`{tool}` is set to Deny for the {server} connector in Settings; ask the person to allow it there"),
                 );
             }
             return self.mcp.call_tool(server, tool, args.clone()).await;
@@ -151,13 +176,25 @@ impl ToolExecutor {
     }
 }
 
+/// An allowlist entry for a whole connector. It has its own prefix, so a
+/// connector called `shell` or `github` never lets Parzi's tools of that
+/// name through.
+pub const CONNECTOR_ENTRY: &str = "connector:";
+
+#[must_use]
+pub fn connector_entry(server: &str) -> String {
+    format!("{CONNECTOR_ENTRY}{server}")
+}
+
 pub(crate) fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
 }
 
 pub(crate) fn category(tool: &str) -> Option<&'static str> {
     match tool {
-        "Bash" | "BashOutput" | "KillShell" | "shell" | "execute" => Some("shell.exec"),
+        "Bash" | "BashOutput" | "KillShell" | "PowerShell" | "Monitor" | "shell" | "execute" => {
+            Some("shell.exec")
+        }
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "edit" | "delete" | "move" => {
             Some("fs.write")
         }
@@ -232,16 +269,83 @@ pub fn shell_command(tool: &str, args: &serde_json::Value) -> Option<String> {
     if !matches!(tool, "shell.exec" | "shell.start") && category(tool) != Some("shell.exec") {
         return None;
     }
-    let cmd = match args.get("command").or_else(|| args.get("cmd")) {
-        Some(serde_json::Value::Array(parts)) => parts
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .collect::<Vec<_>>()
-            .join(" "),
-        Some(v) => v.as_str().unwrap_or_default().to_string(),
-        None => String::new(),
+    command_arg(args)
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+}
+
+/// The command a shell call runs: `cmd`, or `command` as Bash and most agents
+/// name it, as one string or a list of words joined with spaces.
+#[must_use]
+pub fn command_arg(args: &serde_json::Value) -> Option<String> {
+    let words = |v: &serde_json::Value| match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
     };
-    Some(cmd.trim().to_string()).filter(|c| !c.is_empty())
+    ["cmd", "command"]
+        .iter()
+        .filter_map(|k| args.get(*k).and_then(words))
+        .find(|c| !c.trim().is_empty())
+}
+
+/// A count or a duration however an agent sends it: 120000, 120000.0 or
+/// "120000". A fraction is dropped; a negative number or a word is no count.
+#[must_use]
+pub fn lenient_u64(v: &serde_json::Value) -> Option<u64> {
+    // Finite and not negative, so the cast only saturates past u64::MAX.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let whole = |f: f64| (f.is_finite() && f >= 0.0).then(|| f.trunc() as u64);
+    match v {
+        serde_json::Value::Number(n) => n.as_u64().or_else(|| n.as_f64().and_then(whole)),
+        serde_json::Value::String(s) => {
+            let s = s.trim();
+            s.parse::<u64>()
+                .ok()
+                .or_else(|| s.parse::<f64>().ok().and_then(whole))
+        }
+        _ => None,
+    }
+}
+
+/// A switch however an agent sends it: true, "true", "yes", "on" or 1, and
+/// their opposites. Anything else is no answer, so the tool's default holds.
+#[must_use]
+pub fn lenient_bool(v: &serde_json::Value) -> Option<bool> {
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::Number(n) if n.as_f64().is_some_and(|f| f.fract() == 0.0) => {
+            match lenient_u64(v) {
+                Some(1) => Some(true),
+                Some(0) => Some(false),
+                _ => None,
+            }
+        }
+        serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Some(true),
+            "false" | "no" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `args[key]` read with [`lenient_u64`].
+#[must_use]
+pub fn int_arg(args: &serde_json::Value, key: &str) -> Option<u64> {
+    args.get(key).and_then(lenient_u64)
+}
+
+/// `args[key]` read with [`lenient_bool`].
+#[must_use]
+pub fn bool_arg(args: &serde_json::Value, key: &str) -> Option<bool> {
+    args.get(key).and_then(lenient_bool)
 }
 
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
@@ -279,14 +383,13 @@ fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ui.show_artifact".into(),
-            description: "A versioned artifact card with copy and save. For code over ~15 lines, files, docs, data, diffs, and svg diagrams. Contract: FIRST say in chat what it is in one or two sentences, THEN one call with the complete content. Never paste the content into chat too. An incomplete call fails and the person sees an error card. Reuse an id for a new version. html is a sandboxed page (inline everything, no network) and only for a page that is not a Parzi component. Showing or redesigning Parzi UI uses kind preview, never html or json: the real component renders with the app's tokens. content is a JSON string {\"component\":\"omnibar\",\"variant\":1}. Variant 1 is the agent composer, 2 is web. Optional tokens restyle that render: bg, text, accent, panel as #hex, radius and space as Npx. Optional props input, permission, folder, branch, model, hero set what the live component shows. Example content: {\"component\":\"omnibar\",\"variant\":1,\"tokens\":{\"radius\":\"16px\",\"panel\":\"#ffffff\"},\"input\":\"Ask anything\"}. Kinds: code|markdown|html|svg|json|csv|diff|text|preview|image. image content is a picture's full path. The artifact is the delivery: never send the person to a tab or window.".into(),
+            description: "A versioned card with copy and save, for what the person keeps: code longer than a screen, a diff, a document, or a picture already on disk. FIRST say in one or two sentences what it is, THEN one call with the complete content; never paste it into chat too. Reuse an id for a new version. Kinds: code (set language), diff, markdown (a document), json, csv, text, image (content is the picture's full path), preview. Not for charts (a viz block in your reply), diagrams (the diagonaldiagrams connector), or tables of numbers (markdown); hand built html and svg are refused. preview shows a real Parzi component, for showing or redesigning Parzi itself: content is a JSON string such as {\"component\":\"omnibar\",\"variant\":1} (1 is the agent composer, 2 is web), with optional tokens (bg, text, accent, panel as #hex; radius and space as Npx) and props (input, permission, folder, branch, model, hero). Never send the person to a tab or window to see it.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "artifact": {"type": "number", "const": 1},
                     "id": {"type": "string", "description": "slug [a-z0-9-], reused across versions"},
                     "title": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["code","markdown","html","svg","json","csv","diff","text","preview","image"]},
+                    "kind": {"type": "string", "enum": ["code","markdown","json","csv","diff","text","preview","image"]},
                     "language": {"type": "string"},
                     "content": {"type": "string"},
                 },
@@ -295,13 +398,12 @@ fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "todo.write".into(),
-            description: "This session's checklist, shown live under your replies: for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed. It is this session's own list; a project's long-lived plan is plan.write.".into(),
+            description: "This session's checklist, shown live under your replies: for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed; an empty list clears it. It is this session's own list; a project's long-lived plan is plan.write.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "items": {
                         "type": "array",
-                        "minItems": 1,
                         "maxItems": 20,
                         "items": {
                             "type": "object",
@@ -544,6 +646,72 @@ fn desk_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "app.actions".into(),
+            description: "What you can do in Parzi's own window right now, as named actions with their arguments: tabs, sessions, the composer (model, effort, permission), the sidebar, the file card, settings, the theme and more. query narrows the list. Run one with app_do. For anything not listed, use app_screen and app_click.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            }),
+        },
+        ToolDef {
+            name: "app.do".into(),
+            description: "Run one of Parzi's named actions (see app_actions) with its arguments, the same way the person's click would. Returns what it did.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "an id from app_actions, such as tabs.new"},
+                    "args": {"type": "object"},
+                },
+                "required": ["action"],
+            }),
+        },
+        ToolDef {
+            name: "app.screen".into(),
+            description: "Everything the person can press or fill in Parzi's window right now: buttons, tabs, switches, menu items, fields and their values, each with a ref and the card or page it sits in. Use the ref with app_click or app_type. Open a page first (app_do settings.open) to see its controls.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "only items whose label or place contains this"}},
+            }),
+        },
+        ToolDef {
+            name: "app.click".into(),
+            description: "Click a control in Parzi's window by its ref from app_screen. A control that deletes, removes, resets or signs out waits for the person's yes. Look again with app_screen after a click that opens a menu or a page.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"ref": {"type": "integer"}},
+                "required": ["ref"],
+            }),
+        },
+        ToolDef {
+            name: "app.type".into(),
+            description: "Fill a field in Parzi's window by its ref from app_screen, replacing what is there. enter: true presses Enter after.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "integer"},
+                    "text": {"type": "string"},
+                    "enter": {"type": "boolean"},
+                },
+                "required": ["ref", "text"],
+            }),
+        },
+        ToolDef {
+            name: "desk.theme".into(),
+            description: "Change how Parzi looks, right away: a theme by name (pack, such as graphite, light or dark), single colours as #hex (accent, background, text, panel; panel \"auto\" mixes it from text and background), how the Home wallpaper shows (wallpaper: band or full) and the cards over it (cards: clear, glass or solid). Leave out what should stay. With nothing given it lists the themes and the current look. Do this yourself when the person asks; do not send them to Settings.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pack": {"type": "string", "description": "theme name"},
+                    "accent": {"type": "string"},
+                    "background": {"type": "string"},
+                    "text": {"type": "string"},
+                    "panel": {"type": "string"},
+                    "wallpaper": {"type": "string", "enum": ["band", "full"]},
+                    "cards": {"type": "string", "enum": ["clear", "glass", "solid"]},
+                },
+            }),
+        },
+        ToolDef {
             name: "desk.notify".into(),
             description: "Tell the human something with a notification in the Parzi window; when the window is in the background its taskbar button flashes too. Keep it to one short line.".into(),
             schema: serde_json::json!({
@@ -568,7 +736,15 @@ fn desk_defs() -> Vec<ToolDef> {
 pub(crate) fn is_desk_tool(name: &str) -> bool {
     matches!(
         name,
-        "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot"
+        "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot" | "desk.theme"
+    ) || is_app_tool(name)
+}
+
+/// Agents using Parzi's own window: its named actions and its controls.
+pub(crate) fn is_app_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type"
     )
 }
 
@@ -588,6 +764,12 @@ pub const DESK_TOOLS: &[&str] = &[
     "desk.open",
     "desk.notify",
     "desk.screenshot",
+    "desk.theme",
+    "app.actions",
+    "app.do",
+    "app.screen",
+    "app.click",
+    "app.type",
 ];
 
 #[must_use]
@@ -801,7 +983,7 @@ fn plan_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "plan.write".into(),
-            description: "Change this project's plan. Every field is optional and what you leave out stays: title, goal, phases (ordered names such as Now and Next), and items, merged by id: [{id, title?, detail?, phase?, needs?, state?, branch?, note?}]. An id is 1 to 24 of a-z, 0-9 and -; a new item needs a title. needs names other items of the plan, never in a circle. state is planned, active, done or dropped; marking an item active links this session to it. Limits: 40 items, title 80 chars, detail and note 400. remove: true on an item takes out a mistake (finished or abandoned work is done or dropped). replace: true starts a new plan and keeps the old one in the brain as history.".into(),
+            description: "Change this project's plan. Every field is optional and what you leave out stays: title, goal, phases (ordered names such as Now and Next), and items, merged by id: [{id, title?, detail?, phase?, needs?, state?, branch?, note?}]. An id is 1 to 24 of a-z, 0-9 and -; a new item needs a title. needs names other items of the plan, never in a circle. state is planned, active, done or dropped; marking an item active links this session to it. Limits: 40 items, title 80 chars, detail and note 400. remove: true on an item takes out a mistake (finished or abandoned work is done or dropped). replace: true starts a new plan and keeps the old one in the brain as history. The plan is the person's: a write that adds, drops or rewords work is shown to them and saved only when they approve it, and their answer is the result (a change they ask for means nothing was saved yet). Progress (state, note, branch) is saved at once.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1093,9 +1275,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Opening {}",
             one_line(&str_arg("url").unwrap_or_else(|| "a page".into()), 60)
         ),
-        "browser.tabs" if args.get("all").and_then(serde_json::Value::as_bool) == Some(true) => {
-            "Listing every open tab".into()
-        }
+        "browser.tabs" if bool_arg(args, "all") == Some(true) => "Listing every open tab".into(),
         "browser.tabs" => "Listing tabs".into(),
         "browser.read" if str_arg("tab").as_deref() == Some("active") => {
             "Reading the page you have open".into()
@@ -1129,6 +1309,28 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Opening {}",
             str_arg("what").unwrap_or_else(|| "a view".into())
         ),
+        "app.actions" => "Looking at what Parzi can do".into(),
+        "app.screen" => "Looking at Parzi's window".into(),
+        "app.do" => match str_arg("confirm") {
+            Some(what) => format!("{what} in Parzi"),
+            None => format!("Doing {} in Parzi", str_arg("action").unwrap_or_default()),
+        },
+        "app.click" => match str_arg("confirm") {
+            Some(what) => format!("{what} in Parzi"),
+            None => "Clicking in Parzi".into(),
+        },
+        "app.type" => "Typing in Parzi".into(),
+        "desk.theme" => match str_arg("pack") {
+            Some(p) => format!("Changing the theme to {p}"),
+            None if args.as_object().is_some_and(|o| {
+                o.values()
+                    .any(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
+            }) =>
+            {
+                "Changing the look".into()
+            }
+            None => "Reading the theme".into(),
+        },
         "desk.notify" => format!(
             "Notifying: {}",
             one_line(&str_arg("text").unwrap_or_default(), 60)
@@ -1145,7 +1347,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "models.list" => "Listing models".into(),
         "shell.start" => format!(
             "Starting {}",
-            one_line(&str_arg("cmd").unwrap_or_else(|| "a command".into()), 60)
+            one_line(&command_arg(args).unwrap_or_else(|| "a command".into()), 60)
         ),
         "shell.logs" => "Reading command output".into(),
         "shell.kill" => "Stopping a command".into(),
@@ -1243,14 +1445,67 @@ fn short_tool_name(name: &str) -> &str {
 
 const NAMESPACES: &[&str] = &[
     "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "models",
-    "ask", "todo", "github",
+    "ask", "todo", "github", "app",
 ];
+
+/// The MCP server agents reach Parzi's own tools on.
+pub const PARZI_SERVER: &str = "parzi";
+
+/// A name Parzi would serve, such as `shell.run`, whether or not a tool has it.
+pub(crate) fn in_parzi_namespace(name: &str) -> bool {
+    name.split_once('.')
+        .is_some_and(|(ns, _)| NAMESPACES.contains(&ns))
+}
 
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
 }
 
+/// How the agent on the other end names Parzi's tools, so a message names one
+/// it can call as written.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CallNames {
+    prefix: Option<String>,
+}
+
+impl CallNames {
+    /// Claude Code calls them `mcp__parzi__<tool>`. Other agents name them in
+    /// ways Parzi never sees, so for them a message names the MCP tool and its server.
+    #[must_use]
+    pub fn for_agent(provider: &str) -> Self {
+        let prefix = match parzi_providers::canonical_id(provider) {
+            Some("claude") => Some(format!("mcp__{PARZI_SERVER}__")),
+            _ => None,
+        };
+        Self { prefix }
+    }
+
+    /// `shell.exec` reads `mcp__parzi__shell_exec` to Claude and
+    /// `shell_exec` on the `parzi` server to everyone else.
+    #[must_use]
+    pub fn tool(&self, name: &str) -> String {
+        match &self.prefix {
+            Some(_) => self.short(name),
+            None => format!("{} on the `{PARZI_SERVER}` server", self.short(name)),
+        }
+    }
+
+    /// The name alone, for a list after the server was named once.
+    #[must_use]
+    pub fn short(&self, name: &str) -> String {
+        let mcp = to_mcp(current_name(&display_name(name)));
+        format!("`{}{mcp}`", self.prefix.as_deref().unwrap_or(""))
+    }
+}
+
 pub(crate) fn from_mcp(tool: &str) -> String {
+    // A connector tool relayed by Parzi reads `<server>__<tool>`; Parzi's own
+    // names never hold `__`, so a connector called `github` stays itself.
+    if let Some((server, rest)) = tool.split_once("__") {
+        if !server.is_empty() && !rest.is_empty() {
+            return format!("{server}.{rest}");
+        }
+    }
     for ns in NAMESPACES {
         if let Some(rest) = tool.strip_prefix(ns).and_then(|r| r.strip_prefix('_')) {
             return format!("{ns}.{rest}");
@@ -1397,6 +1652,30 @@ mod tests {
     }
 
     #[test]
+    fn relayed_connector_tools_read_back_as_their_connector() {
+        assert_eq!(display_name("mcp__parzi__github__get_me"), "github.get_me");
+        assert_eq!(
+            display_name("mcp__parzi__diagonaldiagrams__render"),
+            "diagonaldiagrams.render"
+        );
+        assert_eq!(display_name("mcp__parzi__github_issue"), "github.issue");
+        assert!(!is_parzi_tool(&display_name(
+            "mcp__parzi__github__issue_read"
+        )));
+        let tools = ToolExecutor {
+            cwd: String::new(),
+            mcp: std::sync::Arc::new(McpManager::new(Default::default(), 60)),
+            allowed: vec![connector_entry("github"), "shell.exec".into()],
+        };
+        assert!(tools.connector_allowed("github"));
+        assert!(!tools.connector_allowed("linear"));
+        assert!(
+            !tools.is_allowed("github.issue"),
+            "a connector entry is no Parzi tool"
+        );
+    }
+
+    #[test]
     fn antigravity_file_calls_name_their_files() {
         let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
         assert_eq!(
@@ -1462,6 +1741,102 @@ mod tests {
             assert!(is_parzi_tool(name), "{name}");
         }
         assert!(is_plan_tool("plan.write") && is_session_tool("session.rename"));
+    }
+
+    #[test]
+    fn counts_and_switches_read_however_the_agent_spells_them() {
+        use serde_json::json;
+        for (v, want) in [
+            (json!(120_000), Some(120_000)),
+            (json!(120_000.0), Some(120_000)),
+            (json!("120000"), Some(120_000)),
+            (json!(" 5000 "), Some(5000)),
+            (json!("2.5"), Some(2)),
+            (json!(0), Some(0)),
+            (json!(-1), None),
+            (json!("-3"), None),
+            (json!("soon"), None),
+            (json!(true), None),
+            (json!(null), None),
+            (json!(f64::MAX), Some(u64::MAX)),
+        ] {
+            assert_eq!(lenient_u64(&v), want, "{v}");
+        }
+        for (v, want) in [
+            (json!(true), Some(true)),
+            (json!(false), Some(false)),
+            (json!("false"), Some(false)),
+            (json!("True"), Some(true)),
+            (json!("no"), Some(false)),
+            (json!("on"), Some(true)),
+            (json!(1), Some(true)),
+            (json!(0.0), Some(false)),
+            (json!(0.5), None),
+            (json!(2), None),
+            (json!("maybe"), None),
+            (json!(null), None),
+        ] {
+            assert_eq!(lenient_bool(&v), want, "{v}");
+        }
+        let args = json!({"wait": "false", "timeout_ms": "9000"});
+        assert_eq!(
+            bool_arg(&args, "wait"),
+            Some(false),
+            "\"false\" does not block"
+        );
+        assert_eq!(int_arg(&args, "timeout_ms"), Some(9000));
+        assert_eq!(int_arg(&args, "missing"), None);
+    }
+
+    #[test]
+    fn a_shell_command_comes_as_cmd_or_as_command() {
+        use serde_json::json;
+        assert_eq!(command_arg(&json!({"cmd": "ls"})).as_deref(), Some("ls"));
+        assert_eq!(
+            command_arg(&json!({"command": "cargo test"})).as_deref(),
+            Some("cargo test")
+        );
+        assert_eq!(
+            command_arg(&json!({"command": ["git", "status", "-s"]})).as_deref(),
+            Some("git status -s")
+        );
+        assert_eq!(
+            command_arg(&json!({"cmd": "", "command": "pwd"})).as_deref(),
+            Some("pwd"),
+            "an empty cmd does not hide the command"
+        );
+        assert_eq!(command_arg(&json!({"cmd": 7})), None);
+        assert_eq!(
+            shell_command("shell.start", &json!({"command": "npm run dev"})).as_deref(),
+            Some("npm run dev")
+        );
+        assert_eq!(
+            humanize_tool_call("shell.start", &json!({"command": "npm run dev"})),
+            "Starting npm run dev"
+        );
+    }
+
+    #[test]
+    fn messages_name_parzis_tools_the_way_the_agent_calls_them() {
+        let claude = CallNames::for_agent("claude");
+        assert_eq!(claude.tool("shell.exec"), "`mcp__parzi__shell_exec`");
+        assert_eq!(
+            claude.tool("mcp__parzi__ask_user"),
+            "`mcp__parzi__ask_user`"
+        );
+        assert_eq!(
+            claude.tool("session.send_message"),
+            "`mcp__parzi__session_send`",
+            "an old name reads as the one it is now"
+        );
+        for other in ["codex", "opencode", "grok", "nobody"] {
+            assert_eq!(
+                CallNames::for_agent(other).tool("shell.exec"),
+                "`shell_exec` on the `parzi` server",
+                "{other}"
+            );
+        }
+        assert_eq!(CallNames::default(), CallNames::for_agent("codex"));
     }
 
     #[test]

@@ -426,6 +426,186 @@ async fn moving_to_another_project_needs_a_yes() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+struct Expires;
+#[async_trait::async_trait]
+impl Approver for Expires {
+    async fn approve(&self, _call: &ToolCallInfo) -> Approval {
+        Approval::Expired
+    }
+}
+
+struct Unattended;
+#[async_trait::async_trait]
+impl Approver for Unattended {
+    async fn approve(&self, _call: &ToolCallInfo) -> Approval {
+        Approval::Deny
+    }
+    fn asks_a_person(&self) -> bool {
+        false
+    }
+}
+
+fn asking(mode: ApprovalMode, approver: Arc<dyn Approver>, cfg: ParziConfig) -> ToolHost {
+    let store = parzi_core::store::SessionStore::open().unwrap();
+    let meta = store.create("why", "t", "claude").unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let allowed = session_tools(&cfg);
+    ToolHost::new(ToolHostParts {
+        session_id: meta.id.clone(),
+        mode,
+        edits_auto: false,
+        full: false,
+        cfg,
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: std::env::temp_dir().display().to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed,
+        }),
+        approver,
+        asker: None,
+        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
+        harness: Some(Arc::new(NoHarness)),
+        sink: RunSink::new(&meta.id, tx, None),
+        cancel: tokio_util::sync::CancellationToken::new(),
+    })
+    .calling_as("claude")
+}
+
+/// The tools a session gets, by name as Settings list them: every one of
+/// Parzi's, the shell only while it is on.
+fn session_tools(cfg: &ParziConfig) -> Vec<String> {
+    parzi_runtime::tools::all_defs()
+        .into_iter()
+        .map(|d| d.name)
+        .filter(|n| !(cfg.lanes.no_shell && n.starts_with("shell.")))
+        .collect()
+}
+
+fn refusal(d: PermissionDecision) -> String {
+    match d {
+        PermissionDecision::Deny(why) => why,
+        PermissionDecision::Allow => panic!("must be refused"),
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_says_why_and_what_to_do_next() {
+    home("approval");
+    let note = json!({"path": "x.md", "content": "hi"});
+    let run = |mode, approver: Arc<dyn Approver>, cfg| async move {
+        let host = asking(mode, approver, cfg);
+        let (ok, out) = host
+            .call("brain.write", &json!({"path": "x.md", "content": "hi"}))
+            .await;
+        assert!(!ok, "{out}");
+        out
+    };
+    let cfg = ParziConfig::default;
+
+    let out = run(ApprovalMode::Deny, Arc::new(Allow), cfg()).await;
+    assert!(
+        out.contains("`mcp__parzi__brain_write` was denied: agents are read-only in Settings"),
+        "{out}"
+    );
+    let out = run(ApprovalMode::Ask, Arc::new(DenyAll), cfg()).await;
+    assert!(
+        out.contains("The person declined `mcp__parzi__brain_write`")
+            && out.contains("ask them in chat"),
+        "{out}"
+    );
+    let out = run(ApprovalMode::Ask, Arc::new(Expires), cfg()).await;
+    assert!(
+        out.contains("Nobody answered the approval for `mcp__parzi__brain_write` in time"),
+        "{out}"
+    );
+    let out = run(ApprovalMode::Ask, Arc::new(Unattended), cfg()).await;
+    assert!(out.contains("no one can answer an approval"), "{out}");
+
+    let mut off = cfg();
+    off.lanes.no_shell = true;
+    let host = asking(ApprovalMode::Auto, Arc::new(Allow), off);
+    let (ok, out) = host.call("shell.exec", &json!({"cmd": "echo hi"})).await;
+    assert!(
+        !ok && out.contains("the shell is switched off in Settings"),
+        "{out}"
+    );
+    let (ok, out) = host.call("ui.show_widget", &note).await;
+    assert!(!ok && out.starts_with("There is no tool"), "{out}");
+    let host = asking(ApprovalMode::Auto, Arc::new(Allow), cfg());
+    let (ok, out) = host.call("shell.run", &json!({"cmd": "ls"})).await;
+    assert!(
+        !ok && out.starts_with("There is no tool `mcp__parzi__shell_run`.")
+            && out.contains("`mcp__parzi__shell_exec`"),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn a_tool_settings_leave_out_says_so() {
+    home("approval");
+    let host = host(vec!["plan.read".into()], ApprovalMode::Auto);
+    let (ok, out) = host
+        .call("brain.write", &json!({"path": "x.md", "content": "hi"}))
+        .await;
+    assert!(
+        !ok && out.contains("is not enabled for agents in Settings"),
+        "{out}"
+    );
+    let (ok, out) = host.call("plan.write", &json!({})).await;
+    assert!(!ok && out.contains("not enabled"), "{out}");
+}
+
+#[tokio::test]
+async fn the_agents_own_tools_hear_why_too() {
+    home("approval");
+    let write = |path: &str| PermissionRequest {
+        name: String::new(),
+        id: "w".into(),
+        tool: "Edit".into(),
+        title: "Edit".into(),
+        input: json!({"file_path": path}),
+        paths: vec![],
+    };
+    let cfg = ParziConfig::default;
+    let inside = std::env::temp_dir().join("why.txt").display().to_string();
+    let why = refusal(
+        asking(ApprovalMode::Deny, Arc::new(Allow), cfg())
+            .decide(write(&inside))
+            .await,
+    );
+    assert!(
+        why.contains("`Edit` was denied: agents are read-only"),
+        "{why}"
+    );
+    let why = refusal(
+        asking(ApprovalMode::Ask, Arc::new(DenyAll), cfg())
+            .decide(write(&inside))
+            .await,
+    );
+    assert!(why.starts_with("The person declined `Edit`"), "{why}");
+    let why = refusal(
+        asking(ApprovalMode::Ask, Arc::new(Expires), cfg())
+            .decide(write(&inside))
+            .await,
+    );
+    assert!(why.starts_with("Nobody answered"), "{why}");
+    let reads_only = host(vec!["fs.read".into()], ApprovalMode::Auto);
+    let why = refusal(reads_only.decide(write(&inside)).await);
+    assert!(
+        why.contains("`Edit` (editing files) is not enabled for agents in Settings"),
+        "{why}"
+    );
+    let mut off = cfg();
+    off.lanes.no_shell = true;
+    let why = refusal(
+        asking(ApprovalMode::Auto, Arc::new(Allow), off)
+            .decide(request("Bash"))
+            .await,
+    );
+    assert!(why.contains("the shell is switched off"), "{why}");
+}
+
 #[tokio::test]
 async fn grok_reaches_parzis_tools_through_its_use_tool() {
     home("approval");

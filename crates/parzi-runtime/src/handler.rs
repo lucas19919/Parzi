@@ -85,7 +85,7 @@ impl RunSink {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SpawnSpec {
     pub title: String,
     pub prompt: String,
@@ -94,6 +94,24 @@ pub struct SpawnSpec {
     pub wait: bool,
     pub mode_override: Option<String>,
     pub effort: Option<String>,
+    /// Who answers the child's approval cards: the parent's own approver, so
+    /// the person sees them. Without one, the child's approvals are refused.
+    pub approver: Option<std::sync::Arc<dyn crate::tools::Approver>>,
+}
+
+impl std::fmt::Debug for SpawnSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpawnSpec")
+            .field("title", &self.title)
+            .field("prompt", &self.prompt)
+            .field("is_subsession", &self.is_subsession)
+            .field("model", &self.model)
+            .field("wait", &self.wait)
+            .field("mode_override", &self.mode_override)
+            .field("effort", &self.effort)
+            .field("approver", &self.approver.is_some())
+            .finish()
+    }
 }
 
 #[async_trait::async_trait]
@@ -249,20 +267,67 @@ mod tests {
                 .find(|p| p.starts_with("## plans"))
                 .expect("it plans");
             for word in [
-                "plan.write",
-                "plan.read",
+                "`plan_write`",
+                "`plan_read`",
+                "`todo_write`",
                 "5 to 15 items",
                 "needs",
                 "plan/<id>",
                 "`active`",
                 "`done`",
                 "<parzi:plan>",
-                "session.rename",
+                "belongs to the person",
+                "waits",
+                "When a phase is done, stop",
+                "`session_rename`",
                 "2 to 5 words",
             ] {
                 assert!(plans.contains(word), "the plans section says {word}");
             }
         }
+    }
+
+    #[test]
+    fn the_instructions_name_tools_the_way_agents_can_call_them() {
+        let names: Vec<String> = crate::tools::all_defs()
+            .iter()
+            .map(|d| crate::tools::to_mcp(&d.name))
+            .collect();
+        let mut named = 0;
+        for word in HARNESS_DOC.split('`') {
+            let w = word.trim();
+            if w.contains('.') && names.contains(&crate::tools::to_mcp(w)) {
+                panic!(
+                    "parzi.md writes `{w}`; agents call it `{}`",
+                    crate::tools::to_mcp(w)
+                );
+            }
+            if names.iter().any(|n| n == w) {
+                named += 1;
+            }
+        }
+        assert!(
+            named > 15,
+            "parzi.md names tools as agents see them ({named})"
+        );
+    }
+
+    #[test]
+    fn the_instructions_send_charts_and_diagrams_to_the_standard_pieces() {
+        let tools = harness_section("tools");
+        assert!(
+            tools.contains("diagonaldiagrams"),
+            "diagrams go to the connector"
+        );
+        assert!(
+            tools.contains("`viz`") && tools.contains("`hist`"),
+            "every viz type is listed"
+        );
+        assert!(tools.contains("Never hand write SVG, HTML or chart code"));
+        assert!(
+            !tools.contains("svg artifacts"),
+            "no more hand made diagrams"
+        );
     }
 
     #[test]

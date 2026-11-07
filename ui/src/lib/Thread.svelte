@@ -23,6 +23,8 @@
   import { dockedTodos, setTodoDocked } from "./todoDock";
   import QuestionCard from "./QuestionCard.svelte";
   import ToolPictures, { picturesIn } from "./ToolPictures.svelte";
+  import TestCard from "./TestCard.svelte";
+  import { testRunOf, type TestRun } from "./testRuns";
   import LiveLine from "./LiveLine.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
@@ -59,7 +61,7 @@
 
   const dispatch = createEventDispatcher<{
     voted: { key: string };
-    answered: { key: string };
+    answered: { key: string; session?: string; text?: string };
     edited: { text: string; quotes: PlanQuote[] };
     forked: void;
     retry: void;
@@ -291,6 +293,23 @@
     return "";
   }
 
+  /** The command a shell step ran, whichever agent's shell it was. */
+  function shellCommand(name: string, args: unknown): string {
+    if (!/^(shell\.exec|shell_exec|mcp__parzi__shell_exec|execute|bash|Bash|shell)$/.test(name)) return "";
+    return arg(args, "cmd") || arg(args, "command");
+  }
+
+  /** The last finished test run among a group's steps. */
+  function lastTestRun(tools: Step[]): { run: TestRun; command: string } | null {
+    for (let i = tools.length - 1; i >= 0; i--) {
+      const t = tools[i];
+      if (t.running || !t.output) continue;
+      const run = testRunOf(t.output);
+      if (run) return { run, command: t.cmd ?? "" };
+    }
+    return null;
+  }
+
   function toolLabel(name: string, args: unknown): string {
     switch (name) {
       case "fs.read":
@@ -381,7 +400,7 @@
       const key = `e${i}`;
       if (e.kind === "tool_call") {
         const r = results.get(e.id);
-        steps(key).tools.push({ id: e.id, label: toolLabel(e.name, e.args), running: !r, ...r });
+        steps(key).tools.push({ id: e.id, label: toolLabel(e.name, e.args), running: !r, cmd: shellCommand(e.name, e.args), ...r });
         return;
       }
       if (e.kind === "reasoning") {
@@ -514,7 +533,7 @@ ${e.text}` : e.text;
     } catch (e) {
       toastError(e);
     } finally {
-      dispatch("answered", { key });
+      dispatch("answered", { key, session, text: answer.trim() });
     }
   }
 
@@ -650,6 +669,8 @@ ${e.text}` : e.text;
         {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
       
         <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
+        {@const tests = lastTestRun(item.tools)}
+        {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
       {:else if item.kind === "checkpoint"}
         <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
       {:else if item.kind === "system"}

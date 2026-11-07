@@ -12,10 +12,12 @@
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
-  import { bookmarks, completeAddress, history, pins } from "./browserData";
+  import { bookmarks, history, pins } from "./browserData";
+  import { addressSuggest } from "./addressSuggest";
+  import { get } from "svelte/store";
   import SuggestList from "./SuggestList.svelte";
   import { tooltip } from "./tooltip";
-  import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
+  import type { Suggestion } from "./suggest";
   import type { IconName } from "./icons";
   import { viewImage } from "./imageViewer";
 
@@ -141,11 +143,12 @@
     clearTimeout(attachErrorTimer);
     attachErrorTimer = window.setTimeout(() => (attachError = ""), 6000);
   }
-  let webRows: Suggestion[] = [];
-  let webActive = -1;
-  let webTyped = "";
-  let webSeq = 0;
-  let webTimer = 0;
+  // Web mode is the same address box as a page's: one helper for both.
+  const webSuggest = addressSuggest({
+    sources: () => ({ visits: get(history), marks: [...get(bookmarks), ...get(pins)] }),
+    phrases: (q) => api.searchSuggest(q),
+    live: () => mode === "search" && !!input.trim(),
+  });
   let atSeq = 0;
   let atTimer = 0;
   let thumbsKey = "";
@@ -207,8 +210,9 @@
     const text = input.trim();
     if (!canSubmit) return;
     if (mode === "search") {
-      if (webActive >= 0 && webRows[webActive]) {
-        pickWeb(webRows[webActive]);
+      const row = webSuggest.chosen();
+      if (row) {
+        pickWeb(row);
         return;
       }
       clearWeb();
@@ -239,15 +243,12 @@
   function onKeydown(e: KeyboardEvent) {
     if (webOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      webActive = webActive + step < -1 ? webRows.length - 1 : webActive + step >= webRows.length ? -1 : webActive + step;
-      input = webActive >= 0 ? boxText(webRows[webActive]) : webTyped;
+      input = webSuggest.move(e.key === "ArrowDown" ? 1 : -1) ?? input;
       return;
     }
     if (webOpen && e.key === "Escape") {
       e.stopPropagation();
-      input = webTyped;
-      clearWeb();
+      input = webSuggest.escape() ?? input;
       return;
     }
     if (slashItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -291,25 +292,10 @@
 
   $: if (textarea) void autosize(input);
   $: if (mode !== "search" || !input.trim()) clearWeb();
-  $: webOpen = focused && mode === "search" && webRows.length > 0;
+  $: webOpen = focused && mode === "search" && $webSuggest.rows.length > 0;
 
   function clearWeb() {
-    webRows = [];
-    webActive = -1;
-    clearTimeout(webTimer);
-  }
-
-  function suggestWeb(value: string, completed: string) {
-    const marks = [...$bookmarks, ...$pins];
-    webRows = mergeRows(firstRows(value, completed), pageRows(value, $history, marks));
-    clearTimeout(webTimer);
-    if (!value.trim() || looksLikeUrl(value)) return;
-    const seq = ++webSeq;
-    webTimer = window.setTimeout(async () => {
-      const phrases = await api.searchSuggest(value).catch(() => [] as string[]);
-      if (seq !== webSeq || mode !== "search" || !input.trim()) return;
-      webRows = mergeRows(firstRows(value, completed), phraseRows(value, phrases), pageRows(value, $history, marks));
-    }, 120);
+    webSuggest.reset();
   }
 
   function pickWeb(row: Suggestion) {
@@ -320,20 +306,13 @@
 
   async function onInput(e: Event) {
     if (mode === "search" && textarea) {
-      const typed = textarea.value;
-      webTyped = typed;
-      webActive = -1;
-      let completed = "";
-      if ((e as InputEvent).inputType?.startsWith("insert") && textarea.selectionStart === typed.length) {
-        const full = completeAddress(typed, $history, [...$bookmarks, ...$pins]);
-        if (full) {
-          completed = typed + full.slice(typed.length);
-          input = completed;
-          await tick();
-          textarea?.setSelectionRange(typed.length, completed.length);
-        }
+      const inserting = !!(e as InputEvent).inputType?.startsWith("insert") && textarea.selectionStart === textarea.value.length;
+      const shown = webSuggest.type(textarea.value, inserting);
+      if (shown.select) {
+        input = shown.text;
+        await tick();
+        textarea?.setSelectionRange(...shown.select);
       }
-      suggestWeb(typed, completed);
       return;
     }
     const at = !web ? /@([\w./-]*)$/.exec(input) : null;
@@ -642,7 +621,7 @@
   <div class="box" role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
     {#if webOpen}
       <div class="web-suggest" class:below={hero}>
-        <SuggestList rows={webRows} active={webActive} typed={webTyped} on:pick={(e) => pickWeb(e.detail.row)} on:hover={(e) => (webActive = e.detail.index)} />
+        <SuggestList rows={$webSuggest.rows} active={$webSuggest.active} typed={$webSuggest.typed} on:pick={(e) => pickWeb(e.detail.row)} on:hover={(e) => webSuggest.hover(e.detail.index)} />
       </div>
     {/if}
     {#if slashItems.length || atItems.length}
@@ -1072,7 +1051,7 @@
     padding: var(--space) calc(var(--space) * 3);
     background: var(--text);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--bg);
     font-size: var(--fs-xs);
     font-weight: 600;
@@ -1101,7 +1080,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: grab;
   }
@@ -1168,7 +1147,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
   }
@@ -1207,7 +1186,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
   }
@@ -1271,7 +1250,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
   }
@@ -1434,7 +1413,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-xs);
     cursor: pointer;

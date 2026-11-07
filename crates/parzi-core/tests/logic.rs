@@ -111,10 +111,17 @@ fn artifact_validation_versions_and_dedups() {
         "artifact": 1, "id": "omni-html", "title": "Omnibar redesign",
         "kind": "html", "content": "<div class=\"omnibar\">mock</div>",
     });
-    assert_eq!(
-        validate_artifact(&mock).unwrap().kind,
-        "html",
-        "a page that mentions the omnibar is still a page"
+    let refused = validate_artifact(&mock).unwrap_err().to_string();
+    assert!(
+        refused.contains("viz") && refused.contains("diagonaldiagrams"),
+        "a hand built page is refused with where to go instead: {refused}"
+    );
+    let drawing = serde_json::json!({
+        "id": "arch", "kind": "svg", "content": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+    });
+    assert!(
+        validate_artifact(&drawing).is_err(),
+        "diagrams come from the connector"
     );
     let bad_json = serde_json::json!({
         "artifact": 1, "id": "omni-bad", "kind": "json",

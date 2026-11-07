@@ -61,8 +61,20 @@ async fn run_hook(
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true);
     let body = payload.to_string();
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return HookRun {
+                code: None,
+                stderr: e.to_string(),
+                timed_out: false,
+            }
+        }
+    };
+    // A hook is a shell, so what it starts would outlive a plain kill of
+    // the shell when it times out; the whole tree goes.
+    let pid = child.id();
     let work = async {
-        let mut child = cmd.spawn().map_err(|e| e.to_string())?;
         if let Some(stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt as _;
             let mut stdin = stdin;
@@ -71,18 +83,30 @@ async fn run_hook(
         }
         child.wait_with_output().await.map_err(|e| e.to_string())
     };
-    match tokio::time::timeout(Duration::from_secs(def.timeout()), work).await {
-        Err(_) => HookRun {
-            code: None,
-            stderr: String::new(),
-            timed_out: true,
-        },
-        Ok(Err(e)) => HookRun {
+    tokio::pin!(work);
+    let done = tokio::select! {
+        r = &mut work => Some(r),
+        () = tokio::time::sleep(Duration::from_secs(def.timeout())) => None,
+    };
+    // Kill the tree while the shell still holds it: once the shell is gone
+    // its children belong to no one and cannot be found.
+    match done {
+        None => {
+            if let Some(pid) = pid {
+                parzi_providers::process::kill_tree(pid);
+            }
+            HookRun {
+                code: None,
+                stderr: String::new(),
+                timed_out: true,
+            }
+        }
+        Some(Err(e)) => HookRun {
             code: None,
             stderr: e,
             timed_out: false,
         },
-        Ok(Ok(out)) => HookRun {
+        Some(Ok(out)) => HookRun {
             code: out.status.code(),
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             timed_out: false,
@@ -237,5 +261,53 @@ mod tests {
         assert!(r.ends_with('…'));
         assert!(r.len() <= REASON_CAP + '…'.len_utf8());
         assert_eq!(reason("  ".into()), "blocked by a workspace hook");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hook_that_times_out_takes_what_it_started_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("grandchild.pid");
+        let def: HookDef = serde_json::from_value(serde_json::json!({
+            "match": "*",
+            "command": format!("sleep 30 & echo $! > {}; wait", marker.display()),
+            "timeout_secs": 1,
+        }))
+        .unwrap();
+        let run = run_hook(
+            &def,
+            dir.path(),
+            &serde_json::json!({}),
+            "s",
+            "p",
+            "t",
+            "pre",
+        )
+        .await;
+        assert!(run.timed_out);
+        let pid = std::fs::read_to_string(&marker).unwrap();
+        // A killed process lingers as a zombie until it is reaped, which can
+        // take a moment on a busy machine; a zombie runs nothing.
+        let running = || {
+            let out = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", pid.trim()])
+                .output()
+                .unwrap();
+            let stat = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            !stat.is_empty() && !stat.starts_with('Z')
+        };
+        let mut alive = running();
+        for _ in 0..30 {
+            if !alive {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            alive = running();
+        }
+        assert!(
+            !alive,
+            "the hook's background sleep {} survived",
+            pid.trim()
+        );
     }
 }

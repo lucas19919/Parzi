@@ -1,6 +1,5 @@
-import type { PlanQuote } from "./api";
+import type { ComposerMode, PlanQuote } from "./api";
 
-export type ComposerMode = "search" | "build";
 type TabKind = "session" | "page" | "settings" | "preview" | "artifact";
 
 export interface TabComposerState {
@@ -134,20 +133,42 @@ export function artifactTab(doc: ArtifactDoc, group: string | null): Tab {
   return { id: tabId(), kind: "artifact", title: doc.title, group, doc, composer: defaultComposer() };
 }
 
+/** The host and port a URL points at, without "www.", or "" when it has none. */
 export function hostOf(url: string): string {
-  return url
-    .replace(/^https?:\/\/(www\.)?/i, "")
-    .replace(/[/?#].*$/, "")
-    .slice(0, 32);
+  try {
+    return new URL(url).host.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+}
+
+/** What an address box holds: a full address, a server on this machine, a
+ *  bare domain, or words to search for. The one place that decides it. */
+export type AddressKind = "empty" | "full" | "local" | "domain" | "search";
+
+export function addressKind(raw: string): AddressKind {
+  const t = raw.trim();
+  if (!t) return "empty";
+  if (/^https?:\/\//i.test(t)) return "full";
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(t)) return "local";
+  if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return "domain";
+  return "search";
 }
 
 export function toAddress(raw: string): string {
   const t = raw.trim();
-  if (!t) return "";
-  if (/^https?:\/\//i.test(t)) return t;
-  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(t)) return `http://${t}`;
-  if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return `https://${t}`;
-  return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`;
+  switch (addressKind(t)) {
+    case "empty":
+      return "";
+    case "full":
+      return t;
+    case "local":
+      return `http://${t}`;
+    case "domain":
+      return `https://${t}`;
+    default:
+      return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`;
+  }
 }
 
 export function isExplicitUrl(raw: string): boolean {
@@ -162,4 +183,12 @@ export function folderName(path: string): string {
 
 export function isSystemTab(t: Tab): boolean {
   return t.kind !== "session" && t.kind !== "page";
+}
+
+/** The list with `t` added where it belongs: after the last tab of `group`
+ *  (a session with its pages and helpers), else right after the tab `after`. */
+export function placeTab(list: Tab[], t: Tab, after: string, group?: string | null): Tab[] {
+  const mine = group ? list.map((x, i) => (x.sessionId === group || x.owner === group || x.group === group ? i : -1)).filter((i) => i >= 0) : [];
+  const at = mine.length ? Math.max(...mine) + 1 : list.findIndex((x) => x.id === after) + 1;
+  return [...list.slice(0, at), t, ...list.slice(at)];
 }

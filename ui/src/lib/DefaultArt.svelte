@@ -49,6 +49,18 @@
       linear-gradient(to bottom, color-mix(in srgb, var(--bg) 72%, transparent), transparent 55%),
       color-mix(in srgb, var(--bg) 30%, transparent);
   }
+  /* Full window: the picture fills Home, with an even shade so the tabs,
+     the composer and the cards stay readable over it. */
+  :global(html[data-art-fill="full"]) .art {
+    height: 100%;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  :global(html[data-art-fill="full"]) .shade {
+    background:
+      linear-gradient(to bottom, color-mix(in srgb, var(--bg) 55%, transparent), transparent 22%),
+      color-mix(in srgb, var(--bg) 38%, transparent);
+  }
   .grain {
     position: absolute;
     inset: 0;

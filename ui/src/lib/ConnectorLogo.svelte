@@ -55,7 +55,7 @@
     box-shadow: none;
   }
   img {
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     object-fit: contain;
   }
   .letter {

@@ -3,7 +3,7 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import type { Tab } from "./tabs";
+  import { hostOf, type Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
   import { pressDrag, tabDragStarted, tabRelease, type PressDrag } from "./gestures";
   import { sessionMarks } from "./activity";
@@ -76,14 +76,6 @@
     }
     return { bySession, kids, lone };
   })();
-
-  const hostOfUrl = (url?: string) => {
-    try {
-      return url ? new URL(url).hostname.replace(/^www\./, "") : "page";
-    } catch {
-      return "page";
-    }
-  };
 
   function toggleGroup(sessionId: string) {
     touched = new Set(touched).add(sessionId);
@@ -326,7 +318,7 @@
           class="close count"
           tabindex="-1"
           aria-hidden="true"
-          use:tooltip={`Show ${linked}: ${attached.map((a) => a.title || hostOfUrl(a.url)).join(", ")}`}
+          use:tooltip={`Show ${linked}: ${attached.map((a) => a.title || hostOf(a.url ?? "") || "page").join(", ")}`}
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
           {attached.length}

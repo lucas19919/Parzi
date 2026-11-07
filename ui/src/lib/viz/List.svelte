@@ -7,8 +7,8 @@
 </script>
 
 <ul class="list" aria-label={label || undefined}>
-  {#each items as it}
-    <li>
+  {#each items as it, i}
+    <li class="rise" style:--i={i}>
       {#if it.status}
         <span class="dot {it.tone}" role="img" aria-label={it.status} />
       {:else}

@@ -119,19 +119,19 @@ async fn an_agent_plans_marks_an_item_active_and_names_its_session() {
     );
     assert!(out[3].0, "{}", out[3].1);
     assert!(
-        !out[4].0 && out[4].1.contains("keep it to 60"),
-        "{:?}",
+        out[4].0 && out[4].1.contains("was cut to"),
+        "a long name is cut, not refused: {:?}",
         out[4]
     );
     assert!(
-        !out[5].0 && out[5].1.contains("2 to 5 words"),
+        out[5].0 && out[5].1.contains("cut to \"One two three four five\""),
         "the automatic names' rule: {:?}",
         out[5]
     );
 
     let m = store.get(&meta.id).unwrap();
     assert_eq!(m.plan_item.as_deref(), Some("names"));
-    assert_eq!(m.title, "Release planning");
+    assert_eq!(m.title, "One two three four five");
     let p = plan::load(&vault(), "plans-demo").plan.unwrap();
     assert_eq!(p.title, "Next release");
     assert_eq!(p.items.len(), 2, "the refused write changed nothing");

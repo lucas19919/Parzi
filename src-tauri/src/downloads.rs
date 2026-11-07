@@ -3,24 +3,27 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-const FILE: &str = "downloads.json";
 const KEEP: usize = 100;
 const EVENT: &str = "parzi://download";
 const PROGRESS_EVERY: Duration = Duration::from_millis(400);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Progress,
     Done,
     Failed,
+    #[cfg_attr(
+        not(windows),
+        allow(dead_code, reason = "only WebView2 reports a cancelled download")
+    )]
     Canceled,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Download {
     pub id: String,
@@ -34,53 +37,19 @@ pub struct Download {
     pub started: i64,
 }
 
+/// This run's downloads, newest first, for the toasts and "Show in folder".
 struct Book {
     list: Vec<Download>,
     told: Vec<(String, Instant)>,
 }
 
-static BOOK: Mutex<Option<Book>> = Mutex::new(None);
+static BOOK: Mutex<Book> = Mutex::new(Book {
+    list: Vec::new(),
+    told: Vec::new(),
+});
 
-fn book() -> MutexGuard<'static, Option<Book>> {
-    let mut guard = BOOK.lock().unwrap_or_else(PoisonError::into_inner);
-    if guard.is_none() {
-        let mut list = load();
-        for d in &mut list {
-            if d.state == State::Progress {
-                d.state = State::Failed;
-            }
-        }
-        *guard = Some(Book {
-            list,
-            told: Vec::new(),
-        });
-    }
-    guard
-}
-
-fn path() -> Option<PathBuf> {
-    parzi_core::paths::parzi_dir().ok().map(|d| d.join(FILE))
-}
-
-fn load() -> Vec<Download> {
-    path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
-}
-
-fn save_soon() {
-    std::thread::spawn(|| {
-        static SAVE: Mutex<()> = Mutex::new(());
-        let _one = SAVE.lock().unwrap_or_else(PoisonError::into_inner);
-        let list = book().as_ref().map(|b| b.list.clone()).unwrap_or_default();
-        let (Some(path), Ok(text)) = (path(), serde_json::to_vec_pretty(&list)) else {
-            return;
-        };
-        if let Err(e) = parzi_core::error::atomic_write(&path, &text) {
-            tracing::debug!("downloads list not saved: {e}");
-        }
-    });
+fn book() -> MutexGuard<'static, Book> {
+    BOOK.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 pub fn safe_name(raw: &str) -> String {
@@ -138,15 +107,11 @@ pub fn downloads_dir(app: &AppHandle) -> Option<PathBuf> {
 
 pub fn target(dir: &Path, suggested: &str) -> PathBuf {
     let running: Vec<String> = book()
-        .as_ref()
-        .map(|b| {
-            b.list
-                .iter()
-                .filter(|d| d.state == State::Progress)
-                .map(|d| d.path.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+        .list
+        .iter()
+        .filter(|d| d.state == State::Progress)
+        .map(|d| d.path.clone())
+        .collect();
     unique_path(dir, &safe_name(suggested), |p| {
         p.exists() || running.iter().any(|r| Path::new(r) == p)
     })
@@ -170,12 +135,12 @@ pub fn started(app: &AppHandle, id: &str, tab: &str, url: &str, path: &Path, tot
         state: State::Progress,
         started: chrono::Utc::now().timestamp_millis(),
     };
-    if let Some(b) = book().as_mut() {
+    {
+        let mut b = book();
         b.list.insert(0, d.clone());
         b.list.truncate(KEEP);
     }
     tell(app, &d);
-    save_soon();
 }
 
 #[cfg_attr(
@@ -184,7 +149,7 @@ pub fn started(app: &AppHandle, id: &str, tab: &str, url: &str, path: &Path, tot
 )]
 pub fn progress(app: &AppHandle, id: &str, received: u64, total: u64) {
     let mut guard = book();
-    let Some(b) = guard.as_mut() else { return };
+    let b = &mut *guard;
     let Some(d) = b.list.iter_mut().find(|d| d.id == id) else {
         return;
     };
@@ -212,7 +177,7 @@ pub fn progress(app: &AppHandle, id: &str, received: u64, total: u64) {
 
 pub fn finished(app: &AppHandle, id: &str, state: State, path: Option<&str>) {
     let mut guard = book();
-    let Some(b) = guard.as_mut() else { return };
+    let b = &mut *guard;
     b.told.retain(|(t, _)| t != id);
     let Some(d) = b.list.iter_mut().find(|d| d.id == id) else {
         return;
@@ -230,17 +195,15 @@ pub fn finished(app: &AppHandle, id: &str, state: State, path: Option<&str>) {
     let d = d.clone();
     drop(guard);
     tell(app, &d);
-    save_soon();
 }
 
 #[cfg(not(windows))]
 pub fn running_id(url: &str) -> Option<String> {
-    book().as_ref().and_then(|b| {
-        b.list
-            .iter()
-            .find(|d| d.state == State::Progress && d.url == url)
-            .map(|d| d.id.clone())
-    })
+    book()
+        .list
+        .iter()
+        .find(|d| d.state == State::Progress && d.url == url)
+        .map(|d| d.id.clone())
 }
 
 pub fn new_id() -> String {
@@ -248,15 +211,12 @@ pub fn new_id() -> String {
 }
 
 #[tauri::command]
-pub fn browser_downloads() -> Vec<Download> {
-    book().as_ref().map(|b| b.list.clone()).unwrap_or_default()
-}
-
-#[tauri::command]
 pub async fn browser_download_reveal(id: String) -> Result<(), String> {
     let path = book()
-        .as_ref()
-        .and_then(|b| b.list.iter().find(|d| d.id == id).map(|d| d.path.clone()))
+        .list
+        .iter()
+        .find(|d| d.id == id)
+        .map(|d| d.path.clone())
         .ok_or("that download is gone from the list")?;
     tauri::async_runtime::spawn_blocking(move || {
         let path = PathBuf::from(path);
@@ -267,34 +227,6 @@ pub async fn browser_download_reveal(id: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub fn browser_download_cancel(app: AppHandle, id: String) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        app.run_on_main_thread(move || crate::dwm::cancel_download(&id))
-            .map_err(|e| e.to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (app, id);
-        Err("Cancelling a download needs Windows for now".into())
-    }
-}
-
-#[tauri::command]
-pub fn browser_downloads_clear() -> Vec<Download> {
-    let list = {
-        let mut guard = book();
-        let Some(b) = guard.as_mut() else {
-            return Vec::new();
-        };
-        b.list.retain(|d| d.state == State::Progress);
-        b.list.clone()
-    };
-    save_soon();
-    list
 }
 
 #[cfg(test)]

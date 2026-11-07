@@ -106,7 +106,7 @@ pub struct ImportReport {
 
 #[tauri::command]
 pub async fn onboard_scan() -> Result<Scan, String> {
-    blocking(|| {
+    crate::files::off_thread(|| {
         let env = Env::system()?;
         let (tools, folders) = local_scan(&env);
         Ok(Scan {
@@ -120,7 +120,7 @@ pub async fn onboard_scan() -> Result<Scan, String> {
 
 #[tauri::command]
 pub async fn onboard_browser(id: String, profile: String) -> Result<BrowserData, String> {
-    blocking(move || browser_data(&id, &profile)).await
+    crate::files::off_thread(move || browser_data(&id, &profile)).await
 }
 
 #[tauri::command]
@@ -128,7 +128,7 @@ pub async fn onboard_import(
     notes: Vec<String>,
     folders: Vec<String>,
 ) -> Result<ImportReport, String> {
-    blocking(move || {
+    crate::files::off_thread(move || {
         let env = Env::system()?;
         Ok(import_with(&env, &notes, &folders))
     })
@@ -169,14 +169,6 @@ pub async fn agent_login(
                 .map_err(|e| e.message)
         }
     }
-}
-
-async fn blocking<T: Send + 'static>(
-    f: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 #[cfg(windows)]

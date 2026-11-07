@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use parzi_core::store::RunCause;
 use parzi_runtime::desk::{check_page_url, GuiFile};
 use parzi_runtime::handler::{ui_event, RunEvent};
+use parzi_runtime::rpc::{bool_arg, fail, str_arg, tokens_equal};
 use parzi_runtime::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
 use parzi_runtime::Orchestrator;
 use serde::{Deserialize, Serialize};
@@ -79,6 +80,8 @@ pub struct Desk {
     approvals: Mutex<BTreeMap<String, Value>>,
     consents: Mutex<HashMap<String, Instant>>,
     dialogs: tokio::sync::Mutex<()>,
+    /// Questions sent to the window, waiting for its answer.
+    calls: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>,
 }
 
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -106,6 +109,7 @@ impl Desk {
             approvals: Mutex::default(),
             consents: Mutex::default(),
             dialogs: tokio::sync::Mutex::new(()),
+            calls: Mutex::default(),
         }
     }
 
@@ -321,18 +325,9 @@ impl Desk {
 
     fn approval_key(&self, asked: &str) -> Result<(String, Value), String> {
         let rows = locked(&self.approvals);
-        if let Some(row) = rows.get(asked) {
-            return Ok((asked.to_string(), row.clone()));
-        }
-        let hits: Vec<_> = rows
-            .iter()
-            .filter(|(k, _)| asked.len() >= 4 && k.starts_with(asked))
-            .collect();
-        match hits.as_slice() {
-            [(k, row)] => Ok(((*k).clone(), (*row).clone())),
-            [] => Err("approval expired or unknown".into()),
-            _ => Err("that prefix fits more than one approval".into()),
-        }
+        let key = parzi_runtime::rpc::match_key(rows.keys(), asked)?;
+        let row = rows.get(&key).cloned().unwrap_or(Value::Null);
+        Ok((key, row))
     }
 
     fn consented(&self, tab: &str) -> bool {
@@ -343,6 +338,14 @@ impl Desk {
 
     fn allow_for_a_while(&self, tab: &str) {
         locked(&self.consents).insert(tab.to_string(), Instant::now() + CONSENT_FOR);
+    }
+}
+
+/// The window's answer to a question `ui_call` sent it.
+#[tauri::command]
+pub fn desk_answer(state: State<'_, AppState>, id: String, result: Value) {
+    if let Some(tx) = locked(&state.desk.calls).remove(&id) {
+        let _ = tx.send(result);
     }
 }
 
@@ -502,18 +505,6 @@ fn restrict_to_owner(path: &std::path::Path, body: &str) {
     }
 }
 
-fn tokens_equal(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 enum Gate {
     Reply(Value),
     Run(Value),
@@ -617,6 +608,10 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "desk.state" => desk_state(ctx, req).await,
         "desk.open" => desk_open(ctx, req).await,
         "desk.notify" => desk_notify(ctx, req),
+        "desk.theme" => desk_theme(ctx, req).await,
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" => {
+            app_call(ctx, op, req).await
+        }
         "desk.screenshot" => desk_screenshot(ctx).await,
         "tab.list" => ctx
             .desk
@@ -639,22 +634,6 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "session.delete" => session_delete(ctx, out, req).await,
         _ => fail(format!("unknown op `{op}`")),
     }
-}
-
-fn fail(error: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": error.into() })
-}
-
-fn str_arg(req: &Value, key: &str) -> String {
-    req.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string()
-}
-
-fn bool_arg(req: &Value, key: &str, dflt: bool) -> bool {
-    req.get(key).and_then(Value::as_bool).unwrap_or(dflt)
 }
 
 fn raise(app: &AppHandle) {
@@ -680,6 +659,21 @@ fn short_title(url: &str) -> String {
 impl Ctx {
     fn tell(&self, payload: Value) {
         let _ = self.app.emit("parzi://desk", payload);
+    }
+
+    /// Asks the window something and waits for its answer: what it can
+    /// do, what it shows, or to do it.
+    async fn ui_call(&self, call: Value) -> Result<Value, String> {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        locked(&self.desk.calls).insert(id.clone(), tx);
+        self.tell(json!({ "op": "call", "id": id, "call": call }));
+        let answer = tokio::time::timeout(UI_CALL_WAIT, rx).await;
+        locked(&self.desk.calls).remove(&id);
+        match answer {
+            Ok(Ok(v)) => Ok(v),
+            _ => Err("the Parzi window did not answer; it may be busy or minimised, try again".into()),
+        }
     }
 
     async fn ask_person(
@@ -1058,6 +1052,53 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
     }
     ctx.tell(payload);
     json!({ "ok": true, "done": done })
+}
+
+/// Changes the look and has the window load it. With nothing asked, says
+/// how the look is now and which themes there are.
+async fn desk_theme(ctx: &Ctx, req: &Value) -> Value {
+    let ask: parzi_core::theme::ThemeChange = match serde_json::from_value({
+        let mut v = req.clone();
+        if let Some(o) = v.as_object_mut() {
+            o.remove("session");
+        }
+        v
+    }) {
+        Ok(a) => a,
+        Err(e) => return fail(format!("desk.theme: {e}")),
+    };
+    let asked = req
+        .as_object()
+        .is_some_and(|o| o.keys().any(|k| k != "session"));
+    match tauri::async_runtime::spawn_blocking(move || parzi_core::theme::change(&ask)).await {
+        Ok(Ok(done)) => {
+            if asked {
+                ctx.tell(json!({ "op": "theme" }));
+            }
+            json!({ "ok": true, "done": done })
+        }
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+/// How long the window has to answer. Long enough for a slow action, short
+/// enough that a stuck window does not hold a turn.
+const UI_CALL_WAIT: Duration = Duration::from_secs(20);
+
+/// Agents use Parzi's own interface: list and run its named actions, see
+/// what is on screen, click and type there. The window does the work, the
+/// same way a person's click does.
+async fn app_call(ctx: &Ctx, op: &str, req: &Value) -> Value {
+    let mut call = req.clone();
+    if let Some(o) = call.as_object_mut() {
+        o.insert("kind".into(), json!(op.trim_start_matches("app.")));
+    }
+    match ctx.ui_call(call).await {
+        Ok(v) if v.get("ok").and_then(Value::as_bool) == Some(false) => v,
+        Ok(v) => json!({ "ok": true, "result": v }),
+        Err(e) => fail(e),
+    }
 }
 
 fn desk_notify(ctx: &Ctx, req: &Value) -> Value {

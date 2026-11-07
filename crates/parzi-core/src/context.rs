@@ -115,6 +115,36 @@ pub fn encode_image_file(path: &std::path::Path) -> Option<ImageData> {
     encode_image(&name, &read_image(path)?)
 }
 
+/// The text is an SVG drawing: an `<svg` element near the top, after an
+/// optional XML declaration, doctype or comment.
+#[must_use]
+pub fn is_svg_text(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let text = head.trim_start_matches('\u{feff}').trim_start();
+    text.starts_with('<') && text.contains("<svg")
+}
+
+/// A picture to show the person: a raster image, or an SVG drawing such as
+/// a diagram connector saves. Only for showing: a model takes raster
+/// pictures alone, so attachments keep to `encode_image`. An SVG shows
+/// through `<img>`, where its scripts never run.
+pub fn encode_picture_file(path: &std::path::Path) -> Option<ImageData> {
+    if let Some(img) = encode_image_file(path) {
+        return Some(img);
+    }
+    let svg = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    if !svg || crate::paths::is_network_path(&path.to_string_lossy()) {
+        return None;
+    }
+    let bytes = read_image(path)?;
+    is_svg_text(&bytes).then(|| ImageData {
+        media_type: "image/svg+xml".into(),
+        data_b64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+}
+
 pub fn read_attachments(cwd: &std::path::Path, paths: &[String]) -> Vec<AttachedFile> {
     paths
         .iter()
@@ -232,4 +262,47 @@ fn attr(s: &str) -> String {
 
 fn head(s: &str) -> String {
     s.lines().next().unwrap_or("").chars().take(160).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_drawing_shows_but_is_never_sent_to_a_model() {
+        let dir = std::env::temp_dir().join(format!("parzi-svg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("flow.svg");
+        std::fs::write(
+            &svg,
+            "<?xml version=\"1.0\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\"/>",
+        )
+        .unwrap();
+        let shown = encode_picture_file(&svg).expect("an svg shows");
+        assert_eq!(shown.media_type, "image/svg+xml");
+        assert!(shown.data_url().starts_with("data:image/svg+xml;base64,"));
+        assert!(
+            encode_image_file(&svg).is_none(),
+            "models take raster pictures only"
+        );
+        assert!(image_media_type("flow.svg").is_none());
+
+        let fake = dir.join("notes.svg");
+        std::fs::write(&fake, "just words").unwrap();
+        assert!(
+            encode_picture_file(&fake).is_none(),
+            "the name alone is not enough"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn svg_text_is_known_by_its_element() {
+        assert!(is_svg_text(
+            b"\xef\xbb\xbf  <svg viewBox=\"0 0 1 1\"></svg>"
+        ));
+        assert!(is_svg_text(b"<!-- drawn --><svg/>"));
+        assert!(!is_svg_text(b"<html><body></body></html>"));
+        assert!(!is_svg_text(b"svg"));
+    }
 }

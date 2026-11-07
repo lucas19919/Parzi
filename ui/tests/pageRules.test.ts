@@ -2,9 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   appFor,
-  downloadNote,
   downloadShare,
-  formatBytes,
   iconFor,
   originOf,
   permissionName,
@@ -83,15 +81,7 @@ test("prompts name the permission and the app in plain words", () => {
   assert.equal(appFor("foo+bar:thing"), "the app for foo+bar links");
 });
 
-test("downloads read as sizes and states", () => {
-  assert.equal(formatBytes(0), "0 B");
-  assert.equal(formatBytes(512), "512 B");
-  assert.equal(formatBytes(1536), "1.5 KB");
-  assert.equal(formatBytes(20 * 1024 * 1024), "20 MB");
-  assert.equal(downloadNote({ state: "progress", received: 1024, total: 4096 }), "1.0 KB of 4.0 KB");
-  assert.equal(downloadNote({ state: "progress", received: 2048, total: 0 }), "2.0 KB");
-  assert.equal(downloadNote({ state: "done", received: 10, total: 10 }), "10 B");
-  assert.equal(downloadNote({ state: "canceled", received: 1, total: 10 }), "Cancelled");
+test("a download's toast shows its share only while it runs with a known size", () => {
   assert.equal(downloadShare({ state: "progress", received: 1, total: 4 }), 0.25);
   assert.equal(downloadShare({ state: "progress", received: 1, total: 0 }), undefined);
   assert.equal(downloadShare({ state: "done", received: 4, total: 4 }), undefined);

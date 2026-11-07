@@ -1,29 +1,5 @@
 <script lang="ts" context="module">
-  const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
-  const FULL = /(?<![\w.\\/:~-])(?:[A-Za-z]:[\\/]|\/(?![\\/]))[^\s"'`<>|*?]+?\.(?:png|jpe?g|webp|gif)\b/gi;
-  const REMOTE = /^[\\/]{2}/;
-
-  export function picturesIn(outputs: string[]): string[] {
-    const out: string[] = [];
-    const add = (p: string) => {
-      const clean = p.trim();
-      if (IMAGE.test(clean) && !REMOTE.test(clean) && !out.includes(clean)) out.push(clean);
-    };
-    for (const text of outputs) {
-      if (!text) continue;
-      try {
-        const v = JSON.parse(text);
-        const path = v && typeof v === "object" ? (v.path ?? v.output?.path) : null;
-        if (typeof path === "string") {
-          add(path);
-          continue;
-        }
-      } catch {
-      }
-      for (const m of text.matchAll(FULL)) add(m[0]);
-    }
-    return out.slice(0, 12);
-  }
+  export { picturesIn } from "./pictures";
 </script>
 
 <script lang="ts">

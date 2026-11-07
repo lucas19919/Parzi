@@ -16,7 +16,8 @@ static SESSION_ROOTS: Mutex<Option<(Instant, Vec<PathBuf>)>> = Mutex::new(None);
 const ROOTS_TTL: Duration = Duration::from_secs(5);
 const OUTSIDE: &str = "that location is outside the workspace, choose the folder first";
 
-async fn off_thread<T, F>(f: F) -> Result<T, String>
+/// Runs blocking work off the async threads; the one helper every command uses.
+pub(crate) async fn off_thread<T, F>(f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
@@ -486,7 +487,7 @@ pub async fn read_image_data_url(
                 READ_IMAGE_MAX / 1024
             ));
         }
-        let img = parzi_core::context::encode_image_file(&p)
+        let img = parzi_core::context::encode_picture_file(&p)
             .ok_or_else(|| format!("{} is not a supported image", p.display()))?;
         Ok(img.data_url())
     })
@@ -525,7 +526,7 @@ pub async fn tool_image(
         if !meta.is_file() || meta.len() > READ_IMAGE_MAX {
             return Err(format!("{path} is not a picture Parzi can show"));
         }
-        let img = parzi_core::context::encode_image_file(p)
+        let img = parzi_core::context::encode_picture_file(p)
             .ok_or_else(|| format!("{path} is not a supported image"))?;
         Ok(img.data_url())
     })

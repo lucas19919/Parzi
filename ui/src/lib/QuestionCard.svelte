@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import type { Question } from "./api";
+  import { LINE_WORDS, questionParts } from "./questionText";
 
   export let question: Question;
 
@@ -19,6 +20,7 @@
     text = "";
   }
 
+  $: parts = questionParts(question.question);
   $: multi = !!question.multi;
   $: details = question.details ?? [];
   $: answer = [
@@ -53,7 +55,18 @@
 </script>
 
 <div class="q" role="group" aria-label="Question">
-  <div class="head t-section">{question.question}</div>
+  <div class="head t-section">{parts.head}</div>
+  {#if parts.lines.length}
+    <ul class="weigh" aria-label="What you are answering about">
+      {#each parts.lines as line, i (i)}
+        {#if line.kind === "heading"}
+          <li class="t-group">{line.text}</li>
+        {:else}
+          <li class="mark-line {line.kind}"><span class="sign" aria-label={LINE_WORDS[line.kind]}>{line.kind === "add" ? "+" : line.kind === "drop" ? "−" : "~"}</span><span class:struck={line.kind === "drop"}>{line.text}</span></li>
+        {/if}
+      {/each}
+    </ul>
+  {/if}
   <div class="list" role={multi ? "group" : "radiogroup"} data-ui-list>
     {#each question.options as opt, i (i)}
       <button class="choice" class:on={picked.has(i)} role={multi ? "checkbox" : "radio"} aria-checked={picked.has(i)} on:click={() => pick(i)}>
@@ -108,6 +121,45 @@
   .head {
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     border-bottom: 1px solid var(--line);
+  }
+  .weigh {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space);
+    max-height: 280px;
+    margin: 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    overflow-y: auto;
+    list-style: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .weigh .t-group {
+    margin-top: calc(var(--space) * 2);
+  }
+  .weigh .t-group:first-child {
+    margin-top: 0;
+  }
+  .mark-line {
+    display: flex;
+    gap: calc(var(--space) * 2);
+    line-height: 1.5;
+  }
+  .sign {
+    flex: none;
+    width: calc(var(--space) * 3);
+    color: var(--muted);
+    font-family: var(--mono);
+    text-align: center;
+  }
+  .add .sign {
+    color: var(--ok-text);
+  }
+  .drop .sign {
+    color: var(--bad-text);
+  }
+  .struck {
+    color: var(--muted);
+    text-decoration: line-through;
   }
   .list {
     display: flex;

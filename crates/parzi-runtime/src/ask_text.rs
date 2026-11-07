@@ -125,17 +125,24 @@ pub fn ask_text(name: &str, args: &Value) -> AskText {
         let label = crate::tools::humanize_tool_call(&shown, args);
         return ask("use this window".into(), label, DetailKind::Text);
     }
+    // A connector tool Parzi relays reads `<server>.<tool>`.
+    let relayed = (!shown.contains("__") && !crate::tools::is_parzi_tool(&shown))
+        .then(|| shown.split_once('.'))
+        .flatten();
     let mut parts = shown.rsplit("__");
-    let tool = parts.next().unwrap_or(&shown);
-    let server = parts.next().filter(|s| *s != "mcp");
+    let tool = relayed.map_or_else(|| parts.next().unwrap_or(&shown), |(_, t)| t);
+    let server = relayed
+        .map(|(s, _)| s)
+        .or_else(|| parts.next().filter(|s| *s != "mcp"));
     if tool == "other" || tool.is_empty() {
         return ask("use a tool".into(), title, DetailKind::Text);
     }
-    let words = tool
-        .rsplit('.')
-        .next()
-        .unwrap_or(tool)
-        .replace(['_', '-'], " ");
+    let words = if relayed.is_some() {
+        tool
+    } else {
+        tool.rsplit('.').next().unwrap_or(tool)
+    }
+    .replace(['_', '-'], " ");
     let action = match server {
         Some(s) => format!("use {words} ({s})"),
         None => format!("use {words}"),
@@ -244,6 +251,15 @@ mod tests {
         assert_eq!(
             say("parzi__github_issue", json!({"title": "Bug"})),
             ("file a GitHub issue".into(), "Bug".into())
+        );
+        assert_eq!(
+            say("linear.create_issue", json!({"title": "Crash on start"})),
+            ("use create issue (linear)".into(), "Crash on start".into())
+        );
+        assert_eq!(
+            say("plan.read", json!({})).0,
+            "use read",
+            "Parzi's own stay unnamed"
         );
     }
 

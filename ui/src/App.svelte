@@ -7,8 +7,10 @@
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onResync, onRunEvent,
     type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
-  import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
-  import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
+  import { deskAnswer, downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
+  import { defineActions, describeActions, runAction, type AppAction } from "./lib/actions";
+  import { click as clickControl, screen as readScreen, type as typeControl } from "./lib/appScreen";
+  import { addPrompt, dropTabPrompts } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
   import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
@@ -32,15 +34,15 @@
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { permissionFor } from "./lib/permission";
   import { provideClearSessions } from "./lib/sessions";
-  import { applyThemeCss } from "./lib/theme";
+  import { applyThemeCss, refreshBackground } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
-  import { nameOf } from "./lib/providerRows";
+  import { effortsFor, nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
@@ -443,6 +445,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (next.has(shown)) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
   }
 
+  /** Opens the plan in a session's thread, without toggling it shut. */
+  function revealPlan(session: string) {
+    if (planForced.has(session)) return;
+    planForced = new Set(planForced).add(session);
+    if (session === shown) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
+  }
+
   function hidePlan() {
     if (!shown) return;
     const next = new Set(planForced);
@@ -690,8 +699,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function newSession() {
     const draft: Tab = { ...sessionTab(), cwd: folder || recentFolder() };
     draft.composer = ensureComposer(draft.composer);
-    const idx = tabs.findIndex((x) => x.id === activeId);
-    tabs = [...tabs.slice(0, idx + 1), draft, ...tabs.slice(idx + 1)];
+    tabs = placeTab(tabs, draft, activeId);
     selectTab(draft.id);
     void tick().then(() => omnibar?.focus());
   }
@@ -704,12 +712,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (!background) selectTab(existing.id);
     } else {
       const t = pageTab(url, id, owner ?? null);
-      if (background) {
-        const idx = tabs.findIndex((x) => x.id === activeId);
-        tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
-      } else {
-        addTab(t);
-      }
+      if (background) tabs = placeTab(tabs, t, activeId);
+      else addTab(t);
     }
   }
 
@@ -721,9 +725,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const t = pageTab(url, undefined, null, sessionId);
-    const mine = tabs.map((x, i) => (x.sessionId === sessionId || x.owner === sessionId || x.group === sessionId ? i : -1)).filter((i) => i >= 0);
-    const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
-    tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+    tabs = placeTab(tabs, t, activeId, sessionId);
     selectTab(t.id);
   }
 
@@ -792,16 +794,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const t = artifactTab(doc, group);
-    const mine = group ? tabs.map((x, i) => (x.sessionId === group || x.owner === group || x.group === group ? i : -1)).filter((i) => i >= 0) : [];
-    const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
-    tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+    tabs = placeTab(tabs, t, activeId, group);
     selectTab(t.id);
   }
 
   function openPageNext(url: string) {
     const t = pageTab(url);
-    const idx = tabs.findIndex((x) => x.id === activeId);
-    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    tabs = placeTab(tabs, t, activeId);
     selectTab(t.id);
   }
 
@@ -816,8 +815,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const t = pageTab(url, undefined, from.owner);
-    const idx = tabs.findIndex((x) => x.id === opener);
-    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    tabs = placeTab(tabs, t, opener);
     api.browserPrepare(t.id, url, from.owner).catch(() => {});
   }
 
@@ -832,7 +830,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function onDownloadEvent(d: Download) {
-    upsertDownload(d);
     const key = `download-${d.id}`;
     if (d.state === "progress") {
       keyedToast(key, `Downloading ${d.name}`, { progress: downloadShare(d), ms: 0 });
@@ -912,9 +909,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (host) {
       const t = { ...sessionTab(id, title), group: host };
       t.composer = ensureComposer(t.composer);
-      const mine = tabs.map((x, i) => (x.sessionId === host || x.group === host || x.owner === host ? i : -1)).filter((i) => i >= 0);
-      const at = Math.max(...mine) + 1;
-      tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+      tabs = placeTab(tabs, t, activeId, host);
       selectTab(t.id);
       return;
     }
@@ -1584,6 +1579,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (e.kind === "artifact") {
       liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
     } else if (e.kind === "tool_call") {
+      // What the agent said before a step is narration ("I'll check the
+      // plan..."), not its reply: it joins the folded working, and the reply
+      // starts again after the step. Cards and reply buttons come after the
+      // final text, so they leave it be.
+      const said = (live + pending).trim();
+      if (said && !e.name.startsWith("ui.") && e.name !== "todo.write") {
+        liveReasoning = liveReasoning ? `${liveReasoning}\n\n${said}` : said;
+        live = "";
+        pending = "";
+      }
       if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
       }
@@ -1641,7 +1646,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             ? "ctrl+shift+t"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
-              : mod && ["p", "k", "t", "w", "l", "h", "j"].includes(key)
+              : mod && ["p", "k", "t", "w", "l", "j"].includes(key)
                   ? `ctrl+${key}`
                   : "";
     if (name && shortcut(name)) {
@@ -1659,6 +1664,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
     else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     else if (cmd.op === "show") showFromDesk(cmd);
+    else if (cmd.op === "call" && cmd.id) void answerCall(cmd.id, cmd.call ?? {});
+    else if (cmd.op === "theme") {
+      // An agent changed the look: load it, and the wallpaper a pack may bring.
+      void api
+        .getThemeCss()
+        .then(applyThemeCss)
+        .then(() => refreshBackground())
+        .then(() => document.dispatchEvent(new CustomEvent("parzi:theme")))
+        .catch((e) => toast(`Couldn't load the new theme: ${e}`, true));
+    }
     else if (cmd.op === "notify" && cmd.text) {
       notify(cmd.text, cmd.session ?? "");
       chime(true);
@@ -1674,14 +1689,102 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
+  /** Where the window is, in a line, for an agent looking at it. */
+  function whereNow(): string {
+    const page = coverOn && cover ? (cover === "settings" ? `Settings, ${settingsSection}` : "Sessions") : "";
+    const kind = tab.kind === "page" ? "web page" : tab.kind === "session" ? (hasSession ? "session" : "Home") : tab.kind;
+    return `Window: ${kind} tab "${tab.title || "New session"}"${page ? `, showing ${page}` : ""}${infoShown ? ", side column open" : ""}${fileShown ? ", file card open" : ""}.`;
+  }
+
+  /** Answers the desk: an agent listing or running Parzi's actions, or
+   *  looking at and using its controls (control.rs app_call). */
+  async function answerCall(id: string, call: Record<string, unknown>) {
+    const n = (k: string) => Number(call[k]);
+    const str = (k: string) => (typeof call[k] === "string" ? (call[k] as string) : "");
+    let result: unknown;
+    try {
+      switch (call.kind) {
+        case "actions":
+          result = { text: `${whereNow()}\n${describeActions(str("query"))}` };
+          break;
+        case "do":
+          result = await runAction(str("action"), (call.args as Record<string, unknown>) ?? {}, call.confirmed === true);
+          await tick();
+          break;
+        case "screen":
+          result = { text: readScreen(str("query"), whereNow()) };
+          break;
+        case "click":
+          result = clickControl(n("ref"), call.confirmed === true);
+          await tick();
+          break;
+        case "type":
+          result = typeControl(n("ref"), str("text"), call.enter === true);
+          break;
+        default:
+          result = { ok: false, error: `unknown call ${String(call.kind)}` };
+      }
+    } catch (e) {
+      result = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+    await deskAnswer(id, result).catch(() => {});
+  }
+
+  function tabNamed(raw: unknown): Tab | undefined {
+    const want = String(raw ?? "").trim().toLowerCase();
+    if (!want) return tab;
+    return tabs.find((t) => t.id === want || t.sessionId === want) ?? tabs.find((t) => (t.title || "").toLowerCase() === want) ?? tabs.find((t) => (t.title || "").toLowerCase().includes(want));
+  }
+
+  /** What Parzi can do by name. A surface that is not here an agent still
+   *  reaches with app_screen and app_click. */
+  function appActions(): AppAction[] {
+    const onOff = (v: unknown, now: boolean) => (typeof v === "boolean" ? v : !now);
+    const theme = async (change: (t: Awaited<ReturnType<typeof api.getTheme>>) => void) => {
+      const t = await api.getTheme();
+      change(t);
+      await api.saveTheme(t);
+      applyThemeCss(await api.getThemeCss());
+      document.dispatchEvent(new CustomEvent("parzi:theme"));
+    };
+    return [
+      { id: "tabs.list", title: "List the open tabs", run: () => tabs.map((t) => `${t.id === activeId ? "* " : ""}${t.kind} "${t.title || "New session"}" (${t.id})${t.url ? ` ${t.url}` : ""}`).join("\n") },
+      { id: "tabs.new", title: "Open a new session tab (Home)", run: () => void newSession() },
+      { id: "tabs.page", title: "Open a web page in a new tab", args: [{ name: "url", type: "string", about: "an address or words to search" }], run: (a) => { if (a.url) openPage(toAddress(String(a.url))); else addTab(pageTab()); return `Opened ${a.url ? toAddress(String(a.url)) : "a blank page"}.`; } },
+      { id: "tabs.select", title: "Switch to a tab by title or id", args: [{ name: "tab", type: "string", required: true }], run: (a) => { const t = tabNamed(a.tab); if (!t) throw new Error(`No tab "${a.tab}".`); selectTab(t.id); return `Switched to "${t.title || "New session"}".`; } },
+      { id: "tabs.close", title: "Close a tab (the current one if none is named)", args: [{ name: "tab", type: "string" }], run: (a) => { const t = tabNamed(a.tab); if (!t) throw new Error(`No tab "${a.tab}".`); closeTab(t.id); return `Closed "${t.title || "the tab"}".`; } },
+      { id: "tabs.reopen", title: "Reopen the last closed tab", run: () => void reopenClosed() },
+      { id: "sessions.show", title: "Show the list of sessions", run: () => void showCover("sessions") },
+      { id: "sessions.open", title: "Open a session by id or title", args: [{ name: "session", type: "string", required: true }], run: (a) => { const want = String(a.session).toLowerCase(); const hit = threads.find((t) => t.id === a.session || t.id.startsWith(want) || t.title.toLowerCase() === want) ?? threads.find((t) => t.title.toLowerCase().includes(want)); if (!hit) throw new Error(`No session "${a.session}".`); openSession(hit.id); return `Opened "${hit.title}".`; } },
+      { id: "session.stop", title: "Stop the current session's run", when: () => hasSession, run: async () => { await stop(); return "Stopped."; } },
+      { id: "session.fork", title: "Branch the current session into a copy", when: () => hasSession, run: async () => { await fork(); return "Forked the session."; } },
+      { id: "session.compact", title: "Summarise the current session to free context", when: () => hasSession, run: async () => { await compact(); return "Compacting the session."; } },
+      { id: "settings.open", title: "Open Settings at a page", args: [{ name: "section", type: "string", choices: ["general", "providers", "connections", "appearance"] }], run: (a) => { openSettings(String(a.section ?? "general")); return `Opened Settings, ${a.section ?? "general"}. Use app_screen to see its controls.`; } },
+      { id: "settings.close", title: "Close Settings or the sessions list", when: () => coverOn, run: () => void clearCover() },
+      { id: "sidebar.toggle", title: "Show or hide the session's side column", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleInfo(onOff(a.open, infoShown)); return infoOpen ? "The side column is open." : "The side column is hidden."; } },
+      { id: "files.toggle", title: "Show or hide the file card", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleFiles(onOff(a.open, fileShown)); return fileOpen ? "The file card is open." : "The file card is hidden."; } },
+      { id: "files.open", title: "Open a file in the file card", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFileInCard(String(a.path)); return `Opened ${a.path}.`; } },
+      { id: "plan.show", title: "Show the project's plan in the thread", run: () => void showPlan() },
+      { id: "plan.hide", title: "Hide the plan", run: () => void hidePlan() },
+      { id: "window.fullscreen", title: "Turn full screen on or off", args: [{ name: "on", type: "boolean" }], run: async (a) => { await setImmersive(onOff(a.on, immersive)); return immersive ? "Full screen is on." : "Full screen is off."; } },
+      { id: "composer.model", title: "Pick the model for the next message", args: [{ name: "model", type: "string", required: true, choices: () => $board.flatMap((b) => b.models.map((m) => `${b.provider}/${m.id}`)) }], run: (a) => { comp.model = String(a.model); comp = comp; return `The next message goes to ${a.model}.`; } },
+      { id: "composer.effort", title: "Set the reasoning effort", args: [{ name: "effort", type: "string", required: true, choices: () => effortsFor(comp.model, $board) }], run: (a) => { comp.effort = String(a.effort); comp = comp; return `Effort is ${a.effort}.`; } },
+      { id: "composer.permission", title: "Set what agents may do without asking", args: [{ name: "mode", type: "string", required: true, choices: ["supervised", "auto", "full"] }], run: (a) => { permission = String(a.mode); return `Permission is ${a.mode}.`; } },
+      { id: "composer.mode", title: "Switch the composer between the agent and web search", args: [{ name: "mode", type: "string", required: true, choices: ["agent", "web"] }], run: (a) => { comp.mode = a.mode === "web" ? "search" : "build"; comp = comp; return `The composer is in ${a.mode} mode.`; } },
+      { id: "composer.draft", title: "Write text into the composer for the person to send", args: [{ name: "text", type: "string", required: true }], run: (a) => { comp.input = String(a.text); comp = comp; return "The text is in the composer; the person sends it."; } },
+      { id: "appearance.theme", title: "Apply a theme pack", args: [{ name: "pack", type: "string", required: true }], run: async (a) => { const packs = await api.listPackInfos(); const p = packs.find((x) => x.name.toLowerCase() === String(a.pack).toLowerCase()); if (!p) throw new Error(`No theme "${a.pack}"; the themes are ${packs.map((x) => x.name).join(", ")}.`); applyThemeCss(await api.applyPack(p.name)); await refreshBackground(); document.dispatchEvent(new CustomEvent("parzi:theme")); return `Applied the ${p.name} theme.`; } },
+      { id: "appearance.wallpaper", title: "Show the Home wallpaper as a band or the full window", args: [{ name: "show", type: "string", required: true, choices: ["band", "full"] }], run: async (a) => { await theme((t) => (t.background.fill = a.show === "full" ? "full" : "band")); return `The wallpaper shows as ${a.show === "full" ? "the full window" : "a band"}.`; } },
+      { id: "appearance.cards", title: "Set how cards look over the wallpaper", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards over the wallpaper are ${a.look}.`; } },
+    ];
+  }
+
   function showFromDesk(cmd: DeskCmd) {
     if (cmd.what === "session" && cmd.id) {
       const id = cmd.id;
       if (cmd.focus !== false) openSession(id);
       else if (!tabs.some((t) => t.sessionId === id)) {
         const t = sessionTab(id, cmd.title || "Session");
-        const idx = tabs.findIndex((x) => x.id === activeId);
-        tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+        tabs = placeTab(tabs, t, activeId);
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
     else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
@@ -1710,11 +1813,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const unKey = onBrowserKey((name) => void shortcut(name));
     const unAsk = onBrowserAsk((a) => addPrompt({ ...a }));
     const unDownload = onDownload(onDownloadEvent);
-    downloadApi
-      .list()
-      .then((list) => downloadList.set(list))
-      .catch(() => {});
     const unActivity = watchActivity();
+    const unActions = defineActions(appActions());
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
     void warmPages();
@@ -1795,6 +1895,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     checkForUpdatesSoon();
     return () => {
       unActivity();
+      unActions();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       document.removeEventListener("parzi:open-page", onOpenPage);
@@ -1814,7 +1915,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
-<div class="shell">
+<div class="shell" class:over-art={showWallpaper && !!bg}>
   <DefaultArt bg={showWallpaper ? bg : ""} />
 
   {#if !immersive}
@@ -1927,7 +2028,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
                   sessionTitle={titleOf}
                   on:voted={(e) => settle(e.detail.key)}
-                  on:answered={(e) => settle(e.detail.key)}
+                  on:answered={(e) => {
+                    settle(e.detail.key);
+                    // An accepted plan opens in the thread (plan_tools.rs USE_PLAN).
+                    if (e.detail.text === "Use this plan" && e.detail.session) revealPlan(e.detail.session);
+                  }}
                   on:edited={(e) => {
                     comp.input = e.detail.text;
                     if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
@@ -2134,6 +2239,22 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
+  }
+  /* Cards over the wallpaper on Home: clear (outlined, the default), glass
+     (frosted) or solid (the panel colour), as set in Appearance. Only here:
+     everywhere else surfaces stay solid. */
+  .over-art :global(:is(.info .card, .ob .box)) {
+    transition:
+      background var(--dur) ease,
+      backdrop-filter var(--dur) ease;
+  }
+  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .ob .box)) {
+    background: color-mix(in srgb, var(--panel) 52%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .ob .box)) {
+    background: var(--panel);
   }
 
   main {

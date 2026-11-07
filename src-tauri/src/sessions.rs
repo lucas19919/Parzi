@@ -415,12 +415,14 @@ pub async fn answer_question(
         .map(drop);
     }
     let mut lock = state.questions.lock().await;
-    match lock.get(&key) {
-        Some((bound, _)) if bound != &session => Err("answer is for another session".into()),
-        Some(_) => {
-            let (_, tx) = lock.remove(&key).unwrap();
+    match lock.remove(&key) {
+        Some((bound, tx)) if bound == session => {
             let _ = tx.send(answer);
             Ok(())
+        }
+        Some(other) => {
+            lock.insert(key, other);
+            Err("answer is for another session".into())
         }
         None => Err("question expired or unknown".into()),
     }
@@ -445,16 +447,18 @@ pub async fn approve_tool(
         .map(drop);
     }
     let mut lock = state.pending.lock().await;
-    match lock.get(&key) {
-        Some((bound, _)) if bound != &session => Err("approval is for another session".into()),
-        Some(_) => {
-            let (_, tx) = lock.remove(&key).unwrap();
+    match lock.remove(&key) {
+        Some((bound, tx)) if bound == session => {
             let _ = tx.send(if allow {
                 Approval::Allow
             } else {
                 Approval::Deny
             });
             Ok(())
+        }
+        Some(other) => {
+            lock.insert(key, other);
+            Err("approval is for another session".into())
         }
         None => Err("approval expired or unknown".into()),
     }

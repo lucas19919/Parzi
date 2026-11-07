@@ -11,6 +11,12 @@ const ARTIFACT_KINDS: &[&str] = &[
     "code", "markdown", "html", "svg", "json", "csv", "diff", "text", "image", "preview",
 ];
 
+/// Sessions saved before this still hold html and svg cards, and they still
+/// show. New ones go to the standard pieces instead.
+const HAND_BUILT: &str = "Parzi shows standard pieces, not hand built pages or drawings, so nothing was published. \
+A chart is a `viz` block in your reply. A diagram comes from the diagonaldiagrams connector, and Parzi shows the picture it saves. \
+A picture already on disk is kind image with its full path. A document is kind markdown.";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactV1 {
     #[serde(default = "default_format")]
@@ -189,6 +195,9 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     }
     if a.kind == "preview" {
         validate_preview(&a.content)?;
+    }
+    if a.kind == "html" || a.kind == "svg" {
+        return Err(ParziError::Validation(HAND_BUILT.into()));
     }
     if a.version == 0 {
         a.version = 1;

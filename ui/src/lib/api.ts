@@ -162,6 +162,10 @@ export interface Theme {
     image: string;
     height: number;
     y: number;
+    /** Where the wallpaper shows on Home. */
+    fill?: "band" | "full";
+    /** How cards look over it. */
+    cards?: "clear" | "glass" | "solid";
   };
 }
 
@@ -280,19 +284,14 @@ export const api = {
     invoke<string>("save_background_data", { name, base64Data }),
   deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
 
-  browserShow: (
-    tab: string,
-    rect: { x: number; y: number; width: number; height: number },
-    url: string,
-    owner: string | null = null,
-    focus = false,
-  ) => invoke<void>("browser_show", { tab, ...rect, url, owner, focus }),
+  browserShow: (tab: string, rect: { x: number; y: number; width: number; height: number }, url: string, owner: string | null = null) =>
+    invoke<void>("browser_show", { tab, ...rect, url, owner }),
   browserHide: () => invoke<void>("browser_hide"),
   browserPrepare: (tab: string, url: string, owner: string | null = null) => invoke<void>("browser_prepare", { tab, url, owner }),
   browserFocus: (tab: string) => invoke<void>("browser_focus", { tab }),
   browserRecover: (tab: string) => invoke<void>("browser_recover", { tab }),
   browserExternal: (id: string, open: boolean) => invoke<void>("browser_external", { id, open }),
-  browserPermission: (id: string, allow: boolean, remember = true) => invoke<void>("browser_permission", { id, allow, remember }),
+  browserPermission: (id: string, allow: boolean) => invoke<void>("browser_permission", { id, allow }),
   browserSnapshot: (tab: string) => invoke<string>("browser_snapshot", { tab }),
   searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
@@ -493,10 +492,7 @@ export interface Download {
 }
 
 export const downloads = {
-  list: () => invoke<Download[]>("browser_downloads"),
   reveal: (id: string) => invoke<void>("browser_download_reveal", { id }),
-  cancel: (id: string) => invoke<void>("browser_download_cancel", { id }),
-  clear: () => invoke<Download[]>("browser_downloads_clear"),
 };
 
 export function onDownload(cb: (d: Download) => void) {
@@ -566,6 +562,11 @@ export function onSignIn(cb: (s: SignInStep) => void) {
 
 export function onBrowser(cb: (page: PageEvent) => void) {
   return listen<PageEvent>("parzi://browser", (ev) => cb(ev.payload));
+}
+
+/** The window's answer to a question the desk sent it (control.rs ui_call). */
+export function deskAnswer(id: string, result: unknown) {
+  return invoke<void>("desk_answer", { id, result });
 }
 
 export function deskSync(tabs: DeskTab[], rev: number, active: string) {

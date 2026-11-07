@@ -7,13 +7,10 @@ use serde_json::{json, Value};
 
 use crate::orchestrator::Orchestrator;
 use crate::provision::{merge_config, portable};
+use crate::rpc::fail;
 
 const READ_CAP: usize = 8 * 1024 * 1024;
 const MIRROR_PAGE: usize = 400;
-
-fn fail(error: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": error.into() })
-}
 
 pub fn brain_manifest() -> Value {
     match Vault::open() {

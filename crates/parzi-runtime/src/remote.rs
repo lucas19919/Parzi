@@ -442,10 +442,7 @@ fn batch_escape(password: &str) -> String {
     out
 }
 
-#[must_use]
-pub fn sh_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
+pub use parzi_providers::process::sh_quote;
 
 fn parzi_key() -> Result<PathBuf, String> {
     Ok(parzi_core::paths::parzi_dir()
@@ -806,7 +803,7 @@ pub async fn setup(
     let saved = Saved {
         target,
         version: version.clone(),
-        linked_at: chrono_now(),
+        linked_at: parzi_core::now_ms_i64(),
     };
     if opts.transport.is_none() {
         if let Err(e) = save(&saved) {
@@ -965,13 +962,6 @@ pub async fn upgrade(
     };
     save(&next)?;
     Ok(next)
-}
-
-fn chrono_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
 }
 
 type Waiters = Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>;

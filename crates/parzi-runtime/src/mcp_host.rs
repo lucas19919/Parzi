@@ -13,13 +13,13 @@ use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
 use crate::toolhost::ToolHost;
-use crate::tools::{from_mcp, to_mcp};
+use crate::tools::{from_mcp, to_mcp, PARZI_SERVER};
 
-const SERVER_NAME: &str = "parzi";
+const SERVER_NAME: &str = PARZI_SERVER;
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
 const SLOW_CALL: std::time::Duration = std::time::Duration::from_secs(30);
-const INSTRUCTIONS: &str = "Parzi's own tools for the thread, plans, teamwork, the notes vault, commands, the window and its pages. MCP underscores read back with dots: plan_write is plan.write. Prefer these over native vendor tools; a refused native tool names its Parzi replacement to call instead.";
+const INSTRUCTIONS: &str = "Parzi's own tools for the thread, plans, teamwork, the notes vault, commands, the window and its pages. MCP underscores read back with dots: plan_write is plan.write. Prefer these over native vendor tools; a refused native tool names its Parzi replacement to call instead. A tool named connector__tool belongs to one of the person's connectors (Settings › Connections) and runs under the same approvals.";
 
 type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
 
@@ -96,12 +96,13 @@ impl McpHost {
         }
         Registration {
             runs: self.runs.clone(),
-            host,
             server: ToolServer {
                 name: SERVER_NAME.into(),
                 url: format!("http://{}/mcp/{token}", self.addr),
                 token: token.clone(),
+                shell: host.offers_shell(),
             },
+            host,
             token,
         }
     }
@@ -236,12 +237,13 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
         }
         "ping" => json!({}),
         "tools/list" => {
-            let tools: Vec<Value> = host
+            let mut tools: Vec<Value> = host
                 .defs()
                 .await
                 .iter()
                 .map(|d| json!({"name": to_mcp(&d.name), "description": d.description, "inputSchema": d.schema}))
                 .collect();
+            tools.extend(host.relay().await.entries().cloned());
             json!({"tools": tools})
         }
         "tools/call" => {
@@ -251,12 +253,28 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
                 .filter(|a| !a.is_null())
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let name = host
+            let own = host
                 .defs()
                 .await
                 .iter()
                 .find(|d| to_mcp(&d.name) == asked)
-                .map_or_else(|| from_mcp(asked), |d| d.name.clone());
+                .map(|d| d.name.clone());
+            if own.is_none() && asked.contains("__") {
+                let (ok, content) = host.call_relayed(asked, &args).await.unwrap_or_else(|| {
+                    (
+                        false,
+                        vec![json!({"type": "text", "text": format!(
+                            "no tool `{asked}` in this session: its connector is off or has not listed it; list the tools again"
+                        )})],
+                    )
+                });
+                return Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {"content": content, "isError": !ok},
+                }));
+            }
+            let name = own.unwrap_or_else(|| from_mcp(asked));
             let started = std::time::Instant::now();
             // These wait on people or long commands by design; the rest should be quick.
             let waits = name.starts_with("shell.")

@@ -1,5 +1,4 @@
 import { writable } from "svelte/store";
-import type { Download } from "./api";
 
 export interface PagePrompt {
   id: string;
@@ -25,10 +24,4 @@ export function removePrompt(id: string) {
 
 export function dropTabPrompts(tab: string) {
   prompts.update((all) => all.filter((p) => p.tab !== tab));
-}
-
-export const downloadList = writable<Download[]>([]);
-
-export function upsertDownload(d: Download) {
-  downloadList.update((all) => [d, ...all.filter((x) => x.id !== d.id)].sort((a, b) => b.started - a.started));
 }

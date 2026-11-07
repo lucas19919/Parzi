@@ -7,7 +7,7 @@ use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
 
 use super::normalize_effort;
-use super::queue::{set_report_to, take_report_to, Dispatch, Pump, QueuedRun};
+use super::queue::{posture, set_report_to, take_report_to, Dispatch, Pump, QueuedRun};
 
 const HARNESS_WAIT_SECS: u64 = 180;
 
@@ -116,6 +116,7 @@ impl Pump {
             wait,
             mode_override,
             effort,
+            approver,
         } = spec;
         let caller = self.store.get(caller_id)?;
         let title: String = match title.trim() {
@@ -131,7 +132,12 @@ impl Pump {
             None => crate::bench::resolve(&caller.model, &cfg, &statuses, &caller.model)
                 .unwrap_or_else(|_| caller.model.clone()),
         };
-        let crippled = mode_override.is_none();
+        // Without an approver, a child that asks has every approval refused.
+        let crippled = approver.is_none()
+            && !matches!(
+                mode_override.as_deref().map(str::trim),
+                Some("full" | "auto" | "deny")
+            );
         let parent = if is_subsession { Some(caller_id) } else { None };
         let meta = self
             .store
@@ -150,14 +156,14 @@ impl Pump {
             cwd: caller.cwd.clone(),
             effort: normalize_effort(&effort.unwrap_or_default()),
             attachments: vec![],
-            approver: None,
+            approver,
             restore_approver: false,
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
             cause: RunCause::Message,
         };
-        let crippled_note = "child runs Ask with no approver: approval-gated tools are denied. Staff autonomous work from a Full session.";
+        let crippled_note = "no one can answer this child's approvals, so its tools that need one are refused. Staff autonomous work from a Full session.";
         match self.dispatch(q).await {
             Dispatch::Launched => {}
             Dispatch::Queued => {
@@ -313,6 +319,9 @@ impl HarnessBridge for Pump {
                 None => Ok(self.timed_out(caller_id, session_id, reports).await),
             };
         }
+        // The caller's own child picks up where its spawn left it: the mode it
+        // was given and, if it had one, someone to answer its approvals.
+        let last = if reports { posture(session_id) } else { None };
         let q = QueuedRun {
             session_id: session_id.to_string(),
             project: target.project.clone(),
@@ -322,9 +331,9 @@ impl HarnessBridge for Pump {
             effort: normalize_effort(&effort.unwrap_or_default()),
             attachments: vec![],
             approver: None,
-            restore_approver: false,
+            restore_approver: last.as_ref().is_some_and(|l| l.ask),
             prompt_recorded: true,
-            mode_override: None,
+            mode_override: last.and_then(|l| l.mode_override),
             inbox_from: Some(at),
             cause: RunCause::Message,
         };
