@@ -156,7 +156,11 @@ async fn the_shell_follows_a_project_switch_in_the_same_turn() {
     assert!(ok, "{out}");
     let (ok, out) = h.call("shell.exec", &json!({"cmd": "pwd"})).await;
     assert!(ok, "{out}");
-    let leaf = std::path::Path::new(&there).file_name().unwrap().to_string_lossy().into_owned();
+    let leaf = std::path::Path::new(&there)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     assert!(out.contains(&leaf), "runs in the new folder: {out}");
     let (ok, out) = h
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": there}))

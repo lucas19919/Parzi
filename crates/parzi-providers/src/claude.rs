@@ -1276,11 +1276,11 @@ mod tests {
         // Shape sent by Claude Code 2.1.316: the top level names only the
         // window nearest its threshold, the rest sit under unifiedWindows.
         let info = json!({"status": "allowed_warning", "resetsAt": 1_794_009_600u64, "rateLimitType": "seven_day", "utilization": 0.97,
-            "unifiedWindows": {
-                "five_hour": {"utilization": 0.01, "resetsAt": 1_793_805_000u64, "status": "allowed"},
-                "seven_day": {"utilization": 0.97, "resetsAt": 1_794_009_600u64, "status": "allowed_warning"},
-                "seven_day_opus": {"resetsAt": 1_794_009_600u64, "status": "rejected"}
-            }});
+        "unifiedWindows": {
+            "five_hour": {"utilization": 0.01, "resetsAt": 1_793_805_000u64, "status": "allowed"},
+            "seven_day": {"utilization": 0.97, "resetsAt": 1_794_009_600u64, "status": "allowed_warning"},
+            "seven_day_opus": {"resetsAt": 1_794_009_600u64, "status": "rejected"}
+        }});
         let got = usage_windows(&info);
         let find = |l: &str| got.iter().find(|(w, _)| w.label == l).cloned().unwrap();
         assert_eq!(got.len(), 3);
@@ -1289,7 +1289,9 @@ mod tests {
         let (opus, rejected) = find("Weekly · Opus");
         assert!(rejected && (opus.used_percent - 100.0).abs() < 1e-9);
         // An older CLI with only the top-level window still counts.
-        let old = usage_windows(&json!({"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.37}));
+        let old = usage_windows(
+            &json!({"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.37}),
+        );
         assert_eq!(old.len(), 1);
         assert_eq!(old[0].0.label, "Session");
     }
