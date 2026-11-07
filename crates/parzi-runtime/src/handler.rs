@@ -85,7 +85,7 @@ impl RunSink {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SpawnSpec {
     pub title: String,
     pub prompt: String,
@@ -94,6 +94,24 @@ pub struct SpawnSpec {
     pub wait: bool,
     pub mode_override: Option<String>,
     pub effort: Option<String>,
+    /// Who answers the child's approval cards: the parent's own approver, so
+    /// the person sees them. Without one, the child's approvals are refused.
+    pub approver: Option<std::sync::Arc<dyn crate::tools::Approver>>,
+}
+
+impl std::fmt::Debug for SpawnSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpawnSpec")
+            .field("title", &self.title)
+            .field("prompt", &self.prompt)
+            .field("is_subsession", &self.is_subsession)
+            .field("model", &self.model)
+            .field("wait", &self.wait)
+            .field("mode_override", &self.mode_override)
+            .field("effort", &self.effort)
+            .field("approver", &self.approver.is_some())
+            .finish()
+    }
 }
 
 #[async_trait::async_trait]

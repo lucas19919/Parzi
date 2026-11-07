@@ -1315,8 +1315,9 @@ impl ToolHost {
                             is_subsession: flag("is_subsession", true),
                             model: str_arg("model").filter(|s| !s.trim().is_empty()),
                             wait: flag("wait", true),
-                            mode_override: self.child_mode(),
+                            mode_override: Some(self.child_mode().into()),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
+                            approver: Some(self.p.approver.clone()),
                         },
                     )
                     .await
@@ -1367,15 +1368,19 @@ impl ToolHost {
         }
     }
 
-    fn child_mode(&self) -> Option<String> {
+    /// The parent's own mode, always named: left out, a child would take the
+    /// default from Settings, which can ask less than its parent does.
+    fn child_mode(&self) -> &'static str {
         if self.p.full {
-            Some("full".into())
+            "full"
         } else if self.p.edits_auto {
-            Some("edits".into())
-        } else if self.p.mode == ApprovalMode::Auto {
-            Some("auto".into())
+            "edits"
         } else {
-            None
+            match self.p.mode {
+                ApprovalMode::Auto => "auto",
+                ApprovalMode::Ask => "ask",
+                ApprovalMode::Deny => "deny",
+            }
         }
     }
 

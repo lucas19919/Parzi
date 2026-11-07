@@ -132,6 +132,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                approver: None,
             },
         )
         .await
@@ -158,6 +159,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                approver: None,
             },
         )
         .await
@@ -184,6 +186,7 @@ async fn spawn_wait_collects_child_reply() {
                 wait: true,
                 mode_override: None,
                 effort: None,
+                approver: None,
             },
         ),
     )
@@ -302,6 +305,184 @@ async fn full_access_reaches_the_children() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+struct Person(std::sync::Mutex<Vec<ToolCallInfo>>);
+
+impl Person {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(std::sync::Mutex::default()))
+    }
+
+    fn asked_for(&self, session: &str) -> Vec<String> {
+        let calls = self.0.lock().unwrap();
+        calls
+            .iter()
+            .filter(|c| c.session == session)
+            .map(|c| c.name.clone())
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl Approver for Person {
+    async fn approve(&self, call: &ToolCallInfo) -> Approval {
+        self.0.lock().unwrap().push(call.clone());
+        Approval::Allow
+    }
+}
+
+/// A parent that hands the writing to a child; the child writes a file with
+/// its own tool and runs a command with Parzi's.
+fn writing_crew(want: String) -> Arc<Fake> {
+    Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let want = want.clone();
+            async move {
+                if a.spec.prompt.contains("child writes") {
+                    let input = json!({"file_path": want, "content": "hello"});
+                    if a.ask("Write", input, &[&want]).await == PermissionDecision::Allow {
+                        std::fs::write(&want, "hello").unwrap();
+                    }
+                    let (ok, out) = a
+                        .parzi("shell.exec", json!({"cmd": "echo child-shell"}))
+                        .await;
+                    a.say(&format!("child shell ok={ok} {out}"));
+                    return Ok(TurnEnd::Completed);
+                }
+                let (ok, out) = a
+                    .parzi(
+                        "session.spawn",
+                        json!({"title": "writer", "prompt": format!("child writes {want}"), "wait": true}),
+                    )
+                    .await;
+                a.say(&format!("parent heard: ok={ok} {out}"));
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    )
+}
+
+#[tokio::test]
+async fn ask_and_edits_children_ask_the_person_through_the_parents_approver() {
+    home("teamwork-prop");
+    for (mode, write_asked) in [("ask", true), ("edits", false)] {
+        let dir = std::env::temp_dir().join(format!("parzi-crew-{mode}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("child.txt");
+        let mut cfg = ParziConfig::default();
+        cfg.orchestrator.max_concurrent = 4;
+        // A child must keep its parent's mode, not fall back to this one.
+        cfg.lanes.default_mode = "auto".into();
+        let (orch, store) = orch_with(cfg, &[writing_crew(target.display().to_string())]);
+        let person = Person::new();
+        let (meta, _rx) = orch
+            .spawn(
+                "t",
+                "claude",
+                "delegate the writing",
+                Some(person.clone()),
+                &dir.display().to_string(),
+                "low",
+                vec![],
+                Some(mode.into()),
+            )
+            .await
+            .unwrap();
+        settle(&store, &meta.id).await;
+        let child = store
+            .list_children(&meta.id)
+            .unwrap()
+            .pop()
+            .expect("the spawn made a child");
+        let asked = person.asked_for(&child.id);
+        assert!(
+            asked.iter().any(|n| n == "shell.exec"),
+            "{mode}: the child's command reached the person: {asked:?}"
+        );
+        assert_eq!(
+            asked.iter().any(|n| n == "Write"),
+            write_asked,
+            "{mode}: {asked:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap_or_default(),
+            "hello",
+            "{mode}: the child's write went through once allowed"
+        );
+        let reply = last_reply(&store, &meta.id);
+        assert!(
+            reply.contains("ok=true") && reply.contains("child-shell"),
+            "{mode}: {reply}"
+        );
+        assert!(!reply.contains("no one can answer"), "{mode}: {reply}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[tokio::test]
+async fn a_follow_up_to_an_ask_child_still_reaches_the_person() {
+    home("teamwork-prop");
+    let dir = std::env::temp_dir().join(format!("parzi-again-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let want = dir.join("again.txt").display().to_string();
+    let fake = Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let want = want.clone();
+            async move {
+                let input = json!({"file_path": want, "content": "hello"});
+                let d = a.ask("Write", input, &[&want]).await;
+                a.say(&format!("write: {d:?}"));
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    );
+    let (orch, store) = team(4, fake);
+    let host = Person::new();
+    orch.set_approver(host.clone());
+    let parent = store.create("boss", "t", "claude/model").unwrap();
+    store
+        .set_cwd(&parent.id, &dir.display().to_string())
+        .unwrap();
+    let h = orch.harness();
+    let spawner = Person::new();
+    let child = id_of(
+        &h.spawn(
+            &parent.id,
+            SpawnSpec {
+                title: "writer".into(),
+                prompt: "write it".into(),
+                is_subsession: true,
+                wait: true,
+                mode_override: Some("ask".into()),
+                approver: Some(spawner.clone()),
+                ..SpawnSpec::default()
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    assert_eq!(spawner.asked_for(&child), ["Write"], "the spawn's approver");
+    h.send_message(
+        &parent.id,
+        &child,
+        "write it again",
+        InterKind::Text,
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        host.asked_for(&child),
+        ["Write"],
+        "the follow-up runs in Ask mode and asks the person, not a silent no"
+    );
+    assert!(last_reply(&store, &child).contains("Allow"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test]
 async fn send_message_continues_target_and_can_wait() {
     let fake = answer();
@@ -358,6 +539,7 @@ async fn read_and_list_inspect_sessions() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                approver: None,
             },
         )
         .await
@@ -396,6 +578,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                approver: None,
             },
         )
         .await
@@ -413,6 +596,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 wait: true,
                 mode_override: None,
                 effort: None,
+                approver: None,
             },
         )
         .await
@@ -563,6 +747,7 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
                     wait,
                     mode_override: None,
                     effort: None,
+                    approver: None,
                 },
             )
             .await
@@ -612,6 +797,7 @@ async fn a_subsession_on_a_model_nobody_offers_never_starts() {
                 wait: true,
                 mode_override: Some("auto".into()),
                 effort: None,
+                approver: None,
             },
         )
         .await
