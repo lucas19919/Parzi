@@ -10,7 +10,7 @@ export interface DeskTab {
 }
 
 export interface DeskCmd {
-  op: "open" | "focus" | "close" | "navigate" | "show" | "notify" | "approval" | "deleted";
+  op: "open" | "focus" | "close" | "navigate" | "show" | "notify" | "approval" | "deleted" | "theme";
   id?: string;
   url?: string;
   rev?: number;

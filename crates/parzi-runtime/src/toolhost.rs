@@ -2200,6 +2200,33 @@ impl ToolHost {
                     Err(e) => (false, e),
                 }
             }
+            "desk.theme" => {
+                let mut body = serde_json::json!({ "session": self.p.session_id });
+                for k in [
+                    "pack",
+                    "accent",
+                    "background",
+                    "text",
+                    "panel",
+                    "wallpaper",
+                    "cards",
+                ] {
+                    let v = s(k);
+                    if !v.is_empty() {
+                        body[k] = Value::String(v);
+                    }
+                }
+                match self.desk_call("desk.theme", body).await {
+                    Ok(v) => (
+                        true,
+                        v.get("done")
+                            .and_then(Value::as_str)
+                            .unwrap_or("done")
+                            .to_string(),
+                    ),
+                    Err(e) => (false, e),
+                }
+            }
             "desk.screenshot" => {
                 let body = serde_json::json!({ "session": self.p.session_id });
                 match self.desk_call("desk.screenshot", body).await {

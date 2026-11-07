@@ -646,6 +646,22 @@ fn desk_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "desk.theme".into(),
+            description: "Change how Parzi looks, right away: a theme by name (pack, such as graphite, light or dark), single colours as #hex (accent, background, text, panel; panel \"auto\" mixes it from text and background), how the Home wallpaper shows (wallpaper: band or full) and the cards over it (cards: clear, glass or solid). Leave out what should stay. With nothing given it lists the themes and the current look. Do this yourself when the person asks; do not send them to Settings.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pack": {"type": "string", "description": "theme name"},
+                    "accent": {"type": "string"},
+                    "background": {"type": "string"},
+                    "text": {"type": "string"},
+                    "panel": {"type": "string"},
+                    "wallpaper": {"type": "string", "enum": ["band", "full"]},
+                    "cards": {"type": "string", "enum": ["clear", "glass", "solid"]},
+                },
+            }),
+        },
+        ToolDef {
             name: "desk.notify".into(),
             description: "Tell the human something with a notification in the Parzi window; when the window is in the background its taskbar button flashes too. Keep it to one short line.".into(),
             schema: serde_json::json!({
@@ -670,7 +686,7 @@ fn desk_defs() -> Vec<ToolDef> {
 pub(crate) fn is_desk_tool(name: &str) -> bool {
     matches!(
         name,
-        "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot"
+        "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot" | "desk.theme"
     )
 }
 
@@ -690,6 +706,7 @@ pub const DESK_TOOLS: &[&str] = &[
     "desk.open",
     "desk.notify",
     "desk.screenshot",
+    "desk.theme",
 ];
 
 #[must_use]
@@ -1229,6 +1246,17 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Opening {}",
             str_arg("what").unwrap_or_else(|| "a view".into())
         ),
+        "desk.theme" => match str_arg("pack") {
+            Some(p) => format!("Changing the theme to {p}"),
+            None if args.as_object().is_some_and(|o| {
+                o.values()
+                    .any(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()))
+            }) =>
+            {
+                "Changing the look".into()
+            }
+            None => "Reading the theme".into(),
+        },
         "desk.notify" => format!(
             "Notifying: {}",
             one_line(&str_arg("text").unwrap_or_default(), 60)

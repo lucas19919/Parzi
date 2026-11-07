@@ -485,6 +485,12 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     if !sets("y") {
         theme.background.y = current.background.y;
     }
+    if !sets("fill") {
+        theme.background.fill = current.background.fill.clone();
+    }
+    if !sets("cards") {
+        theme.background.cards = current.background.cards.clone();
+    }
 
     let bgs = paths::backgrounds_dir()?;
     let mut art = vec![];
@@ -526,6 +532,238 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     }
     theme.save()?;
     Ok(theme)
+}
+
+/// A change to the look, as an agent asks for it. Every field is optional;
+/// what is left out stays as it is.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ThemeChange {
+    /// A theme pack by name, in any case: "graphite", "Light".
+    #[serde(default)]
+    pub pack: Option<String>,
+    #[serde(default)]
+    pub accent: Option<String>,
+    #[serde(default)]
+    pub background: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    /// A colour, or "auto" for panels mixed from text and background.
+    #[serde(default)]
+    pub panel: Option<String>,
+    /// "band" or "full".
+    #[serde(default)]
+    pub wallpaper: Option<String>,
+    /// "clear", "glass" or "solid".
+    #[serde(default)]
+    pub cards: Option<String>,
+}
+
+impl ThemeChange {
+    fn is_empty(&self) -> bool {
+        [
+            &self.pack,
+            &self.accent,
+            &self.background,
+            &self.text,
+            &self.panel,
+            &self.wallpaper,
+            &self.cards,
+        ]
+        .iter()
+        .all(|v| v.as_deref().is_none_or(|s| s.trim().is_empty()))
+    }
+}
+
+fn hex_colour(what: &str, raw: &str) -> Result<String> {
+    let t = raw.trim();
+    let ok = t.starts_with('#')
+        && matches!(t.len(), 4 | 7)
+        && t[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if !ok {
+        return Err(ParziError::Validation(format!(
+            "{what} `{t}` is not a colour; give it as #rgb or #rrggbb"
+        )));
+    }
+    Ok(t.to_ascii_uppercase())
+}
+
+fn pack_named(want: &str) -> Result<String> {
+    let fold = |s: &str| s.trim().to_lowercase().replace(['-', '_'], " ");
+    let names = list_packs()?;
+    names
+        .iter()
+        .find(|n| fold(n) == fold(want))
+        .cloned()
+        .ok_or_else(|| {
+            ParziError::Validation(format!(
+                "there is no theme `{}`; the themes are {}",
+                want.trim(),
+                names.join(", ")
+            ))
+        })
+}
+
+fn same_look(a: &ColorTheme, b: &ColorTheme) -> bool {
+    a.stage.eq_ignore_ascii_case(&b.stage)
+        && a.text.eq_ignore_ascii_case(&b.text)
+        && a.panel.eq_ignore_ascii_case(&b.panel)
+}
+
+/// The look as it is now, in a line or two: the theme, the wallpaper, the cards.
+pub fn describe() -> Result<String> {
+    let t = Theme::load().unwrap_or_default().normalized();
+    let packs = list_pack_infos()?;
+    let current = packs.iter().find(|p| same_look(&p.colors, &t.colors));
+    let names: Vec<String> = packs
+        .iter()
+        .map(|p| {
+            if current.is_some_and(|c| c.name == p.name) {
+                format!("{} (current)", p.name)
+            } else {
+                p.name.clone()
+            }
+        })
+        .collect();
+    let wall = if t.background.image.is_empty() {
+        "no wallpaper".to_string()
+    } else {
+        format!(
+            "wallpaper shown as a {}, {} cards over it",
+            if t.background.fill == "full" {
+                "full window"
+            } else {
+                "band"
+            },
+            t.background.cards
+        )
+    };
+    Ok(format!(
+        "Themes: {}. Colours: accent {}, background {}, text {}, panels {}. {wall}.",
+        names.join(", "),
+        t.colors.accent,
+        t.colors.stage,
+        t.colors.text,
+        if t.colors.panel.is_empty() {
+            "auto"
+        } else {
+            &t.colors.panel
+        }
+    ))
+}
+
+/// Applies `c` and says what changed. With nothing asked, says how the look
+/// is now and which themes there are.
+pub fn change(c: &ThemeChange) -> Result<String> {
+    if c.is_empty() {
+        return describe();
+    }
+    // Everything is checked before anything changes.
+    let given = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    for (what, v) in [
+        ("accent", &c.accent),
+        ("background", &c.background),
+        ("text", &c.text),
+    ] {
+        if let Some(v) = given(v) {
+            hex_colour(what, &v)?;
+        }
+    }
+    if let Some(v) = given(&c.panel).filter(|v| !v.eq_ignore_ascii_case("auto")) {
+        hex_colour("panel", &v)?;
+    }
+    if let Some(v) = given(&c.wallpaper) {
+        if !matches!(
+            v.to_lowercase().as_str(),
+            "band" | "full" | "full window" | "fullscreen" | "full screen"
+        ) {
+            return Err(ParziError::Validation(format!(
+                "wallpaper `{v}` is band or full"
+            )));
+        }
+    }
+    if let Some(v) = given(&c.cards) {
+        if !matches!(v.to_lowercase().as_str(), "clear" | "glass" | "solid") {
+            return Err(ParziError::Validation(format!(
+                "cards `{v}` is clear, glass or solid"
+            )));
+        }
+    }
+    if let Some(p) = given(&c.pack) {
+        pack_named(&p)?;
+    }
+    let mut said = vec![];
+    if let Some(want) = c.pack.as_deref().filter(|p| !p.trim().is_empty()) {
+        let name = pack_named(want)?;
+        apply_pack(&name)?;
+        said.push(format!("the {name} theme"));
+    }
+    let mut t = Theme::load().unwrap_or_default();
+    for (what, value, slot) in [
+        ("accent", &c.accent, &mut t.colors.accent),
+        ("background", &c.background, &mut t.colors.stage),
+        ("text", &c.text, &mut t.colors.text),
+    ] {
+        if let Some(v) = value.as_deref().filter(|v| !v.trim().is_empty()) {
+            *slot = hex_colour(what, v)?;
+            said.push(format!("{what} {slot}"));
+        }
+    }
+    if let Some(v) = c.panel.as_deref().filter(|v| !v.trim().is_empty()) {
+        t.colors.panel = if v.trim().eq_ignore_ascii_case("auto") {
+            String::new()
+        } else {
+            hex_colour("panel", v)?
+        };
+        said.push(if t.colors.panel.is_empty() {
+            "automatic panels".to_string()
+        } else {
+            format!("panels {}", t.colors.panel)
+        });
+    }
+    if let Some(v) = c.wallpaper.as_deref().filter(|v| !v.trim().is_empty()) {
+        let v = v.trim().to_lowercase();
+        t.background.fill = match v.as_str() {
+            "band" => "band".into(),
+            "full" | "full window" | "fullscreen" | "full screen" => "full".into(),
+            _ => {
+                return Err(ParziError::Validation(format!(
+                    "wallpaper `{v}` is band or full"
+                )))
+            }
+        };
+        said.push(format!(
+            "the wallpaper as a {}",
+            if t.background.fill == "full" {
+                "full window"
+            } else {
+                "band"
+            }
+        ));
+    }
+    if let Some(v) = c.cards.as_deref().filter(|v| !v.trim().is_empty()) {
+        let v = v.trim().to_lowercase();
+        if !matches!(v.as_str(), "clear" | "glass" | "solid") {
+            return Err(ParziError::Validation(format!(
+                "cards `{v}` is clear, glass or solid"
+            )));
+        }
+        said.push(format!("{v} cards over the wallpaper"));
+        t.background.cards = v;
+    }
+    t.save()?;
+    let mut out = format!("Parzi now has {}.", said.join(", "));
+    if !t.background.image.is_empty() || c.wallpaper.is_none() && c.cards.is_none() {
+        return Ok(out);
+    }
+    out.push_str(
+        " There is no wallpaper yet, so that shows once one is set in Settings, Appearance.",
+    );
+    Ok(out)
 }
 
 const BG_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];

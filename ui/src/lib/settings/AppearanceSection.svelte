@@ -43,6 +43,10 @@
 
   onMount(() => {
     void load();
+    // An agent changed the look while this page is open.
+    const reload = () => void load();
+    document.addEventListener("parzi:theme", reload);
+    return () => document.removeEventListener("parzi:theme", reload);
   });
   onDestroy(() => {
     if (saveTimer) {

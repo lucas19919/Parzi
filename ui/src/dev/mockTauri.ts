@@ -488,7 +488,13 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     ],
   }),
   get_theme: () => theme,
-  get_theme_css: () => `:root{--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};}`,
+  get_theme_css: () => `:root{--accent:${theme.colors.accent};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};}`,
+  // Lets a check change the mock's theme the way an agent's desk_theme would.
+  mock_set_theme: (a) => {
+    Object.assign(theme.colors, (a.colors ?? {}) as object);
+    Object.assign(theme.background, (a.background ?? {}) as object);
+    return null;
+  },
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),
   list_background_urls: () => [],
   list_pack_infos: () => [{ name: "Default", builtin: true, colors: theme.colors, has_art: false }],

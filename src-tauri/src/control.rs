@@ -597,6 +597,7 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "desk.state" => desk_state(ctx, req).await,
         "desk.open" => desk_open(ctx, req).await,
         "desk.notify" => desk_notify(ctx, req),
+        "desk.theme" => desk_theme(ctx, req).await,
         "desk.screenshot" => desk_screenshot(ctx).await,
         "tab.list" => ctx
             .desk
@@ -1022,6 +1023,34 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
     }
     ctx.tell(payload);
     json!({ "ok": true, "done": done })
+}
+
+/// Changes the look and has the window load it. With nothing asked, says
+/// how the look is now and which themes there are.
+async fn desk_theme(ctx: &Ctx, req: &Value) -> Value {
+    let ask: parzi_core::theme::ThemeChange = match serde_json::from_value({
+        let mut v = req.clone();
+        if let Some(o) = v.as_object_mut() {
+            o.remove("session");
+        }
+        v
+    }) {
+        Ok(a) => a,
+        Err(e) => return fail(format!("desk.theme: {e}")),
+    };
+    let asked = req
+        .as_object()
+        .is_some_and(|o| o.keys().any(|k| k != "session"));
+    match tauri::async_runtime::spawn_blocking(move || parzi_core::theme::change(&ask)).await {
+        Ok(Ok(done)) => {
+            if asked {
+                ctx.tell(json!({ "op": "theme" }));
+            }
+            json!({ "ok": true, "done": done })
+        }
+        Ok(Err(e)) => fail(e.to_string()),
+        Err(e) => fail(e.to_string()),
+    }
 }
 
 fn desk_notify(ctx: &Ctx, req: &Value) -> Value {

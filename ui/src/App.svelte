@@ -32,7 +32,7 @@
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { permissionFor } from "./lib/permission";
   import { provideClearSessions } from "./lib/sessions";
-  import { applyThemeCss } from "./lib/theme";
+  import { applyThemeCss, refreshBackground } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
@@ -1645,6 +1645,15 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
     else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     else if (cmd.op === "show") showFromDesk(cmd);
+    else if (cmd.op === "theme") {
+      // An agent changed the look: load it, and the wallpaper a pack may bring.
+      void api
+        .getThemeCss()
+        .then(applyThemeCss)
+        .then(() => refreshBackground())
+        .then(() => document.dispatchEvent(new CustomEvent("parzi:theme")))
+        .catch((e) => toast(`Couldn't load the new theme: ${e}`, true));
+    }
     else if (cmd.op === "notify" && cmd.text) {
       notify(cmd.text, cmd.session ?? "");
       chime(true);
