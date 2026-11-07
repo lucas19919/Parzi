@@ -10,7 +10,9 @@ export interface DeskTab {
 }
 
 export interface DeskCmd {
-  op: "open" | "focus" | "close" | "navigate" | "show" | "notify" | "approval" | "deleted" | "theme";
+  op: "open" | "focus" | "close" | "navigate" | "show" | "notify" | "approval" | "deleted" | "theme" | "call";
+  /** For op "call": what the desk asks the window (control.rs app_call). */
+  call?: Record<string, unknown>;
   id?: string;
   url?: string;
   rev?: number;

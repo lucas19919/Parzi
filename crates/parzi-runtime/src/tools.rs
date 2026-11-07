@@ -646,6 +646,56 @@ fn desk_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "app.actions".into(),
+            description: "What you can do in Parzi's own window right now, as named actions with their arguments: tabs, sessions, the composer (model, effort, permission), the sidebar, the file card, settings, the theme and more. query narrows the list. Run one with app_do. For anything not listed, use app_screen and app_click.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            }),
+        },
+        ToolDef {
+            name: "app.do".into(),
+            description: "Run one of Parzi's named actions (see app_actions) with its arguments, the same way the person's click would. Returns what it did.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "an id from app_actions, such as tabs.new"},
+                    "args": {"type": "object"},
+                },
+                "required": ["action"],
+            }),
+        },
+        ToolDef {
+            name: "app.screen".into(),
+            description: "Everything the person can press or fill in Parzi's window right now: buttons, tabs, switches, menu items, fields and their values, each with a ref and the card or page it sits in. Use the ref with app_click or app_type. Open a page first (app_do settings.open) to see its controls.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "only items whose label or place contains this"}},
+            }),
+        },
+        ToolDef {
+            name: "app.click".into(),
+            description: "Click a control in Parzi's window by its ref from app_screen. A control that deletes, removes, resets or signs out waits for the person's yes. Look again with app_screen after a click that opens a menu or a page.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"ref": {"type": "integer"}},
+                "required": ["ref"],
+            }),
+        },
+        ToolDef {
+            name: "app.type".into(),
+            description: "Fill a field in Parzi's window by its ref from app_screen, replacing what is there. enter: true presses Enter after.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "integer"},
+                    "text": {"type": "string"},
+                    "enter": {"type": "boolean"},
+                },
+                "required": ["ref", "text"],
+            }),
+        },
+        ToolDef {
             name: "desk.theme".into(),
             description: "Change how Parzi looks, right away: a theme by name (pack, such as graphite, light or dark), single colours as #hex (accent, background, text, panel; panel \"auto\" mixes it from text and background), how the Home wallpaper shows (wallpaper: band or full) and the cards over it (cards: clear, glass or solid). Leave out what should stay. With nothing given it lists the themes and the current look. Do this yourself when the person asks; do not send them to Settings.".into(),
             schema: serde_json::json!({
@@ -687,6 +737,14 @@ pub(crate) fn is_desk_tool(name: &str) -> bool {
     matches!(
         name,
         "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot" | "desk.theme"
+    ) || is_app_tool(name)
+}
+
+/// Agents using Parzi's own window: its named actions and its controls.
+pub(crate) fn is_app_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type"
     )
 }
 
@@ -707,6 +765,11 @@ pub const DESK_TOOLS: &[&str] = &[
     "desk.notify",
     "desk.screenshot",
     "desk.theme",
+    "app.actions",
+    "app.do",
+    "app.screen",
+    "app.click",
+    "app.type",
 ];
 
 #[must_use]
@@ -1246,6 +1309,17 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Opening {}",
             str_arg("what").unwrap_or_else(|| "a view".into())
         ),
+        "app.actions" => "Looking at what Parzi can do".into(),
+        "app.screen" => "Looking at Parzi's window".into(),
+        "app.do" => match str_arg("confirm") {
+            Some(what) => format!("{what} in Parzi"),
+            None => format!("Doing {} in Parzi", str_arg("action").unwrap_or_default()),
+        },
+        "app.click" => match str_arg("confirm") {
+            Some(what) => format!("{what} in Parzi"),
+            None => "Clicking in Parzi".into(),
+        },
+        "app.type" => "Typing in Parzi".into(),
         "desk.theme" => match str_arg("pack") {
             Some(p) => format!("Changing the theme to {p}"),
             None if args.as_object().is_some_and(|o| {
@@ -1371,7 +1445,7 @@ fn short_tool_name(name: &str) -> &str {
 
 const NAMESPACES: &[&str] = &[
     "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "models",
-    "ask", "todo", "github",
+    "ask", "todo", "github", "app",
 ];
 
 /// The MCP server agents reach Parzi's own tools on.

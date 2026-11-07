@@ -857,6 +857,7 @@ fn main() {
             appearance::delete_background,
             appearance::save_background_data,
             control::desk_sync,
+            control::desk_answer,
             onboard::onboard_scan,
             onboard::onboard_browser,
             onboard::onboard_import,

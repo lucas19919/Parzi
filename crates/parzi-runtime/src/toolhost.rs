@@ -934,6 +934,9 @@ impl ToolHost {
                     | "browser.close"
                     | "desk.open"
                     | "desk.screenshot"
+                    | "app.do"
+                    | "app.click"
+                    | "app.type"
             ) {
                 self.approved(id, name, args).await
             } else {
@@ -941,6 +944,9 @@ impl ToolHost {
             };
             if let Err(why) = allowed {
                 return self.refused(name, why);
+            }
+            if crate::tools::is_app_tool(name) {
+                return self.execute_app(id, name, args).await;
             }
             if is_desk_tool(name) {
                 return self.execute_desk(name, args).await;
@@ -2145,6 +2151,43 @@ impl ToolHost {
             Err(e) => return (false, e),
         };
         (true, page_text(&v))
+    }
+
+    /// Parzi's own window, used like a person uses it. The window answers
+    /// with text for the agent, or asks for the person's yes first when a
+    /// click or action would delete, remove, reset or sign out; that yes is
+    /// asked in every mode.
+    async fn execute_app(&self, id: &str, name: &str, args: &Value) -> (bool, String) {
+        let mut body = match args {
+            Value::Object(o) => Value::Object(o.clone()),
+            _ => serde_json::json!({}),
+        };
+        body["session"] = Value::String(self.p.session_id.clone());
+        let mut reply = match self.desk_call(name, body.clone()).await {
+            Ok(v) => v,
+            Err(e) => return (false, e),
+        };
+        if let Some(what) = reply
+            .pointer("/result/needs_yes")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            let mut shown = body.clone();
+            shown["confirm"] = Value::String(what.clone());
+            if let Err(why) = self.ask(id, name, &shown).await {
+                return self.refused(name, why);
+            }
+            body["confirmed"] = Value::Bool(true);
+            reply = match self.desk_call(name, body).await {
+                Ok(v) => v,
+                Err(e) => return (false, e),
+            };
+        }
+        let text = reply
+            .pointer("/result/text")
+            .and_then(Value::as_str)
+            .unwrap_or("done");
+        (true, text.to_string())
     }
 
     async fn execute_desk(&self, name: &str, args: &Value) -> (bool, String) {

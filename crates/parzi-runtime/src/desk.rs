@@ -330,6 +330,10 @@ pub fn deadline(op: &str, body: &Value) -> Option<Duration> {
         "tab.read" | "tab.click" | "tab.type" | "tab.press" | "tab.select" | "tab.scroll"
         | "tab.shot" => PAGE_DEADLINE,
         "tab.open" | "desk.open" | "desk.screenshot" => Duration::from_secs(30),
+        // The window answers within 20s (control.rs UI_CALL_WAIT).
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" => {
+            Duration::from_secs(25)
+        }
         "providers" => Duration::from_secs(120),
         "hello" | "ping" => Duration::from_secs(3),
         _ => Duration::from_secs(15),

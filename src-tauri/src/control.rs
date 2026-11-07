@@ -80,6 +80,8 @@ pub struct Desk {
     approvals: Mutex<BTreeMap<String, Value>>,
     consents: Mutex<HashMap<String, Instant>>,
     dialogs: tokio::sync::Mutex<()>,
+    /// Questions sent to the window, waiting for its answer.
+    calls: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Value>>>,
 }
 
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -107,6 +109,7 @@ impl Desk {
             approvals: Mutex::default(),
             consents: Mutex::default(),
             dialogs: tokio::sync::Mutex::new(()),
+            calls: Mutex::default(),
         }
     }
 
@@ -335,6 +338,14 @@ impl Desk {
 
     fn allow_for_a_while(&self, tab: &str) {
         locked(&self.consents).insert(tab.to_string(), Instant::now() + CONSENT_FOR);
+    }
+}
+
+/// The window's answer to a question `ui_call` sent it.
+#[tauri::command]
+pub fn desk_answer(state: State<'_, AppState>, id: String, result: Value) {
+    if let Some(tx) = locked(&state.desk.calls).remove(&id) {
+        let _ = tx.send(result);
     }
 }
 
@@ -598,6 +609,9 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "desk.open" => desk_open(ctx, req).await,
         "desk.notify" => desk_notify(ctx, req),
         "desk.theme" => desk_theme(ctx, req).await,
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" => {
+            app_call(ctx, op, req).await
+        }
         "desk.screenshot" => desk_screenshot(ctx).await,
         "tab.list" => ctx
             .desk
@@ -645,6 +659,21 @@ fn short_title(url: &str) -> String {
 impl Ctx {
     fn tell(&self, payload: Value) {
         let _ = self.app.emit("parzi://desk", payload);
+    }
+
+    /// Asks the window something and waits for its answer: what it can
+    /// do, what it shows, or to do it.
+    async fn ui_call(&self, call: Value) -> Result<Value, String> {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        locked(&self.desk.calls).insert(id.clone(), tx);
+        self.tell(json!({ "op": "call", "id": id, "call": call }));
+        let answer = tokio::time::timeout(UI_CALL_WAIT, rx).await;
+        locked(&self.desk.calls).remove(&id);
+        match answer {
+            Ok(Ok(v)) => Ok(v),
+            _ => Err("the Parzi window did not answer; it may be busy or minimised, try again".into()),
+        }
     }
 
     async fn ask_person(
@@ -1050,6 +1079,25 @@ async fn desk_theme(ctx: &Ctx, req: &Value) -> Value {
         }
         Ok(Err(e)) => fail(e.to_string()),
         Err(e) => fail(e.to_string()),
+    }
+}
+
+/// How long the window has to answer. Long enough for a slow action, short
+/// enough that a stuck window does not hold a turn.
+const UI_CALL_WAIT: Duration = Duration::from_secs(20);
+
+/// Agents use Parzi's own interface: list and run its named actions, see
+/// what is on screen, click and type there. The window does the work, the
+/// same way a person's click does.
+async fn app_call(ctx: &Ctx, op: &str, req: &Value) -> Value {
+    let mut call = req.clone();
+    if let Some(o) = call.as_object_mut() {
+        o.insert("kind".into(), json!(op.trim_start_matches("app.")));
+    }
+    match ctx.ui_call(call).await {
+        Ok(v) if v.get("ok").and_then(Value::as_bool) == Some(false) => v,
+        Ok(v) => json!({ "ok": true, "result": v }),
+        Err(e) => fail(e),
     }
 }
 

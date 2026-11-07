@@ -564,6 +564,11 @@ export function onBrowser(cb: (page: PageEvent) => void) {
   return listen<PageEvent>("parzi://browser", (ev) => cb(ev.payload));
 }
 
+/** The window's answer to a question the desk sent it (control.rs ui_call). */
+export function deskAnswer(id: string, result: unknown) {
+  return invoke<void>("desk_answer", { id, result });
+}
+
 export function deskSync(tabs: DeskTab[], rev: number, active: string) {
   return invoke<void>("desk_sync", { tabs, rev, active });
 }

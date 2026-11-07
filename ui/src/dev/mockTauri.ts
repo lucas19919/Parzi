@@ -489,6 +489,12 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   }),
   get_theme: () => theme,
   get_theme_css: () => `:root{--accent:${theme.colors.accent};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};}`,
+  // Keeps the window's answers to desk calls, for checks to read.
+  desk_answer: (a) => {
+    const w = window as unknown as { __deskAnswers?: Record<string, unknown> };
+    (w.__deskAnswers ??= {})[String(a.id)] = a.result;
+    return null;
+  },
   // Lets a check change the mock's theme the way an agent's desk_theme would.
   mock_set_theme: (a) => {
     Object.assign(theme.colors, (a.colors ?? {}) as object);
