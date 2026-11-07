@@ -279,14 +279,13 @@ fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ui.show_artifact".into(),
-            description: "A versioned artifact card with copy and save. For code over ~15 lines, files, docs, data, diffs, and svg diagrams. Contract: FIRST say in chat what it is in one or two sentences, THEN one call with the complete content. Never paste the content into chat too. An incomplete call fails and the person sees an error card. Reuse an id for a new version. html is a sandboxed page (inline everything, no network) and only for a page that is not a Parzi component. Showing or redesigning Parzi UI uses kind preview, never html or json: the real component renders with the app's tokens. content is a JSON string {\"component\":\"omnibar\",\"variant\":1}. Variant 1 is the agent composer, 2 is web. Optional tokens restyle that render: bg, text, accent, panel as #hex, radius and space as Npx. Optional props input, permission, folder, branch, model, hero set what the live component shows. Example content: {\"component\":\"omnibar\",\"variant\":1,\"tokens\":{\"radius\":\"16px\",\"panel\":\"#ffffff\"},\"input\":\"Ask anything\"}. Kinds: code|markdown|html|svg|json|csv|diff|text|preview|image. image content is a picture's full path. The artifact is the delivery: never send the person to a tab or window.".into(),
+            description: "A versioned card with copy and save, for what the person keeps: code longer than a screen, a diff, a document, or a picture already on disk. FIRST say in one or two sentences what it is, THEN one call with the complete content; never paste it into chat too. Reuse an id for a new version. Kinds: code (set language), diff, markdown (a document), json, csv, text, image (content is the picture's full path), preview. Not for charts (a viz block in your reply), diagrams (the diagonaldiagrams connector), or tables of numbers (markdown); hand built html and svg are refused. preview shows a real Parzi component, for showing or redesigning Parzi itself: content is a JSON string such as {\"component\":\"omnibar\",\"variant\":1} (1 is the agent composer, 2 is web), with optional tokens (bg, text, accent, panel as #hex; radius and space as Npx) and props (input, permission, folder, branch, model, hero). Never send the person to a tab or window to see it.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "artifact": {"type": "number", "const": 1},
                     "id": {"type": "string", "description": "slug [a-z0-9-], reused across versions"},
                     "title": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["code","markdown","html","svg","json","csv","diff","text","preview","image"]},
+                    "kind": {"type": "string", "enum": ["code","markdown","json","csv","diff","text","preview","image"]},
                     "language": {"type": "string"},
                     "content": {"type": "string"},
                 },

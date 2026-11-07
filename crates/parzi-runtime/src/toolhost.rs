@@ -1988,12 +1988,15 @@ impl ToolHost {
             return Err(format!("{raw} is not an image file of at most 8 MiB"));
         }
         let bytes = std::fs::read(&source).map_err(|e| format!("{raw}: {e}"))?;
-        if !parzi_core::context::is_image_bytes(&bytes) {
-            return Err(format!("{raw} is not a supported image"));
-        }
         let ext = source
             .extension()
             .map_or_else(String::new, |e| e.to_string_lossy().to_ascii_lowercase());
+        let drawing = ext == "svg" && parzi_core::context::is_svg_text(&bytes);
+        if !drawing && !parzi_core::context::is_image_bytes(&bytes) {
+            return Err(format!(
+                "{raw} is not a picture Parzi shows (png, jpg, webp, gif or svg)"
+            ));
+        }
         let kept = self
             .p
             .store
