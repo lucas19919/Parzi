@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpError {
@@ -19,6 +20,11 @@ impl std::fmt::Display for HttpError {
 }
 
 pub const SIGN_IN: &str = "sign-in needed";
+
+/// How long the goodbye to a server may take; it runs on its own thread.
+const GOODBYE_WAIT: Duration = Duration::from_secs(3);
+const REPLY_LIMIT: u64 = 32 << 20;
+const ERROR_LIMIT: u64 = 64 << 10;
 
 static CHALLENGES: std::sync::Mutex<Option<HashMap<String, String>>> = std::sync::Mutex::new(None);
 
@@ -40,6 +46,21 @@ enum Auth {
     Gh,
 }
 
+/// Why one exchange did not end in an answer.
+enum Failure {
+    Http(HttpError),
+    /// The server no longer knows our session: start a new one.
+    Expired,
+}
+
+impl From<HttpError> for Failure {
+    fn from(e: HttpError) -> Self {
+        Self::Http(e)
+    }
+}
+
+/// One Streamable HTTP connection: one keep-alive agent, the session the
+/// server gave, and how to start that session again.
 pub struct HttpConn {
     name: String,
     url: String,
@@ -48,7 +69,11 @@ pub struct HttpConn {
     session: Option<String>,
     protocol: Option<String>,
     gh_token: Option<String>,
+    agent: ureq::Agent,
+    init: Option<Value>,
 }
+
+type Reply = ureq::http::Response<ureq::Body>;
 
 impl HttpConn {
     #[must_use]
@@ -65,6 +90,11 @@ impl HttpConn {
             session: None,
             protocol: None,
             gh_token: None,
+            agent: ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .into(),
+            init: None,
         }
     }
 
@@ -72,69 +102,146 @@ impl HttpConn {
         self.protocol = Some(v.to_string());
     }
 
+    /// Sends one message; the answer to it when it is a request. When the
+    /// server has ended the session, a new one is started and the message
+    /// sent once more.
     pub fn send(&mut self, msg: &Value, timeout: Duration) -> Result<Option<Value>, HttpError> {
+        if msg.get("method").and_then(Value::as_str) == Some("initialize") {
+            self.init = Some(msg.clone());
+            self.session = None;
+        }
+        match self.exchange(msg, timeout) {
+            Ok(v) => Ok(v),
+            Err(Failure::Http(e)) => Err(e),
+            Err(Failure::Expired) => {
+                self.renew(timeout)?;
+                match self.exchange(msg, timeout) {
+                    Ok(v) => Ok(v),
+                    Err(Failure::Http(e)) => Err(e),
+                    Err(Failure::Expired) => Err(HttpError::Other(
+                        "the server ended the session again right after it started".into(),
+                    )),
+                }
+            }
+        }
+    }
+
+    fn renew(&mut self, timeout: Duration) -> Result<(), HttpError> {
+        let Some(init) = self.init.clone() else {
+            return Err(HttpError::Other(
+                "the server ended this connection; it reconnects on the next call".into(),
+            ));
+        };
+        tracing::debug!(server = %self.name, "mcp: the server ended the session; starting a new one");
+        self.session = None;
+        let expired = || HttpError::Other("the server would not start a new session".into());
+        let reply = match self.exchange(&init, timeout) {
+            Ok(r) => r,
+            Err(Failure::Http(e)) => return Err(e),
+            Err(Failure::Expired) => return Err(expired()),
+        };
+        if let Some(err) = reply.as_ref().and_then(|r| r.get("error")) {
+            return Err(HttpError::Other(format!(
+                "the server would not start a new session: {err}"
+            )));
+        }
+        let ready = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+        match self.exchange(&ready, timeout) {
+            Ok(_) => Ok(()),
+            Err(Failure::Http(e)) => Err(e),
+            Err(Failure::Expired) => Err(expired()),
+        }
+    }
+
+    fn exchange(&mut self, msg: &Value, timeout: Duration) -> Result<Option<Value>, Failure> {
+        let static_auth = self
+            .headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("authorization"));
         let mut retried = false;
         loop {
             let bearer = self.bearer()?;
-            let (status, www_auth, session, ctype, body) =
-                self.post(msg, bearer.as_deref(), timeout)?;
-            if let Some(err) = refused(
-                self.headers
-                    .keys()
-                    .any(|k| k.eq_ignore_ascii_case("authorization")),
-                status,
-                www_auth.as_deref(),
-                &body,
-            ) {
-                return Err(err);
-            }
-            if status == 401 || (status == 403 && www_auth.is_some()) {
-                if !retried
-                    && self.auth == Auth::Headers
-                    && crate::mcp_oauth::refresh(&self.name).is_ok()
+            let mut res = self.post(msg, bearer.as_deref(), timeout)?;
+            let status = res.status().as_u16();
+            let header = |k: &str| {
+                res.headers()
+                    .get(k)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string)
+            };
+            let (www_auth, session, ctype) = (
+                header("www-authenticate"),
+                header("mcp-session-id"),
+                header("content-type").unwrap_or_default(),
+            );
+            let wall = status == 401 || (status == 403 && www_auth.is_some());
+            if wall || !(200..300).contains(&status) {
+                let body = read_text(&mut res, ERROR_LIMIT).unwrap_or_default();
+                if let Some(err) = refused(static_auth, status, www_auth.as_deref(), &body) {
+                    return Err(err.into());
+                }
+                if wall {
+                    if !retried
+                        && self.auth == Auth::Headers
+                        && crate::mcp_oauth::refresh(&self.name).is_ok()
+                    {
+                        retried = true;
+                        continue;
+                    }
+                    if !retried && self.auth == Auth::Gh {
+                        self.gh_token = None;
+                        retried = true;
+                        continue;
+                    }
+                    return Err(HttpError::SignIn(www_auth).into());
+                }
+                if status == 404 && self.session.is_some() {
+                    self.session = None;
+                    return Err(Failure::Expired);
+                }
+                if status == 405 && msg.get("method").and_then(Value::as_str) == Some("initialize")
                 {
-                    retried = true;
-                    continue;
+                    return Err(HttpError::Other(format!(
+                        "{} does not take MCP over HTTP POST (an older SSE-only server?); try its /mcp address",
+                        self.url
+                    ))
+                    .into());
                 }
-                if !retried && self.auth == Auth::Gh {
-                    self.gh_token = None;
-                    retried = true;
-                    continue;
-                }
-                return Err(HttpError::SignIn(www_auth));
-            }
-            if status == 404 && self.session.is_some() {
-                self.session = None;
-                return Err(HttpError::Other(
-                    "the server ended this connection; it reconnects on the next call".into(),
-                ));
-            }
-            if !(200..300).contains(&status) {
                 let detail: String = body.chars().take(200).collect();
-                return Err(HttpError::Other(format!(
-                    "the server answered {status}: {detail}"
-                )));
+                return Err(
+                    HttpError::Other(format!("the server answered {status}: {detail}")).into(),
+                );
             }
             if let Some(s) = session {
                 self.session = Some(s);
             }
-            let Some(id) = msg.get("id") else {
+            // A notification is done once accepted (202): no body to wait for.
+            let Some(id) = msg.get("id").filter(|i| !i.is_null()) else {
                 return Ok(None);
             };
-            if status == 202 || body.trim().is_empty() {
-                return Err(HttpError::Other("the server sent no reply".into()));
+            if status == 202 || status == 204 {
+                return Err(HttpError::Other(
+                    "the server accepted the request but sent no answer".into(),
+                )
+                .into());
             }
-            let replies = if ctype.contains("text/event-stream") {
-                events(&body)
-            } else {
-                match serde_json::from_str::<Value>(&body) {
-                    Ok(Value::Array(all)) => all,
-                    Ok(one) => vec![one],
-                    Err(e) => {
-                        return Err(HttpError::Other(format!(
-                            "the server's reply was not JSON: {e}"
-                        )))
-                    }
+            if ctype.contains("text/event-stream") {
+                let reader = res.body_mut().with_config().limit(REPLY_LIMIT).reader();
+                return answer_in_stream(std::io::BufReader::new(reader), id)
+                    .map(Some)
+                    .map_err(Failure::Http);
+            }
+            let body = read_text(&mut res, REPLY_LIMIT)?;
+            if body.trim().is_empty() {
+                return Err(HttpError::Other("the server sent no reply".into()).into());
+            }
+            let replies = match serde_json::from_str::<Value>(&body) {
+                Ok(Value::Array(all)) => all,
+                Ok(one) => vec![one],
+                Err(e) => {
+                    return Err(
+                        HttpError::Other(format!("the server's reply was not JSON: {e}")).into(),
+                    )
                 }
             };
             return replies
@@ -142,7 +249,7 @@ impl HttpConn {
                 .find(|r| r.get("id") == Some(id))
                 .map(Some)
                 .ok_or_else(|| {
-                    HttpError::Other("the server's reply did not answer the request".into())
+                    HttpError::Other("the server's reply did not answer the request".into()).into()
                 });
         }
     }
@@ -167,19 +274,14 @@ impl HttpConn {
         }
     }
 
-    #[allow(clippy::type_complexity)]
     fn post(
         &self,
         msg: &Value,
         bearer: Option<&str>,
         timeout: Duration,
-    ) -> Result<(u16, Option<String>, Option<String>, String, String), HttpError> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(timeout))
-            .build()
-            .into();
-        let mut req = agent
+    ) -> Result<Reply, HttpError> {
+        let mut req = self
+            .agent
             .post(&self.url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream");
@@ -195,34 +297,116 @@ impl HttpConn {
         if let Some(p) = &self.protocol {
             req = req.header("MCP-Protocol-Version", p.as_str());
         }
-        let mut res = req
+        req.config()
+            .timeout_global(Some(timeout))
+            .build()
             .send(msg.to_string())
-            .map_err(|e| HttpError::Other(format!("could not reach {}: {e}", self.url)))?;
-        let header = |k: &str| {
-            res.headers()
-                .get(k)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        };
-        let (www, session, ctype) = (
-            header("www-authenticate"),
-            header("mcp-session-id"),
-            header("content-type"),
-        );
-        let body = res
-            .body_mut()
-            .with_config()
-            .limit(32 << 20)
-            .read_to_string()
-            .map_err(|e| HttpError::Other(format!("reading the reply failed: {e}")))?;
-        Ok((
-            res.status().as_u16(),
-            www,
-            session,
-            ctype.unwrap_or_default(),
-            body,
-        ))
+            .map_err(|e| HttpError::Other(format!("could not reach {}: {e}", self.url)))
     }
+}
+
+impl Drop for HttpConn {
+    /// Tells the server this session is over, so it can free it.
+    fn drop(&mut self) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        let (agent, url, name) = (self.agent.clone(), self.url.clone(), self.name.clone());
+        let mut headers: Vec<(String, String)> = self
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        headers.push(("Mcp-Session-Id".into(), session));
+        if let Some(p) = &self.protocol {
+            headers.push(("MCP-Protocol-Version".into(), p.clone()));
+        }
+        let gh = self.gh_token.clone();
+        let fixed = self
+            .headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("authorization"));
+        let _ = std::thread::Builder::new()
+            .name("mcp-goodbye".into())
+            .spawn(move || {
+                let bearer = if fixed {
+                    None
+                } else {
+                    gh.or_else(|| crate::mcp_oauth::bearer(&name))
+                };
+                let mut req = agent.delete(&url);
+                for (k, v) in &headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                if let Some(b) = bearer {
+                    req = req.header("Authorization", format!("Bearer {b}").as_str());
+                }
+                let _ = req
+                    .config()
+                    .timeout_global(Some(GOODBYE_WAIT))
+                    .build()
+                    .call();
+            });
+    }
+}
+
+fn read_text(res: &mut Reply, limit: u64) -> Result<String, HttpError> {
+    res.body_mut()
+        .with_config()
+        .limit(limit)
+        .read_to_string()
+        .map_err(|e| HttpError::Other(format!("reading the reply failed: {e}")))
+}
+
+/// Reads an event stream until the answer to `id` arrives, then stops: a
+/// server may keep the stream open after it.
+fn answer_in_stream(mut reader: impl BufRead, id: &Value) -> Result<Value, HttpError> {
+    let mut data: Vec<String> = vec![];
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| HttpError::Other(format!("reading the reply failed: {e}")))?;
+        let text = line.trim_end_matches(['\n', '\r']);
+        if n == 0 || text.is_empty() {
+            if !data.is_empty() {
+                let event = data.join("\n");
+                data.clear();
+                if let Some(answer) = answer_in(&event, id) {
+                    return Ok(answer);
+                }
+            }
+            if n == 0 {
+                return Err(HttpError::Other(
+                    "the server's reply did not answer the request".into(),
+                ));
+            }
+            continue;
+        }
+        if let Some(d) = text.strip_prefix("data:") {
+            data.push(d.strip_prefix(' ').unwrap_or(d).to_string());
+        }
+    }
+}
+
+fn answer_in(event: &str, id: &Value) -> Option<Value> {
+    let v = serde_json::from_str::<Value>(event).ok()?;
+    let all = match v {
+        Value::Array(all) => all,
+        one => vec![one],
+    };
+    all.into_iter().find(|m| {
+        let answers = m.get("id") == Some(id) && m.get("method").is_none();
+        if !answers {
+            let what = m
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("a message");
+            tracing::debug!("mcp: the server sent {what} on the reply stream");
+        }
+        answers
+    })
 }
 
 #[must_use]
@@ -334,5 +518,31 @@ mod tests {
         let got = events(body);
         assert_eq!(got.len(), 2);
         assert_eq!(got[1]["id"], 1);
+    }
+
+    /// A reader that hands out what it has, then blocks as an open stream would.
+    struct OpenStream(std::io::Cursor<Vec<u8>>);
+
+    impl std::io::Read for OpenStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self.0.read(buf)? {
+                0 => panic!("read past the answer: the stream is still open"),
+                n => Ok(n),
+            }
+        }
+    }
+
+    #[test]
+    fn the_answer_ends_the_read_even_on_an_open_stream() {
+        let stream = "data: {\"jsonrpc\":\"2.0\",\"id\":\"s1\",\"method\":\"ping\"}\n\n\
+                      data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n\n";
+        let reader = std::io::BufReader::with_capacity(
+            8,
+            OpenStream(std::io::Cursor::new(stream.as_bytes().to_vec())),
+        );
+        let got = answer_in_stream(reader, &json!(7)).unwrap();
+        assert_eq!(got["result"]["ok"], true);
+        let none = answer_in_stream(std::io::BufReader::new(&b"data: {}\n\n"[..]), &json!(7));
+        assert!(none.is_err());
     }
 }
