@@ -8,6 +8,14 @@ test("hostOf strips protocol and path", () => {
   assert.equal(hostOf(""), "");
 });
 
+test("hostOf keeps the port and drops sign-in details", () => {
+  assert.equal(hostOf("http://localhost:5173/app"), "localhost:5173");
+  assert.equal(hostOf("https://user:secret@example.com/"), "example.com");
+  assert.equal(hostOf("https://a-very-long-subdomain.of-some-company.example.co.uk/"), "a-very-long-subdomain.of-some-company.example.co.uk");
+  assert.equal(hostOf("about:blank"), "");
+  assert.equal(hostOf("not a url"), "");
+});
+
 test("toAddress builds https or search fallback", () => {
   assert.equal(toAddress("https://example.com/x"), "https://example.com/x");
   assert.equal(toAddress("example.com"), "https://example.com");

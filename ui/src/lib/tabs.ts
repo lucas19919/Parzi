@@ -1,6 +1,5 @@
-import type { PlanQuote } from "./api";
+import type { ComposerMode, PlanQuote } from "./api";
 
-export type ComposerMode = "search" | "build";
 type TabKind = "session" | "page" | "settings" | "preview" | "artifact";
 
 export interface TabComposerState {
@@ -134,11 +133,13 @@ export function artifactTab(doc: ArtifactDoc, group: string | null): Tab {
   return { id: tabId(), kind: "artifact", title: doc.title, group, doc, composer: defaultComposer() };
 }
 
+/** The host and port a URL points at, without "www.", or "" when it has none. */
 export function hostOf(url: string): string {
-  return url
-    .replace(/^https?:\/\/(www\.)?/i, "")
-    .replace(/[/?#].*$/, "")
-    .slice(0, 32);
+  try {
+    return new URL(url).host.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
 }
 
 export function toAddress(raw: string): string {

@@ -12,7 +12,7 @@
   import { addPin, bookmarks, completeAddress, history, pins, removePin } from "./browserData";
   import { prompts, removePrompt, type PagePrompt } from "./browserState";
   import { appFor, permissionText } from "./pageRules";
-  import { toAddress, type Tab } from "./tabs";
+  import { hostOf, toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
   import { NO_VEIL, stepVeil, type Veil } from "./veil";
 
@@ -69,14 +69,6 @@
   $: setOverlay(`address-${tab.id}`, open);
   $: if (open && form) listStyle = `left:${form.offsetLeft}px;width:${form.offsetWidth}px`;
   $: prompt = immersive ? null : ($prompts.find((p) => p.tab === tab.id) ?? null);
-
-  function hostOf(u: string) {
-    try {
-      return new URL(u).hostname;
-    } catch {
-      return "";
-    }
-  }
 
   function trackLoad(now: string, loading: boolean) {
     const step = stepVeil(veil, now, loading);
