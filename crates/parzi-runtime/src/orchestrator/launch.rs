@@ -534,6 +534,9 @@ impl Orchestrator {
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
         let mut instructions = system_parts(&cwd);
+        if let Some(note) = p.mcp.status_note() {
+            instructions.push(note);
+        }
         if let Ok(dir) = parzi_core::paths::scratch_dir(&q.session_id) {
             if std::path::Path::new(&cwd) != dir.as_path() && std::fs::create_dir_all(&dir).is_ok()
             {

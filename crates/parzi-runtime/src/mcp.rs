@@ -183,7 +183,8 @@ struct Inner {
     starts: AtomicU64,
     known: std::sync::Mutex<HashMap<String, Known>>,
     listing: std::sync::Mutex<HashMap<String, Instant>>,
-    failed: std::sync::Mutex<HashMap<String, (String, Instant)>>,
+    /// Connectors whose last listing failed: their settings key, when, and why.
+    failed: std::sync::Mutex<HashMap<String, (String, Instant, String)>>,
     settled: tokio::sync::watch::Sender<u64>,
     folders: std::sync::Mutex<Vec<String>>,
 }
@@ -217,6 +218,36 @@ const CHILD_ENV_PASSTHROUGH: &[&str] = &[
     "GOPATH",
     "GOROOT",
     "JAVA_HOME",
+    // How this machine reaches the internet. A uvx or npx connector installs
+    // itself on first start; behind a company proxy or a TLS-inspecting
+    // firewall it fails without these, and the agent only sees a tool that
+    // never answers. Unix tools read both spellings of the proxy names.
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "UV_NATIVE_TLS",
+    // Where packages come from, and where installers keep their caches and
+    // settings, so a company mirror is used and nothing installs twice.
+    "NPM_CONFIG_REGISTRY",
+    "npm_config_registry",
+    "UV_INDEX_URL",
+    "UV_DEFAULT_INDEX",
+    "UV_EXTRA_INDEX_URL",
+    "PIP_INDEX_URL",
+    "UV_CACHE_DIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
 ];
 
 pub(crate) fn child_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
@@ -510,6 +541,73 @@ async fn serve_incoming(
 }
 
 impl McpManager {
+    /// A few lines for an agent's instructions on which connectors work
+    /// right now, from what is already known: a weaker model that cannot
+    /// see a connector's tools would otherwise rebuild them by hand or
+    /// guess. None when no connector is on. Never starts a connector.
+    #[must_use]
+    pub fn status_note(&self) -> Option<String> {
+        let configs: Vec<(String, McpServerCfg)> = {
+            let c = self.inner.configs.read().ok()?;
+            let mut v: Vec<_> = c
+                .iter()
+                .filter(|(_, cfg)| cfg.enabled)
+                .map(|(n, cfg)| (n.clone(), cfg.clone()))
+                .collect();
+            v.sort_by(|a, b| a.0.cmp(&b.0));
+            v
+        };
+        if configs.is_empty() {
+            return None;
+        }
+        let failed = self
+            .inner
+            .failed
+            .lock()
+            .ok()
+            .map(|f| f.clone())
+            .unwrap_or_default();
+        let mut ready = vec![];
+        let mut trouble = vec![];
+        for (name, cfg) in &configs {
+            let key = crate::mcp_cache::key(name, cfg);
+            if let Some((_, _, why)) = failed.get(name).filter(|(k, _, _)| *k == key) {
+                let why = why.lines().next().unwrap_or_default().trim();
+                trouble.push(format!(
+                    "- {name} is not working: {}",
+                    parzi_core::text::clip(why, 160)
+                ));
+                continue;
+            }
+            match self.inner.cached(name, cfg) {
+                Some((tools, _)) => {
+                    let n = tools
+                        .iter()
+                        .filter(|t| cfg.is_tool_exposed(&t.name))
+                        .count();
+                    if n > 0 {
+                        ready.push(format!("{name} ({n} tools)"));
+                    }
+                }
+                None => trouble.push(format!(
+                    "- {name} is still starting; its tools may appear on a later turn"
+                )),
+            }
+        }
+        let mut out = String::from(
+            "# Connectors\n\nTools from the person's connectors come through the parzi server, named <connector>__<tool>.",
+        );
+        if !ready.is_empty() {
+            out.push_str(&format!("\nWorking: {}.", ready.join(", ")));
+        }
+        if !trouble.is_empty() {
+            out.push('\n');
+            out.push_str(&trouble.join("\n"));
+            out.push_str("\nWhen a task needs one that is not working, say so plainly so the person can fix it in Settings, Connectors. Do not rebuild what it does by hand.");
+        }
+        Some(out)
+    }
+
     pub fn new(configs: HashMap<String, McpServerCfg>, idle_kill_secs: u64) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -819,7 +917,7 @@ impl Inner {
         let key = crate::mcp_cache::key(name, &cfg);
         let backing_off = me.failed.lock().is_ok_and(|f| {
             f.get(name)
-                .is_some_and(|(k, at)| *k == key && at.elapsed() < FAIL_BACKOFF)
+                .is_some_and(|(k, at, _)| *k == key && at.elapsed() < FAIL_BACKOFF)
         });
         if backing_off {
             return false;
@@ -842,7 +940,7 @@ impl Inner {
             if let Err(e) = res {
                 tracing::info!(server = %name, "connector did not list its tools: {e}");
                 if let Ok(mut f) = me.failed.lock() {
-                    f.insert(name, (key, Instant::now()));
+                    f.insert(name, (key, Instant::now(), e.to_string()));
                 }
             }
             me.settled.send_modify(|n| *n = n.wrapping_add(1));
@@ -1079,6 +1177,82 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect()
+    }
+
+    #[test]
+    fn the_connector_note_says_what_works_and_what_does_not() {
+        let mut servers = HashMap::new();
+        for name in ["draw", "notes", "broken", "off"] {
+            servers.insert(
+                name.to_string(),
+                McpServerCfg {
+                    command: format!("{name}-mcp"),
+                    enabled: name != "off",
+                    ..McpServerCfg::default()
+                },
+            );
+        }
+        let m = McpManager::new(servers, 60);
+        m.inner.remember(
+            "draw",
+            &[McpTool {
+                server: "draw".into(),
+                name: "render".into(),
+                ..McpTool::default()
+            }],
+        );
+        let key = crate::mcp_cache::key("broken", &m.inner.config_for("broken").unwrap());
+        m.inner.failed.lock().unwrap().insert(
+            "broken".into(),
+            (
+                key,
+                Instant::now(),
+                "initialize: server closed the pipe\nmore".into(),
+            ),
+        );
+        let note = m.status_note().unwrap();
+        assert!(note.contains("Working: draw (1 tools)."), "{note}");
+        assert!(
+            note.contains("- broken is not working: initialize: server closed the pipe\n"),
+            "{note}"
+        );
+        assert!(note.contains("- notes is still starting"), "{note}");
+        assert!(
+            !note.contains("off"),
+            "a connector that is off is not mentioned: {note}"
+        );
+        assert!(
+            note.contains("Do not rebuild what it does by hand"),
+            "{note}"
+        );
+        assert!(McpManager::new(HashMap::new(), 60).status_note().is_none());
+    }
+
+    #[test]
+    fn a_connector_reaches_the_internet_the_way_this_machine_does() {
+        let parent = map(&[
+            ("PATH", "/usr/bin"),
+            ("HTTPS_PROXY", "http://proxy.corp:8080"),
+            ("no_proxy", "localhost,.corp"),
+            ("SSL_CERT_FILE", "/etc/corp/ca.pem"),
+            ("NODE_EXTRA_CA_CERTS", "/etc/corp/ca.pem"),
+            ("UV_INDEX_URL", "https://pypi.corp/simple"),
+            ("OPENAI_API_KEY", "sk-secret"),
+        ]);
+        let env = child_env_from(&parent, &HashMap::new());
+        for k in [
+            "HTTPS_PROXY",
+            "no_proxy",
+            "SSL_CERT_FILE",
+            "NODE_EXTRA_CA_CERTS",
+            "UV_INDEX_URL",
+        ] {
+            assert_eq!(env.get(k), parent.get(k), "{k} reaches the connector");
+        }
+        assert!(
+            !env.contains_key("OPENAI_API_KEY"),
+            "keys still stay behind"
+        );
     }
 
     #[test]
