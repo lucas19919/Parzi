@@ -502,7 +502,7 @@
     padding: 0 calc(var(--space) * 2);
     background: var(--hover);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     font: inherit;
     font-size: var(--fs-xs);

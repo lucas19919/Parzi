@@ -446,7 +446,7 @@
   .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
   .mini-icon {
     min-width: 20px; height: 20px; padding: 0 var(--space); line-height: 1;
-    border-radius: var(--radius-sm); border: none; background: var(--panel); color: var(--muted);
+    border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: var(--fs-xs); cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
   }
@@ -454,7 +454,7 @@
   .mini-icon.armed { color: var(--bad-text); font-weight: 600; }
   .pack-rename {
     font: inherit; font-size: var(--fs-sm); color: var(--text);
-    background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius-sm);
+    background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
     padding: var(--space) var(--space); width: 100%; box-sizing: border-box; outline: none;
   }
 
@@ -532,7 +532,7 @@
     padding: 0 calc(var(--space) * 3);
     background: none;
     border: 1px solid var(--line);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     font: inherit;
     font-size: var(--fs-sm);

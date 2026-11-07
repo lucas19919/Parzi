@@ -25,15 +25,20 @@ is `--disabled` (0.5) everywhere; dimmed rows are `0.55`.
 Control heights are `--h-sm` (24), `--h` (28), `--h-row` (36), `--h-row-lg` (46).
 Popovers sit at `--z-pop`, tooltips at `--z-tip`.
 
-Radius has one rule and no nesting maths; spacing separates a box from what
-is inside it, so an outer corner is never larger to stay concentric:
+Corners are constant: every box has the same corner, whatever its size or
+what it sits in. There is no height rule and no nesting maths, so nothing
+turns into a pill because it happens to be short, and a button inside a card
+has the card's corner. 8px is also the corner Windows 11 gives the window.
 
 | What | Radius |
 |---|---|
-| Anything 24px or taller: cards, popovers, tooltips, buttons, inputs, segmented controls, chips, logos and letter badges | `--radius` (12px) |
-| Anything shorter: inline code, kbd, progress tracks, small badges, except count chips on tabs, which stay `--radius` | `--radius-sm` (4px) |
+| Every box: cards, popovers, menus, tooltips, toasts, inputs, buttons and icon buttons of any size, tabs, chips, tags, rows, logos, images, code blocks, tables | `--radius` (8px) |
+| Marks drawn inside text or inside a control: inline code, kbd, citation and file links in a reply, progress and usage tracks, legend swatches, checkboxes, favicons and thumbnails inside a row, the stop square | `--radius-sm` (4px) |
 | Dots, knobs, spinners | `50%` |
 | Only the switch and the slider track | `999px` |
+
+A box that wants softer or sharper corners is a bug, not a variant. To change
+the feel of the whole app, change `--radius` in `theme.css` and nothing else.
 
 Text has four roles, global classes in `theme.css`. Use the class and set no
 font size, weight or colour next to it:

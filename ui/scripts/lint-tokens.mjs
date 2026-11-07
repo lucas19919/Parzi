@@ -20,8 +20,10 @@ const radiusProp = /(?:^|[;{\s])border-radius\s*:\s*([^;]+);/g;
 const sizeProp = /(?:^|[;{\s])font-size\s*:\s*([^;]+);/g;
 const weightProp = /(?:^|[;{\s])font-weight\s*:\s*([^;]+);/g;
 
-// Only the switch and the slider track are pills. Everything else is
-// --radius at 24px and up, --radius-sm below that, 50% for dots and knobs.
+// Only the switch and the slider track are pills. Every box is --radius,
+// marks inside text or a control are --radius-sm, dots and knobs are 50%.
+// Which of the two a box needs depends on what it is, so lint-radii.mjs
+// checks that on the rendered page.
 const PILLS = new Set(["lib/settings/shared.css", "lib/settings/Slider.svelte"]);
 const WEIGHTS = new Set(["400", "500", "600", "700", "inherit"]);
 const RAW_SIZE_OK = new Set(["theme.css"]);

@@ -400,7 +400,7 @@
   .leg.trend-leg { color: var(--muted); }
   .trend-sw { width: 14px !important; height: 0 !important; border-radius: 0 !important; border-top: 2px dashed var(--muted); }
   .xbtn {
-    background: transparent; border: none; border-radius: var(--radius-sm);
+    background: transparent; border: none; border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-xs); padding: var(--space) calc(var(--space) * 2); cursor: pointer; flex: none;
   }

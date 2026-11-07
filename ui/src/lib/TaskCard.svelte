@@ -83,7 +83,7 @@
   .proj {
     flex: none;
     padding: 0 calc(var(--space) * 2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     background: var(--hover);
     color: var(--muted);
     font-size: var(--fs-xs);

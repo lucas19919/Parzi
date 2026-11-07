@@ -43,7 +43,7 @@
   --on-badge: #ffffff;
 
   --space: 4px;
-  --radius: 12px;
+  --radius: 8px;
   --gap: calc(var(--space) * 2);
   --radius-sm: calc(var(--space));
 
@@ -426,7 +426,7 @@ a:hover { color: var(--link); }
 }
 .code-lang { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
 .code-tools button {
-  padding: var(--space) calc(var(--space) * 2); background: var(--line); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--space) calc(var(--space) * 2); background: var(--line); border: 1px solid var(--line); border-radius: var(--radius);
   color: var(--muted); font-size: var(--fs-xs); cursor: pointer;
   opacity: 0; transition: opacity var(--dur) ease;
 }
