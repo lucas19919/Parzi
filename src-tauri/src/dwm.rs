@@ -76,6 +76,8 @@ struct Asked {
 
 thread_local! {
     static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
+    // Each running download stays referenced here until it ends, so its
+    // progress and finish events never depend on WebView2 keeping it alone.
     static DOWNLOADS: RefCell<HashMap<String, ICoreWebView2DownloadOperation>> =
         RefCell::new(HashMap::new());
     static NEW_WINDOW: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
@@ -382,14 +384,6 @@ pub fn drop_permissions(tab: &str) {
     });
     for id in ids {
         answer_permission(&id, false);
-    }
-}
-
-pub fn cancel_download(id: &str) {
-    if let Some(op) = DOWNLOADS.with(|m| m.borrow().get(id).cloned()) {
-        if let Err(e) = unsafe { op.Cancel() } {
-            tracing::debug!("download not cancelled: {e}");
-        }
     }
 }
 

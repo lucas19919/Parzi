@@ -493,10 +493,7 @@ export interface Download {
 }
 
 export const downloads = {
-  list: () => invoke<Download[]>("browser_downloads"),
   reveal: (id: string) => invoke<void>("browser_download_reveal", { id }),
-  cancel: (id: string) => invoke<void>("browser_download_cancel", { id }),
-  clear: () => invoke<Download[]>("browser_downloads_clear"),
 };
 
 export function onDownload(cb: (d: Download) => void) {

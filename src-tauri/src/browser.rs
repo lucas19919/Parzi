@@ -1073,7 +1073,6 @@ pub fn apply_devtools(app: &AppHandle, on: bool) {
 pub fn warm_up() {
     std::thread::spawn(|| {
         let _ = crate::siteprefs::get();
-        let _ = crate::downloads::browser_downloads();
     });
 }
 

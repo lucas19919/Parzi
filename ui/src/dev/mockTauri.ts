@@ -400,12 +400,6 @@ const browserPrefs = {
   ],
 };
 
-const downloadsList = [
-  { id: "d1", tab: "t", url: "https://example.com/report.pdf", name: "report.pdf", path: "C:\\Users\\dev\\Downloads\\report.pdf", received: 2_400_000, total: 2_400_000, state: "done", started: now - 600_000 },
-  { id: "d2", tab: "t", url: "https://example.com/big.zip", name: "big.zip", path: "C:\\Users\\dev\\Downloads\\big.zip", received: 31_000_000, total: 88_000_000, state: "progress", started: now - 60_000 },
-  { id: "d3", tab: "t", url: "https://example.com/old.iso", name: "old.iso", path: "C:\\Users\\dev\\Downloads\\old.iso", received: 0, total: 0, state: "failed", started: now - 90_000_000 },
-];
-
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   plan_view: (a) => planView(String(a.project ?? "")),
   plan_prs: () => (params.get("plan") === "none" ? [] : prs),
@@ -501,8 +495,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     browserPrefs.sites = browserPrefs.sites.filter((s) => !(s.origin === a.origin && (!a.kind || s.kind === a.kind)));
     return browserPrefs;
   },
-  browser_downloads: () => downloadsList,
-  browser_downloads_clear: () => downloadsList.filter((d) => d.state === "progress"),
   onboard_scan: () => scan,
   onboard_import: (a) => ({
     notes: Math.max(0, (a.notes as string[]).length - 1),

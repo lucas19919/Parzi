@@ -8,7 +8,7 @@
     type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
-  import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
+  import { addPrompt, dropTabPrompts } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
   import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
@@ -832,7 +832,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function onDownloadEvent(d: Download) {
-    upsertDownload(d);
     const key = `download-${d.id}`;
     if (d.state === "progress") {
       keyedToast(key, `Downloading ${d.name}`, { progress: downloadShare(d), ms: 0 });
@@ -1710,10 +1709,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const unKey = onBrowserKey((name) => void shortcut(name));
     const unAsk = onBrowserAsk((a) => addPrompt({ ...a }));
     const unDownload = onDownload(onDownloadEvent);
-    downloadApi
-      .list()
-      .then((list) => downloadList.set(list))
-      .catch(() => {});
     const unActivity = watchActivity();
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
