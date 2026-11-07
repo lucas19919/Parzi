@@ -116,7 +116,7 @@ impl Stdio {
 }
 
 enum Conn {
-    Stdio(Stdio),
+    Stdio(Box<Stdio>),
     Http {
         conn: Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>,
         next_id: AtomicU64,
@@ -1068,13 +1068,13 @@ impl Inner {
             peer.clone(),
             incoming,
         ));
-        Ok(Conn::Stdio(Stdio {
+        Ok(Conn::Stdio(Box::new(Stdio {
             peer,
             child: std::sync::Mutex::new(Some(child)),
             stderr,
             stderr_done: std::sync::Mutex::new(Some(done)),
             broken: AtomicBool::new(false),
-        }))
+        })))
     }
 
     fn spawn_reaper(name: String, slot: Slot, idle: Duration, epoch: u64) {
