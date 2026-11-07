@@ -159,7 +159,7 @@ impl LiveShell {
     fn reserved(cmd: &str) -> Self {
         Self {
             cmd: cmd.to_string(),
-            started_at: now_ms(),
+            started_at: parzi_core::now_ms_i64(),
             child: None,
             buf: Vec::new(),
             total: 0,
@@ -237,12 +237,6 @@ impl Drop for FgMark {
         let extra = reg.foreground.len().saturating_sub(FG_KEEP);
         reg.foreground.drain(..extra);
     }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn lock(inner: &Mutex<Registry>) -> MutexGuard<'_, Registry> {
@@ -334,7 +328,7 @@ impl ShellRegistry {
                 background: false,
                 running: true,
                 exit: None,
-                started: now_ms(),
+                started: parzi_core::now_ms_i64(),
                 ms: 0,
             });
             id
@@ -504,7 +498,7 @@ impl ShellRegistry {
     pub fn jobs(&self) -> Vec<ShellJob> {
         let mut reg = self.reg();
         let mut expired = vec![];
-        let now = now_ms();
+        let now = parzi_core::now_ms_i64();
         // Foreground first: the sort is stable, and a command that finished and
         // the one started right after it can share a millisecond.
         let mut out: Vec<ShellJob> = reg

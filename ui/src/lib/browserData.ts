@@ -1,6 +1,6 @@
 import { writable, type Writable } from "svelte/store";
 import { iconFor, rememberIcon, type Closed } from "./pageRules";
-import { bare } from "./suggest";
+export { completeAddress } from "./suggest";
 import { restoreTab, type Tab } from "./tabs";
 import { toast } from "./toast";
 
@@ -70,28 +70,6 @@ export function recordVisit(url: string, title = "") {
 
 export function titleVisit(url: string, title: string) {
   history.update((all) => all.map((v) => (v.url === url ? { ...v, title } : v)));
-}
-
-export function completeAddress(typed: string, visits: Visit[], marks: { url: string }[]): string {
-  const t = typed.toLowerCase();
-  if (t.length < 2 || /\s/.test(t) || /^https?:/.test(t)) return "";
-  const scores = new Map<string, number>();
-  const add = (url: string, score: number) => {
-    const b = bare(url);
-    const c = t.includes("/") ? b : b.split("/")[0];
-    if (c.length > t.length && c.toLowerCase().startsWith(t)) scores.set(c, (scores.get(c) ?? 0) + score);
-  };
-  for (const v of visits) add(v.url, v.count + 1);
-  for (const m of marks) add(m.url, 3);
-  let best = "";
-  let top = 0;
-  for (const [c, score] of scores) {
-    if (score > top || (score === top && c.length < best.length)) {
-      best = c;
-      top = score;
-    }
-  }
-  return best;
 }
 
 export function addPin(url: string, title: string) {

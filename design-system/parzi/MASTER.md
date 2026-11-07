@@ -13,8 +13,8 @@ A theme sets four colors: `--bg`, `--text`, `--accent`, and `--panel` (empty
 panel means text at 6% over the background). Muted, line, faint, hover,
 selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
 `--bad` are fixed status colors. No hex in a `<style>` block.
-`user.css` loads last and may override any token. Charts read tokens through
-`resolveColor()` in `lib/theme.ts`.
+`user.css` loads last and may override any token. Charts are the `viz`
+components, which style with the tokens directly; there is one chart style.
 
 Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
 Icons come only from `Icon.svelte`, Lucide outlines at a constant 1px stroke, the
@@ -25,15 +25,21 @@ is `--disabled` (0.5) everywhere; dimmed rows are `0.55`.
 Control heights are `--h-sm` (24), `--h` (28), `--h-row` (36), `--h-row-lg` (46).
 Popovers sit at `--z-pop`, tooltips at `--z-tip`.
 
-Radius has one rule and no nesting maths; spacing separates a box from what
-is inside it, so an outer corner is never larger to stay concentric:
+Corners are constant: every box has the same 12px corner, whatever its size
+or what it sits in. There is no height rule and no nesting maths, so a small
+icon button never drops to a sharper corner than its neighbour, and a button
+inside a card has the card's corner. At 24 to 28px that corner is about half
+the height, so short buttons, tabs and chips read as pills; that is the look.
 
 | What | Radius |
 |---|---|
-| Anything 24px or taller: cards, popovers, tooltips, buttons, inputs, segmented controls, chips, logos and letter badges | `--radius` (12px) |
-| Anything shorter: inline code, kbd, progress tracks, small badges, except count chips on tabs, which stay `--radius` | `--radius-sm` (4px) |
+| Every box: cards, popovers, menus, tooltips, toasts, inputs, buttons and icon buttons of any size, tabs, chips, tags, rows, logos, images, code blocks, tables | `--radius` (12px) |
+| Marks drawn inside text or inside a control: inline code, kbd, citation and file links in a reply, progress and usage tracks, legend swatches, checkboxes, favicons and thumbnails inside a row, the stop square | `--radius-sm` (4px) |
 | Dots, knobs, spinners | `50%` |
 | Only the switch and the slider track | `999px` |
+
+A box that wants softer or sharper corners is a bug, not a variant. To change
+the feel of the whole app, change `--radius` in `theme.css` and nothing else.
 
 Text has four roles, global classes in `theme.css`. Use the class and set no
 font size, weight or colour next to it:
@@ -58,8 +64,12 @@ shows, `--bg-y`). Edits preview through inline vars (`lib/theme.ts`
 `previewTheme`), persist after 400 ms, then the authoritative stylesheet
 from Rust replaces the preview (`applyThemeCss` always clears inline
 vars). Theme packs live in `~/.parzi/themes/<slug>/`; a pack without art
-keeps the current backdrop. There is no glass, no blur, no wallpaper
-grade: surfaces are solid `--panel` on `--bg`.
+keeps the current backdrop. Surfaces are solid `--panel` on `--bg`, with one
+exception the person chooses: on Home the wallpaper shows as a band across the
+top or the full window, and the cards and composer over it are Clear (outlined,
+the default), Glass (frosted, the only `backdrop-filter` in the app) or Solid.
+That lives in `App.svelte` under `.over-art`, keyed by `html[data-art-fill]`
+and `html[data-art-cards]`, which `lib/theme.ts` sets from the theme.
 
 ## Layout
 
@@ -144,7 +154,7 @@ grade: surfaces are solid `--panel` on `--bg`.
 
 ## Anti-patterns (instant reject in review)
 
-- `backdrop-filter` anywhere: surfaces are solid, there is nothing to blur through.
+- `backdrop-filter` anywhere but the Glass cards over the Home wallpaper.
 - Dead controls: every visible button and command has a handler.
 - Hardcoded hex where a token exists; spacing or radii off the `--space` / `--radius` scale.
 - Silent catch blocks in UI code; missing toast on failure paths.

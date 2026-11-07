@@ -193,7 +193,7 @@ impl Approver for GuiApprover {
             Ok(Ok(a)) => a,
             _ => {
                 expired(&self.app, &key, &call.session);
-                Approval::Deny
+                Approval::Expired
             }
         }
     }
@@ -779,10 +779,7 @@ fn main() {
             siteprefs::browser_prefs,
             siteprefs::browser_set_pref,
             siteprefs::browser_forget_site,
-            downloads::browser_downloads,
             downloads::browser_download_reveal,
-            downloads::browser_download_cancel,
-            downloads::browser_downloads_clear,
             search::search_suggest,
             adblock::adblock_state,
             adblock::adblock_enable,
@@ -860,6 +857,7 @@ fn main() {
             appearance::delete_background,
             appearance::save_background_data,
             control::desk_sync,
+            control::desk_answer,
             onboard::onboard_scan,
             onboard::onboard_browser,
             onboard::onboard_import,

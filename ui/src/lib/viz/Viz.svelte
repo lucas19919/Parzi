@@ -1,4 +1,20 @@
+<script lang="ts" context="module">
+  // Charts already shown this run do not animate in again when the thread
+  // draws them a second time.
+  const seen = new Set<string>();
+  const reduced = () => {
+    try {
+      return matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return true;
+    }
+  };
+</script>
+
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { tweened } from "svelte/motion";
+  import { cubicOut } from "svelte/easing";
   import Icon from "../Icon.svelte";
   import Bars from "./Bars.svelte";
   import Hist from "./Hist.svelte";
@@ -10,31 +26,78 @@
   import Table from "./Table.svelte";
   import Timeline from "./Timeline.svelte";
   import { fmt, parseViz } from "./spec";
+  import { lerpNumbers, numbersOf, shapeOf, withNumbers } from "./tween";
 
   export let spec: unknown;
   export let bare = false;
 
   $: parsed = parseViz(spec);
-  $: s = parsed.ok ? parsed.spec : null;
-  $: title = s?.title ?? "";
+  $: real = parsed.ok ? parsed.spec : null;
+  $: title = real?.title ?? "";
+
+  // Entry: bars, histograms, progress and stat numbers grow from nothing,
+  // lines and sparks draw on, rows rise in turn, once the chart is in view.
+  // Updates: when only its numbers change, the chart eases to the new ones.
+  const key = typeof spec === "string" ? spec : JSON.stringify(spec);
+  const still = reduced() || seen.has(key);
+  const grow = tweened(still ? 1 : 0, { duration: 900, easing: cubicOut });
+  let waiting = !still;
+  let rising = false;
+  let figure: HTMLElement | null = null;
+
+  const nums = tweened<number[]>([], { duration: 600, easing: cubicOut, interpolate: (a, b) => (t) => lerpNumbers(a, b, t) });
+  let shape = "";
+  $: if (real) {
+    const next = shapeOf(real);
+    void nums.set(numbersOf(real), { duration: shape && next === shape && !reduced() ? 600 : 0 });
+    shape = next;
+  }
+  $: target = real ? numbersOf(real) : [];
+  $: s = real ? withNumbers(real, $nums.length === target.length ? $nums : target, $grow) : null;
+
+  function reveal() {
+    seen.add(key);
+    waiting = false;
+    rising = true;
+    void grow.set(1);
+  }
+
+  onMount(() => {
+    if (!waiting) return;
+    if (!figure || typeof IntersectionObserver === "undefined") {
+      reveal();
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          io.disconnect();
+          reveal();
+        }
+      },
+      { threshold: 0.2 },
+    );
+    io.observe(figure);
+    return () => io.disconnect();
+  });
 </script>
 
 {#if s}
-  <figure class="viz" class:bare data-viz={s.type} aria-label={bare || !title ? title || undefined : undefined}>
+  <figure bind:this={figure} class="viz" class:bare class:waiting class:rising data-viz={s.type} aria-label={bare || !title ? title || undefined : undefined}>
     {#if title && !bare}<figcaption class="t-section">{title}</figcaption>{/if}
     {#if s.type === "stat"}
       <div class="stats">
-        {#each s.stats as st}<Stat stat={st} unit={s.unit} />{/each}
+        {#each s.stats as st}<Stat stat={st} unit={s.unit} draw={$grow} />{/each}
       </div>
     {:else if s.type === "bars"}
-      <Bars items={s.items} orient={s.orient} unit={s.unit} label={title} height={bare ? 112 : 168} />
+      <Bars items={s.items} orient={s.orient} unit={s.unit} label={title} height={bare ? 112 : 168} grow={$grow} />
     {:else if s.type === "hist"}
-      <Hist bins={s.bins} total={s.total} mean={s.mean} unit={s.unit} label={title} height={bare ? 112 : 168} />
+      <Hist bins={s.bins} total={s.total} mean={s.mean} unit={s.unit} label={title} height={bare ? 112 : 168} grow={$grow} />
     {:else if s.type === "line"}
-      <Line labels={s.labels} series={s.series} area={s.area} points={s.points} unit={s.unit} label={title} height={bare ? 112 : 180} />
+      <Line labels={s.labels} series={s.series} area={s.area} points={s.points} unit={s.unit} label={title} height={bare ? 112 : 180} draw={$grow} />
     {:else if s.type === "spark"}
       <div class="spark-row">
-        <Spark values={s.values} area={s.area} unit={s.unit} label={title} height={bare ? 40 : 32} />
+        <Spark values={s.values} area={s.area} unit={s.unit} label={title} height={bare ? 40 : 32} draw={$grow} />
         <span class="last">{fmt(s.values[s.values.length - 1], s.unit)}</span>
       </div>
     {:else if s.type === "progress"}
@@ -84,6 +147,21 @@
     border: none;
     border-radius: 0;
     background: none;
+  }
+  /* Rows of lists, tables and timelines rise in turn the first time the
+     chart is in view. Reduced motion skips it (theme.css). */
+  .viz.waiting :global(.rise) {
+    opacity: 0;
+  }
+  .viz.rising :global(.rise) {
+    animation: -global-viz-rise 420ms var(--ease-out) both;
+    animation-delay: calc(min(var(--i, 0), 14) * 45ms);
+  }
+  @keyframes -global-viz-rise {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
   }
   .stats {
     display: grid;

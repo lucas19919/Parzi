@@ -1,12 +1,4 @@
-import { writable } from "svelte/store";
 import { api, type Theme } from "./api";
-
-export const themeRev = writable(0);
-let rev = 0;
-function bump() {
-  rev++;
-  themeRev.set(rev);
-}
 
 const GENERIC_FAMILIES = new Set([
   "system-ui", "sans-serif", "serif", "monospace", "ui-monospace",
@@ -32,53 +24,6 @@ export function normalizeHex(s: string): string {
   return h.toUpperCase();
 }
 
-let probe: CanvasRenderingContext2D | null = null;
-
-export function resolveColor(token: string, fallback: string): string {
-  try {
-    const el = document.createElement("span");
-    el.style.color = `var(${token}, ${fallback})`;
-    document.body.appendChild(el);
-    const computed = getComputedStyle(el).color;
-    el.remove();
-    probe ??= document.createElement("canvas").getContext("2d", { willReadFrequently: true });
-    if (!probe) return computed || fallback;
-    probe.clearRect(0, 0, 1, 1);
-    probe.fillStyle = computed;
-    probe.fillRect(0, 0, 1, 1);
-    const [r, g, b, a] = probe.getImageData(0, 0, 1, 1).data;
-    return `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`;
-  } catch {
-    return fallback;
-  }
-}
-
-export interface ChartPalette {
-  ink: string[];
-  line: string;
-  faint: string;
-  muted: string;
-  panel: string;
-  text: string;
-}
-
-let palette: { rev: number; value: ChartPalette } | null = null;
-
-export function chartPalette(_rev: number = rev): ChartPalette {
-  if (palette?.rev === rev) return palette.value;
-  const accent = resolveColor("--accent", "#5eb1ff");
-  const value: ChartPalette = {
-    ink: [accent, resolveColor("--ok", "#22c55e"), accent, resolveColor("--warn", "#f59e0b"), resolveColor("--bad", "#ef4444")],
-    line: resolveColor("--line", "#333"),
-    faint: resolveColor("--faint", "#999"),
-    muted: resolveColor("--muted", "#999"),
-    panel: resolveColor("--panel", "#14141a"),
-    text: resolveColor("--text", "#eee"),
-  };
-  palette = { rev, value };
-  return value;
-}
-
 function themeVars(t: Theme): Record<string, string> {
   return {
     "--font": cssFontList(t.font.family),
@@ -91,16 +36,29 @@ function themeVars(t: Theme): Record<string, string> {
     "--panel": t.colors.panel?.trim() ? t.colors.panel : "color-mix(in srgb, var(--text) 6%, var(--bg))",
     "--bg-height": `${Math.round(t.background.height * 100)}%`,
     "--bg-y": `${Math.round(t.background.y * 100)}%`,
+    "--art-fill": t.background.fill ?? "band",
+    "--art-cards": t.background.cards ?? "clear",
   };
+}
+
+/** The wallpaper's fill and the cards' look arrive as theme variables; as
+ *  attributes on the page, plain CSS can style by them. */
+function syncArt() {
+  const root = document.documentElement;
+  const css = getComputedStyle(root);
+  const fill = css.getPropertyValue("--art-fill").trim();
+  const cards = css.getPropertyValue("--art-cards").trim();
+  root.dataset.artFill = fill === "full" ? "full" : "band";
+  root.dataset.artCards = cards === "glass" || cards === "solid" ? cards : "clear";
 }
 
 export function previewTheme(t: Theme) {
   const s = document.documentElement.style;
   for (const [k, v] of Object.entries(themeVars(t))) s.setProperty(k, v);
-  bump();
+  syncArt();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y", "--art-fill", "--art-cards"];
 
 function clearPreview() {
   const s = document.documentElement.style;
@@ -114,7 +72,7 @@ export function applyThemeCss(css: string) {
   style.textContent = css;
   document.head.appendChild(style);
   clearPreview();
-  bump();
+  syncArt();
 }
 
 export async function refreshBackground() {

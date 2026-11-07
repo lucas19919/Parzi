@@ -293,10 +293,15 @@ impl TurnFiles {
         .into_iter()
         .flatten()
         .collect();
-        if spec.tools.is_some() {
+        if let Some(t) = spec.tools.as_ref().filter(|t| t.shell) {
+            let tool = |n: &str| format!("mcp__{}__{n}", t.name);
             text.insert(
                 0,
-                "Parzi rules override any repo instructions below that conflict: run shell through shell.exec, never native Bash.".to_string(),
+                format!(
+                    "Parzi rules override any repo instructions below that conflict: run shell commands with {} (long-running ones with {}); your own Bash is off.",
+                    tool("shell_exec"),
+                    tool("shell_start")
+                ),
             );
         }
         if !text.is_empty() {
@@ -425,9 +430,21 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Result<Vec<String>, Provider
         a.push(p.display().to_string());
         a.push("--allowedTools".into());
         a.push(format!("mcp__{}", t.name));
+        if t.shell {
+            // One `=` value: a variadic flag would swallow a later positional argument.
+            a.push(format!("--disallowedTools={}", NATIVE_SHELL.join(",")));
+        }
     }
     Ok(a)
 }
+
+/// Claude Code's own command runners, hidden while Parzi serves the shell, so
+/// Claude never calls one only to be refused. Bash also takes Monitor (a script
+/// streamed in the background) with it; PowerShell is the Windows shell, and
+/// BashOutput is the output reader of Claude Code versions before TaskStop.
+/// KillShell is left on: Claude Code now reads it as TaskStop, which also stops
+/// background agents, and with no shell of its own there is nothing else to stop.
+const NATIVE_SHELL: &[&str] = &["Bash", "PowerShell", "Monitor", "BashOutput"];
 
 fn resume_id(v: &Value) -> Option<String> {
     v.get("session_id")
@@ -1276,11 +1293,11 @@ mod tests {
         // Shape sent by Claude Code 2.1.316: the top level names only the
         // window nearest its threshold, the rest sit under unifiedWindows.
         let info = json!({"status": "allowed_warning", "resetsAt": 1_794_009_600u64, "rateLimitType": "seven_day", "utilization": 0.97,
-            "unifiedWindows": {
-                "five_hour": {"utilization": 0.01, "resetsAt": 1_793_805_000u64, "status": "allowed"},
-                "seven_day": {"utilization": 0.97, "resetsAt": 1_794_009_600u64, "status": "allowed_warning"},
-                "seven_day_opus": {"resetsAt": 1_794_009_600u64, "status": "rejected"}
-            }});
+        "unifiedWindows": {
+            "five_hour": {"utilization": 0.01, "resetsAt": 1_793_805_000u64, "status": "allowed"},
+            "seven_day": {"utilization": 0.97, "resetsAt": 1_794_009_600u64, "status": "allowed_warning"},
+            "seven_day_opus": {"resetsAt": 1_794_009_600u64, "status": "rejected"}
+        }});
         let got = usage_windows(&info);
         let find = |l: &str| got.iter().find(|(w, _)| w.label == l).cloned().unwrap();
         assert_eq!(got.len(), 3);
@@ -1289,7 +1306,9 @@ mod tests {
         let (opus, rejected) = find("Weekly · Opus");
         assert!(rejected && (opus.used_percent - 100.0).abs() < 1e-9);
         // An older CLI with only the top-level window still counts.
-        let old = usage_windows(&json!({"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.37}));
+        let old = usage_windows(
+            &json!({"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.37}),
+        );
         assert_eq!(old.len(), 1);
         assert_eq!(old[0].0.label, "Session");
     }
@@ -1841,6 +1860,7 @@ mod tests {
                 name: "parzi".into(),
                 url: "http://127.0.0.1:1/mcp/t".into(),
                 token: "t".into(),
+                shell: true,
             }),
             ..spec()
         };
@@ -1851,17 +1871,73 @@ mod tests {
         assert!(!scratch.exists(), "the turn's scratch outlived it");
         assert!(written.contains("parzi brief") && written.contains("outer rule"));
         assert!(written.starts_with("Parzi rules override"));
+        assert!(
+            written.contains("mcp__parzi__shell_exec"),
+            "the rule names the tool Claude can call: {written}"
+        );
+        let no_shell = TurnSpec {
+            tools: spec
+                .tools
+                .clone()
+                .map(|t| crate::types::ToolServer { shell: false, ..t }),
+            ..spec.clone()
+        };
         let bare = TurnSpec {
             tools: None,
             ..spec.clone()
         };
-        let files = TurnFiles::write(&bare).unwrap();
-        let written = std::fs::read_to_string(files.instructions.as_ref().unwrap()).unwrap();
-        assert!(
-            !written.contains("shell.exec"),
-            "no shell rule without Parzi's tools"
-        );
-        drop(files);
+        for other in [no_shell, bare] {
+            let files = TurnFiles::write(&other).unwrap();
+            let written = std::fs::read_to_string(files.instructions.as_ref().unwrap()).unwrap();
+            assert!(
+                !written.contains("shell_exec") && !written.contains("shell.exec"),
+                "no shell rule without Parzi's shell: {written}"
+            );
+            drop(files);
+        }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn claude_s_own_shell_is_hidden_while_parzi_serves_the_shell() {
+        let files = TurnFiles {
+            dir: std::env::temp_dir().join(format!("parzi-no-turn-{}", uuid::Uuid::new_v4())),
+            instructions: None,
+            mcp: Some(std::env::temp_dir().join("mcp.json")),
+        };
+        let server = |shell| crate::types::ToolServer {
+            name: "parzi".into(),
+            url: "http://127.0.0.1:1/mcp/t".into(),
+            token: "t".into(),
+            shell,
+        };
+        let with = TurnSpec {
+            tools: Some(server(true)),
+            ..spec()
+        };
+        let args = turn_args(&with, &files).unwrap();
+        let off = args
+            .iter()
+            .find_map(|a| a.strip_prefix("--disallowedTools="))
+            .unwrap_or_else(|| panic!("no --disallowedTools: {args:?}"));
+        let off: Vec<&str> = off.split(',').collect();
+        for native in ["Bash", "PowerShell", "Monitor", "BashOutput"] {
+            assert!(off.contains(&native), "{native} stays on: {off:?}");
+        }
+        assert!(
+            !off.contains(&"KillShell"),
+            "KillShell is TaskStop now, which also stops background agents"
+        );
+        let allowed = args.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(args[allowed + 1], "mcp__parzi");
+        let without = TurnSpec {
+            tools: Some(server(false)),
+            ..spec()
+        };
+        let args = turn_args(&without, &files).unwrap();
+        assert!(
+            !args.iter().any(|a| a.starts_with("--disallowedTools")),
+            "Claude keeps its shell when Parzi offers none: {args:?}"
+        );
     }
 }

@@ -12,6 +12,48 @@ pub fn fold(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// `s` cut at a word boundary to at most `max` characters, without a word
+/// such as "to" or "and" left hanging at the end. A first word longer than
+/// that is clipped.
+#[must_use]
+pub fn cut_at_word(s: &str, max: usize) -> String {
+    let s = fold(s);
+    if s.chars().count() <= max {
+        return s;
+    }
+    let mut words: Vec<&str> = vec![];
+    let mut len = 0;
+    for w in s.split(' ') {
+        let add = w.chars().count() + usize::from(!words.is_empty());
+        if len + add > max {
+            break;
+        }
+        len += add;
+        words.push(w);
+    }
+    let bare = |w: &str| {
+        w.trim_end_matches([',', ';', ':', '-', '–', '—'])
+            .to_lowercase()
+    };
+    while words.len() > 1 && DANGLING.contains(&bare(words[words.len() - 1]).as_str()) {
+        words.pop();
+    }
+    let out = words.join(" ");
+    let out = out.trim_end_matches([',', ';', ':', '-', '–', '—']);
+    if out.is_empty() {
+        clip(&s, max)
+    } else {
+        out.to_string()
+    }
+}
+
+/// A session name cut to [`NAME_WORDS`] words and [`NAME_CHARS`] characters at
+/// a word boundary, the way automatic names are made.
+#[must_use]
+pub fn fit_name(title: &str) -> String {
+    shorten(&fold(title))
+}
+
 #[must_use]
 pub fn short_id(id: &str) -> &str {
     id.char_indices().nth(8).map_or(id, |(at, _)| &id[..at])
@@ -204,6 +246,48 @@ fn sentence_case(t: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_text_is_cut_between_words() {
+        assert_eq!(
+            cut_at_word("a label that is far too long to be a button", 30),
+            "a label that is far too long"
+        );
+        assert_eq!(cut_at_word("  Short  one ", 30), "Short one");
+        assert_eq!(
+            cut_at_word("Release it now, then tag", 16),
+            "Release it now",
+            "no comma left hanging"
+        );
+        assert_eq!(
+            cut_at_word("Ship the release candidate to everyone now", 30),
+            "Ship the release candidate",
+            "no word left hanging either"
+        );
+        let word = "x".repeat(40);
+        let cut = cut_at_word(&word, 30);
+        assert_eq!(cut.chars().count(), 30, "one long word is clipped: {cut}");
+        assert!(cut.ends_with('…'));
+        assert_eq!(cut_at_word("héllo wörld again", 11), "héllo wörld");
+    }
+
+    #[test]
+    fn a_long_session_name_is_cut_like_an_automatic_one() {
+        assert_eq!(
+            fit_name("One two three four five six"),
+            "One two three four five"
+        );
+        assert_eq!(
+            fit_name("Fix the login page for the admins"),
+            "Fix the login page",
+            "a dangling word does not end it"
+        );
+        let long = fit_name(&"x".repeat(61));
+        assert_eq!(long.chars().count(), NAME_CHARS);
+        let fitted = fit_name("Refactor\n the   session store so it caches metas");
+        assert!(fitted.split(' ').count() <= NAME_WORDS, "{fitted}");
+        assert!(fitted.chars().count() <= NAME_CHARS, "{fitted}");
+    }
 
     #[test]
     fn names_lose_the_pleasantries() {

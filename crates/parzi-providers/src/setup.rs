@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use parzi_core::config::Billing;
 
-use crate::process;
+use crate::process::{self, ps_quote, sh_quote};
 
 const ANTIGRAVITY_VERSION: &str = "1.3.0";
 const ANTIGRAVITY_EXE: &str = if cfg!(windows) {
@@ -87,23 +87,6 @@ fn invoke(program: &Path) -> String {
     } else {
         sh_quote(&p)
     }
-}
-
-fn ps_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
-            out.push(c);
-        }
-        out.push(c);
-    }
-    out.push('\'');
-    out
-}
-
-fn sh_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 fn antigravity_install() -> Option<String> {

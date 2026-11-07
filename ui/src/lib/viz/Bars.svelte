@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fmt, niceTicks, SERIES_COLORS, type Point } from "./spec";
+  import { lerpNumbers } from "./tween";
   import { onDestroy } from "svelte";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
@@ -11,6 +12,9 @@
   export let unit = "";
   export let height = 160;
   export let label = "";
+  /** How far the bars have grown, 0 to 1. Lengths and the numbers on them
+   *  grow; the scale stays that of the real values. */
+  export let grow = 1;
 
   const INK = SERIES_COLORS[0];
   const BAR = 10;
@@ -26,6 +30,7 @@
   $: max = Math.max(0, ...vals);
   $: min = Math.min(0, ...vals);
   $: texts = items.map((p) => fmt(p.value, unit));
+  $: counted = grow >= 1 ? texts : lerpNumbers([], vals, grow).map((v) => fmt(v, unit));
   $: aria = `${label ? `${label}: ` : ""}bar chart, ${items.map((p, i) => `${p.label} ${texts[i]}`).join(", ")}`;
 
   function rowPath(len: number, h: number): string {
@@ -94,11 +99,11 @@
         <span class="track" bind:clientWidth={tracks[i]}>
           {#if tracks[i]}
             <svg width={tracks[i]} height={BAR} aria-hidden="true">
-              <path d={rowPath(max > 0 ? (Math.max(0, p.value) / max) * tracks[i] : 0, BAR)} style:fill={INK} />
+              <path d={rowPath(max > 0 ? ((Math.max(0, p.value) * grow) / max) * tracks[i] : 0, BAR)} style:fill={INK} />
             </svg>
           {/if}
         </span>
-        <span class="value">{texts[i]}</span>
+        <span class="value">{counted[i]}</span>
       </div>
     {/each}
   </div>
@@ -115,9 +120,9 @@
         {/if}
         {#each items as p, i}
           {#if hover === i}<rect class="band" x={band * i + 1} y={TOP - 14} width={band - 2} height={plotH + 14} rx="4" />{/if}
-          <path d={colPath(band * i + (band - bw) / 2, bw, base, Y(p.value))} style:fill={INK} />
+          <path d={colPath(band * i + (band - bw) / 2, bw, base, Y(p.value * grow))} style:fill={INK} />
           {#if capsFit}
-            <text class="cap" x={band * i + band / 2} y={(p.value >= 0 ? Y(p.value) : base) - 5} text-anchor="middle">{texts[i]}</text>
+            <text class="cap" x={band * i + band / 2} y={(p.value >= 0 ? Y(p.value * grow) : base) - 5} text-anchor="middle">{counted[i]}</text>
           {/if}
           {#if i % every === 0}
             <text class="tick" x={band * i + band / 2} y={height - 6} text-anchor="middle">{p.label}</text>

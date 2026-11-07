@@ -94,6 +94,29 @@ pub fn shell_program() -> (String, Vec<String>) {
     }
 }
 
+/// One argument for a POSIX shell: single quoted, with each quote closed,
+/// escaped and reopened.
+#[must_use]
+pub fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// One argument for PowerShell: single quoted, with every kind of single
+/// quote PowerShell honours doubled.
+#[must_use]
+pub fn ps_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
 pub(crate) fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
     std::fs::create_dir_all(&dir).ok()?;
@@ -346,6 +369,35 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Keeps the last 16 KiB a child writes to `pipe`, for errors that name what
+/// went wrong. The task ends when the pipe does.
+pub fn keep_tail<R>(mut pipe: R) -> (Arc<Mutex<String>>, tokio::task::JoinHandle<()>)
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+{
+    let tail = Arc::new(Mutex::new(String::new()));
+    let sink = tail.clone();
+    let task = tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = pipe.read(&mut buf).await {
+            if n == 0 {
+                break;
+            }
+            if let Ok(mut s) = sink.lock() {
+                s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if s.len() > STDERR_KEEP {
+                    let mut cut = s.len() - STDERR_KEEP;
+                    while !s.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    s.drain(..cut);
+                }
+            }
+        }
+    });
+    (tail, task)
+}
+
 pub(crate) struct Proc {
     pub child: Child,
     stderr: Arc<Mutex<String>>,
@@ -374,28 +426,10 @@ impl Proc {
             tracing::warn!(path = %program.display(), bytes = %file_head(&program), "spawn failed: {e}");
         })?;
         adopt(&child);
-        let stderr = Arc::new(Mutex::new(String::new()));
-        if let Some(mut pipe) = child.stderr.take() {
-            let sink = stderr.clone();
-            tokio::spawn(async move {
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = pipe.read(&mut buf).await {
-                    if n == 0 {
-                        break;
-                    }
-                    if let Ok(mut s) = sink.lock() {
-                        s.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        if s.len() > STDERR_KEEP {
-                            let mut cut = s.len() - STDERR_KEEP;
-                            while !s.is_char_boundary(cut) {
-                                cut += 1;
-                            }
-                            s.drain(..cut);
-                        }
-                    }
-                }
-            });
-        }
+        let stderr = match child.stderr.take() {
+            Some(pipe) => keep_tail(pipe).0,
+            None => Arc::new(Mutex::new(String::new())),
+        };
         Ok(Self { child, stderr })
     }
 

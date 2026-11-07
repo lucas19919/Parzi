@@ -120,7 +120,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     cursor: pointer;
   }
   .stop:hover {

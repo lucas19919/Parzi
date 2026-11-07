@@ -242,3 +242,22 @@ export function addQuote(list: PlanQuote[], q: PlanQuote): PlanQuote[] {
   if (list.length >= MAX_QUOTES || list.some((x) => x.id === q.id && sameSlug(x.project, q.project))) return list;
   return [...list, q];
 }
+
+/** The one short line beside an item: what it waits on, who is on it, or
+ *  where it stands, so the plan reads at a glance without opening sessions. */
+export function itemNote(v: ItemView): string {
+  // A session named after its item says nothing new by its name.
+  const named = (s: SessionMeta | undefined) => (s && !sameSlug(s.title.trim(), v.item.title.trim()) ? s.title : "");
+  if (v.state === "needs") return v.reason || STATE_WORDS.needs;
+  if (v.state === "working") {
+    const who = named(v.sessions.find((s) => s.status === "active") ?? v.sessions[0]);
+    return v.doing || (who ? `${who} is on it` : STATE_WORDS.working);
+  }
+  if (v.state === "review") return v.pr ? `In review, PR ${v.pr.number}` : STATE_WORDS.review;
+  if (v.after.length) return `After ${v.after.join(", ")}`;
+  if (v.state === "started") {
+    const who = named(v.sessions[0]);
+    return who ? `Started in ${who}` : STATE_WORDS.started;
+  }
+  return "";
+}

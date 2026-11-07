@@ -239,6 +239,20 @@ function transcript() {
     out.push({ kind: "reasoning", text: "Checking the composer and the thread renderer." });
     out.push({ kind: "tool_call", id: `t${i}`, name: "fs.read", args: { path: "ui/src/lib/Omnibar.svelte" } });
     out.push({ kind: "tool_result", id: `t${i}`, name: "fs.read", ok: true, output: "ok", ms: 12 });
+    if (last) {
+      const failing = params.get("tests") === "fail";
+      out.push({ kind: "tool_call", id: "tests", name: "shell.exec", args: { cmd: "cargo test -p parzi-core" } });
+      out.push({
+        kind: "tool_result",
+        id: "tests",
+        name: "shell.exec",
+        ok: true,
+        ms: 8400,
+        output: failing
+          ? "exit 101\ntest plan::tests::caps ... FAILED\ntest plan::tests::summary ... FAILED\n\nfailures:\n\n---- plan::tests::caps stdout ----\n\nthread 'plan::tests::caps' (88) panicked at crates/parzi-core/src/plan.rs:1142:9:\nassertion `left == right` failed\n  left: 41\n right: 40\n\ntest result: FAILED. 97 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s\n"
+          : "test result: ok. 99 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s\n",
+      });
+    }
     out.push({ kind: "assistant", text: ANSWER, done: true });
     if (last) {
       out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
@@ -272,6 +286,13 @@ function transcript() {
         version: 1,
         payload: { id: "autosize", title: "autosize.ts", kind: "code", language: "typescript", version: 1, content: "export function autosize(el: HTMLTextAreaElement) {\n  el.style.height = \"auto\";\n  el.style.height = `${Math.min(el.scrollHeight, 180)}px`;\n}" },
       });
+      if (params.get("widget")) {
+        out.push({
+          kind: "widget",
+          fence: "parzi-widget",
+          payload: { type: "chart-line", title: "Second reply (s)", labels: ["Mon", "Tue", "Wed", "Thu", "Fri"], series: [{ name: "Before", points: [4.4, 4.1, 4.6, 4.3, 4.5] }, { name: "After", points: [1.2, 1.1, 0.9, 1.0, 0.8] }] },
+        });
+      }
       out.push({
         kind: "widget",
         fence: "parzi-todo",
@@ -342,7 +363,13 @@ const config = {
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
   colors: { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
-  background: { image: params.get("bg") ? "backgrounds/mock.png" : "", height: 0.34, y: 0.5 },
+  background: {
+    image: params.get("bg") ? "backgrounds/mock.png" : "",
+    height: 0.34,
+    y: 0.5,
+    fill: params.get("fill") === "full" ? "full" : "band",
+    cards: params.get("cards") ?? "clear",
+  },
 };
 
 const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.conflict-laptop-macos.md", "notes/release.md"] };
@@ -393,12 +420,6 @@ const browserPrefs = {
   ],
 };
 
-const downloadsList = [
-  { id: "d1", tab: "t", url: "https://example.com/report.pdf", name: "report.pdf", path: "C:\\Users\\dev\\Downloads\\report.pdf", received: 2_400_000, total: 2_400_000, state: "done", started: now - 600_000 },
-  { id: "d2", tab: "t", url: "https://example.com/big.zip", name: "big.zip", path: "C:\\Users\\dev\\Downloads\\big.zip", received: 31_000_000, total: 88_000_000, state: "progress", started: now - 60_000 },
-  { id: "d3", tab: "t", url: "https://example.com/old.iso", name: "old.iso", path: "C:\\Users\\dev\\Downloads\\old.iso", received: 0, total: 0, state: "failed", started: now - 90_000_000 },
-];
-
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   plan_view: (a) => planView(String(a.project ?? "")),
   plan_prs: () => (params.get("plan") === "none" ? [] : prs),
@@ -440,7 +461,16 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   git_branches: () => ({ current: "main", all: ["main", "plan/sidebar-polish", "release/0.1"] }),
   rewind_thread: () => sessions[0],
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
-  connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
+  connector_check: () =>
+    new Promise((r, no) =>
+      setTimeout(
+        () =>
+          params.get("connector") === "fail"
+            ? no("tool `diagonaldiagrams`: initialize: server closed the pipe\nuvx: error: Failed to fetch: https://pypi.org/simple/diagonaldiagrams/\n  Caused by: dns error: failed to lookup address information")
+            : r(14),
+        900,
+      ),
+    ),
   connector_sign_in: () => new Promise((r) => setTimeout(() => r(12), 1200)),
   connectors_found: () => [
     { name: "isar", source: "Claude Code", server: { command: "node", args: ["mcp/src/index.js"], enabled: true } },
@@ -458,7 +488,19 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     ],
   }),
   get_theme: () => theme,
-  get_theme_css: () => "",
+  get_theme_css: () => `:root{--accent:${theme.colors.accent};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};}`,
+  // Keeps the window's answers to desk calls, for checks to read.
+  desk_answer: (a) => {
+    const w = window as unknown as { __deskAnswers?: Record<string, unknown> };
+    (w.__deskAnswers ??= {})[String(a.id)] = a.result;
+    return null;
+  },
+  // Lets a check change the mock's theme the way an agent's desk_theme would.
+  mock_set_theme: (a) => {
+    Object.assign(theme.colors, (a.colors ?? {}) as object);
+    Object.assign(theme.background, (a.background ?? {}) as object);
+    return null;
+  },
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),
   list_background_urls: () => [],
   list_pack_infos: () => [{ name: "Default", builtin: true, colors: theme.colors, has_art: false }],
@@ -494,8 +536,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     browserPrefs.sites = browserPrefs.sites.filter((s) => !(s.origin === a.origin && (!a.kind || s.kind === a.kind)));
     return browserPrefs;
   },
-  browser_downloads: () => downloadsList,
-  browser_downloads_clear: () => downloadsList.filter((d) => d.state === "progress"),
   onboard_scan: () => scan,
   onboard_import: (a) => ({
     notes: Math.max(0, (a.notes as string[]).length - 1),

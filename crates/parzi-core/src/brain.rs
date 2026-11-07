@@ -904,7 +904,7 @@ fn parse(
         .title
         .or_else(|| heading(body))
         .unwrap_or_else(|| stem(&path).to_string());
-    let title = ellipsize(&title, TITLE_MAX);
+    let title = crate::text::clip(&title, TITLE_MAX);
     let conflict_of = resolver.original_of(&path);
     let mut links: Vec<String> = vec![];
     for target in link_targets(raw) {
@@ -961,15 +961,7 @@ fn summary(description: Option<&str>, body: &str) -> String {
         .or_else(|| first_prose(body))
         .unwrap_or_default();
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    ellipsize(&text, SUMMARY_MAX)
-}
-
-fn ellipsize(text: &str, max: usize) -> String {
-    if text.char_indices().nth(max).is_none() {
-        return text.to_string();
-    }
-    let cut: String = text.chars().take(max - 1).collect();
-    format!("{}…", cut.trim_end())
+    crate::text::clip(&text, SUMMARY_MAX)
 }
 
 fn first_prose(body: &str) -> Option<String> {

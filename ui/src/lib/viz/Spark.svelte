@@ -1,3 +1,7 @@
+<script lang="ts" context="module">
+  let clips = 0;
+</script>
+
 <script lang="ts">
   import { fmt } from "./spec";
   import { onDestroy } from "svelte";
@@ -11,7 +15,10 @@
   export let area = false;
   export let unit = "";
   export let label = "";
+  /** How much of the line is drawn, 0 to 1. */
+  export let draw = 1;
 
+  const clip = `viz-spark-${++clips}`;
   const PAD = 4;
   let w = 0;
   let hover = -1;
@@ -46,10 +53,13 @@
   {#if w > 0 && values.length > 1}
     <svg width={w} {height} role="img" aria-label={aria} on:pointermove={move} on:pointerleave={leave}>
       <title>{aria}</title>
-      {#if fill}<path class="area" d={fill} />{/if}
-      <path class="run" d={line} />
+      <clipPath id={clip}><rect x="0" y="0" width={draw >= 1 ? w : PAD + (w - PAD * 2) * draw} {height} /></clipPath>
+      <g clip-path="url(#{clip})">
+        {#if fill}<path class="area" d={fill} />{/if}
+        <path class="run" d={line} />
+      </g>
       {#if hover >= 0}<circle class="dot" cx={xs[hover]} cy={ys[hover]} r="3" />{/if}
-      <circle class="end" cx={xs[last]} cy={ys[last]} r="3" />
+      {#if draw >= 1}<circle class="end" cx={xs[last]} cy={ys[last]} r="3" />{/if}
     </svg>
   {/if}
   <DataTable caption={aria} head={["Point", "Value"]} rows={values.map((v, i) => [String(i + 1), fmt(v, unit)])} />

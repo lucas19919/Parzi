@@ -10,6 +10,8 @@
   export let unit = "";
   export let height = 160;
   export let label = "";
+  /** How far the bars have risen, 0 to 1. */
+  export let grow = 1;
 
   const TOP = 18;
   const BOTTOM = 22;
@@ -66,9 +68,9 @@
           <rect
             class="bar"
             x={(band * i + 0.75).toFixed(1)}
-            y={Y(b.count).toFixed(1)}
+            y={Y(b.count * grow).toFixed(1)}
             width={Math.max(1, band - 1.5).toFixed(1)}
-            height={Math.max(1, TOP + plotH - Y(b.count)).toFixed(1)}
+            height={Math.max(1, TOP + plotH - Y(b.count * grow)).toFixed(1)}
             rx="2"
           />
         {:else}

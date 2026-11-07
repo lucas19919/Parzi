@@ -511,6 +511,11 @@
             {/if}
             {#if open}
               <div class="details">
+                {#if !off && h?.state === "error" && h.raw}
+                  <div class="row"><pre class="fail">{h.raw}</pre></div>
+                {:else if !off && tools.length}
+                  <div class="row"><span class="row-label"><small>Agents in every session can use these. Ask means they ask you first.</small></span></div>
+                {/if}
                 {#each tools as t (t.name)}
                   {@const m = effective(t.mode)}
                   <div class="row" class:off={m === "off"}>
@@ -647,5 +652,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .fail {
+    flex: 1;
+    min-width: 0;
+    max-height: 160px;
+    margin: 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
   }
 </style>

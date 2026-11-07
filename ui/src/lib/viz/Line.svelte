@@ -1,3 +1,7 @@
+<script lang="ts" context="module">
+  let clips = 0;
+</script>
+
 <script lang="ts">
   import { axisFloor, fmt, niceTicks, SERIES_COLORS, type Series } from "./spec";
   import { onDestroy } from "svelte";
@@ -13,7 +17,10 @@
   export let unit = "";
   export let height = 180;
   export let label = "";
+  /** How much of the line is drawn, 0 to 1, as it draws on from the left. */
+  export let draw = 1;
 
+  const clip = `viz-line-${++clips}`;
   const TOP = 8;
   const BOTTOM = 22;
   const RIGHT = 8;
@@ -136,6 +143,8 @@
         {#each xTicks as i}
           <text class="tick" x={X(i)} y={height - 6} text-anchor={n > 1 && i === 0 ? "start" : i === n - 1 && n > 1 ? "end" : "middle"}>{labels[i]}</text>
         {/each}
+        <clipPath id={clip}><rect x="0" y="0" width={draw >= 1 ? w : left + plotW * draw} {height} /></clipPath>
+        <g clip-path="url(#{clip})">
         {#each fills as d, si}<path class="wash" d={d} style:fill={color(si)} />{/each}
         {#if hover >= 0}
           <line class="cross" x1={X(hover)} x2={X(hover)} y1={TOP} y2={TOP + plotH} />
@@ -148,6 +157,7 @@
             {/each}
           {/each}
         {/if}
+        </g>
         {#if hover >= 0}
           {#each series as s, si}
             {#if s.values[hover] !== null}<circle class="pt" cx={X(hover)} cy={Y(s.values[hover] ?? 0)} r="4" style:fill={color(si)} />{/if}

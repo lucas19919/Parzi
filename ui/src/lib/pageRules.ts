@@ -116,18 +116,6 @@ export function rememberIcon(icons: Record<string, string>, pageUrl: string, ico
   return Object.fromEntries([...rest.slice(Math.max(0, rest.length - max + 1)), [origin, icon]]);
 }
 
-export function formatBytes(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
-}
-
 export interface DownloadLike {
   state: "progress" | "done" | "failed" | "canceled";
   received: number;
@@ -137,13 +125,6 @@ export interface DownloadLike {
 export function downloadShare(d: DownloadLike): number | undefined {
   if (d.state !== "progress" || d.total <= 0) return undefined;
   return Math.max(0, Math.min(1, d.received / d.total));
-}
-
-export function downloadNote(d: DownloadLike): string {
-  if (d.state === "done") return d.total > 0 ? formatBytes(d.total) : "Done";
-  if (d.state === "failed") return "Failed";
-  if (d.state === "canceled") return "Cancelled";
-  return d.total > 0 ? `${formatBytes(d.received)} of ${formatBytes(d.total)}` : formatBytes(d.received);
 }
 
 export interface Box {

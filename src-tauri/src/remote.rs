@@ -70,12 +70,6 @@ fn info(saved: &remote::Saved, alive: bool, synced_at: i64) -> RemoteInfo {
     }
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-}
-
 pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
     let st = app.state::<RemoteState>();
     let _one = st.syncing.lock().await;
@@ -93,7 +87,7 @@ pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
         status(app, "brain", "");
     }
     crate::plans::synced(app, &done.brain.changed);
-    *st.synced_at.lock().unwrap_or_else(|p| p.into_inner()) = now_ms();
+    *st.synced_at.lock().unwrap_or_else(|p| p.into_inner()) = parzi_core::now_ms_i64();
     let summary = done.summary();
     if done.errors.is_empty() {
         status(app, "synced", summary.clone());
@@ -618,17 +612,9 @@ pub async fn remote_agent(provider: String, action: String) -> Result<(), String
 
 fn quote(arg: &str) -> String {
     if cfg!(windows) {
-        let mut out = String::from("'");
-        for c in arg.chars() {
-            if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
-                out.push(c);
-            }
-            out.push(c);
-        }
-        out.push('\'');
-        out
+        parzi_providers::process::ps_quote(arg)
     } else {
-        remote::sh_quote(arg)
+        parzi_providers::process::sh_quote(arg)
     }
 }
 
