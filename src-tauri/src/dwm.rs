@@ -55,8 +55,8 @@ use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_END, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, ReleaseCapture, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H,
-    VK_J, VK_K, VK_L, VK_LBUTTON, VK_MENU, VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
+    GetAsyncKeyState, GetKeyState, ReleaseCapture, VIRTUAL_KEY, VK_CONTROL, VK_F11, VK_J, VK_K,
+    VK_L, VK_LBUTTON, VK_MENU, VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, HWND_BOTTOM, HWND_TOP, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
@@ -458,7 +458,7 @@ const KEY_CLAIM: Duration = Duration::from_millis(1500);
 const KEY_SCRIPT: &str = r#"(() => {
   if (window.top !== window || window.__parziKeys) return;
   Object.defineProperty(window, "__parziKeys", { value: true });
-  const names = { b: "ctrl+b", h: "ctrl+h", k: "ctrl+k" };
+  const names = { k: "ctrl+k" };
   const editable = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""));
   addEventListener("keydown", (e) => {
     const name = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && names[String(e.key).toLowerCase()];
@@ -1127,7 +1127,7 @@ fn key_message(json: &str) -> Option<String> {
 }
 
 fn page_first(name: &str) -> bool {
-    matches!(name, "ctrl+b" | "ctrl+h" | "ctrl+k")
+    name == "ctrl+k"
 }
 
 fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
@@ -1137,8 +1137,6 @@ fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
         (true, false, VK_W) => "ctrl+w",
         (true, false, VK_L) => "ctrl+l",
         (true, false, VK_K) => "ctrl+k",
-        (true, false, VK_B) => "ctrl+b",
-        (true, false, VK_H) => "ctrl+h",
         (true, false, VK_J) => "ctrl+j",
         (true, true, VK_T) => "ctrl+shift+t",
         (true, false, VK_OEM_COMMA) => "ctrl+comma",
@@ -1228,7 +1226,7 @@ pub fn round_window_corners(window: &tauri::WebviewWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_P, VK_R};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_B, VK_H, VK_P, VK_R};
 
     #[test]
     fn a_late_window_drag_is_refused_once_the_button_is_up() {
@@ -1241,7 +1239,7 @@ mod tests {
         assert_eq!(key_name(true, false, VK_K), Some("ctrl+k"));
         assert_eq!(key_name(true, false, VK_J), Some("ctrl+j"));
         assert!(!page_first("ctrl+j"));
-        assert!(page_first("ctrl+k") && page_first("ctrl+b") && page_first("ctrl+h"));
+        assert!(page_first("ctrl+k"));
         for reserved in [
             "ctrl+t",
             "ctrl+w",
@@ -1253,6 +1251,8 @@ mod tests {
             assert!(!page_first(reserved), "{reserved}");
         }
         assert_eq!(key_name(true, false, VK_P), None, "Ctrl+P prints");
+        assert_eq!(key_name(true, false, VK_B), None, "Ctrl+B is the page's");
+        assert_eq!(key_name(true, false, VK_H), None, "Ctrl+H is the page's");
         assert_eq!(key_name(true, false, VK_R), None);
         assert_eq!(key_name(false, false, VK_T), None);
         assert_eq!(key_name(true, true, VK_T), Some("ctrl+shift+t"));

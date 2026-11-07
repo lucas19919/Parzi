@@ -1641,7 +1641,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             ? "ctrl+shift+t"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
-              : mod && ["p", "k", "t", "w", "l", "h", "j"].includes(key)
+              : mod && ["p", "k", "t", "w", "l", "j"].includes(key)
                   ? `ctrl+${key}`
                   : "";
     if (name && shortcut(name)) {
