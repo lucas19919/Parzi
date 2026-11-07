@@ -8,8 +8,10 @@
   import { toast } from "./toast";
   import { covered, setOverlay, setPageArea } from "./overlay";
   import SuggestList from "./SuggestList.svelte";
-  import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
-  import { addPin, bookmarks, completeAddress, history, pins, removePin } from "./browserData";
+  import { get } from "svelte/store";
+  import type { Suggestion } from "./suggest";
+  import { addressSuggest } from "./addressSuggest";
+  import { addPin, bookmarks, history, pins, removePin } from "./browserData";
   import { prompts, removePrompt, type PagePrompt } from "./browserState";
   import { appFor, permissionText } from "./pageRules";
   import { hostOf, toAddress, type Tab } from "./tabs";
@@ -42,16 +44,16 @@
   let choiceStyle = "";
   let filling = false;
   let form: HTMLFormElement | null = null;
-  let rows: Suggestion[] = [];
-  let active = -1;
-  let typed = "";
+  const suggest = addressSuggest({
+    sources: () => ({ visits: get(history), marks: [...get(bookmarks), ...get(pins)] }),
+    phrases: (q) => api.searchSuggest(q),
+    live: () => editing,
+  });
   let snapshot = "";
   let snapAt = 0;
   let shownNow = false;
   let veil: Veil = NO_VEIL;
   let freshTimer: number | null = null;
-  let remoteSeq = 0;
-  let remoteTimer = 0;
   let listStyle = "";
 
   $: url = tab.url ?? "";
@@ -66,7 +68,7 @@
   $: pinned = $pins.some((p) => p.url === url);
   $: url, immersive, $covered, slot, tab.crashed, veiled, schedule();
   $: void loadShield(hostOf(url));
-  $: open = editing && rows.length > 0;
+  $: open = editing && $suggest.rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
   $: if (open && form) listStyle = `left:${form.offsetLeft}px;width:${form.offsetWidth}px`;
   $: prompt = immersive ? null : ($prompts.find((p) => p.tab === tab.id) ?? null);
@@ -219,9 +221,7 @@
 
   function startEditing() {
     editing = true;
-    typed = "";
-    rows = [];
-    active = -1;
+    suggest.reset();
     field?.select();
     if (url && shownNow) {
       snapAt = Date.now();
@@ -234,40 +234,18 @@
 
   function stopEditing() {
     editing = false;
-    rows = [];
-    active = -1;
-    clearTimeout(remoteTimer);
+    suggest.reset();
   }
 
   async function onAddressInput(e: Event) {
     if (!field) return;
-    const value = field.value;
-    typed = value;
-    active = -1;
-    let completed = "";
-    if ((e as InputEvent).inputType?.startsWith("insert") && field.selectionStart === value.length) {
-      const full = completeAddress(value, $history, [...$bookmarks, ...$pins]);
-      if (full) {
-        completed = value + full.slice(value.length);
-        address = completed;
-        await tick();
-        field?.setSelectionRange(value.length, completed.length);
-      }
+    const inserting = !!(e as InputEvent).inputType?.startsWith("insert") && field.selectionStart === field.value.length;
+    const shown = suggest.type(field.value, inserting);
+    if (shown.select) {
+      address = shown.text;
+      await tick();
+      field?.setSelectionRange(...shown.select);
     }
-    suggest(value, completed);
-  }
-
-  function suggest(value: string, completed: string) {
-    const marks = [...$bookmarks, ...$pins];
-    rows = mergeRows(firstRows(value, completed), pageRows(value, $history, marks));
-    clearTimeout(remoteTimer);
-    if (!value.trim() || looksLikeUrl(value)) return;
-    const seq = ++remoteSeq;
-    remoteTimer = window.setTimeout(async () => {
-      const phrases = await api.searchSuggest(value).catch(() => [] as string[]);
-      if (seq !== remoteSeq || !editing) return;
-      rows = mergeRows(firstRows(value, completed), phraseRows(value, phrases), pageRows(value, $history, marks));
-    }, 120);
   }
 
   function leaveFor(next: string) {
@@ -282,8 +260,9 @@
   }
 
   function go() {
-    if (active >= 0 && rows[active]) {
-      pick(rows[active]);
+    const row = suggest.chosen();
+    if (row) {
+      pick(row);
       return;
     }
     const next = toAddress(address);
@@ -295,17 +274,17 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && rows.length) {
-      e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      active = active + step < -1 ? rows.length - 1 : active + step >= rows.length ? -1 : active + step;
-      address = active >= 0 ? boxText(rows[active]) : typed;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const text = suggest.move(e.key === "ArrowDown" ? 1 : -1);
+      if (text !== null) {
+        e.preventDefault();
+        address = text;
+      }
       return;
     }
     if (e.key === "Escape") {
-      if (rows.length) {
-        rows = [];
-        active = -1;
+      const typed = suggest.escape();
+      if (typed !== null) {
         address = typed || url;
         return;
       }
@@ -340,7 +319,7 @@
     if (!url) void focusAddress();
     return () => {
       alive = false;
-      clearTimeout(remoteTimer);
+      suggest.reset();
       if (freshTimer) clearTimeout(freshTimer);
       setOverlay(`address-${tab.id}`, false);
       setPageArea(null);
@@ -464,7 +443,7 @@
   {/if}
   {#if open && !immersive}
     <div class="suggest" style={listStyle}>
-      <SuggestList {rows} {active} typed={typed} on:pick={(e) => pick(e.detail.row)} on:hover={(e) => (active = e.detail.index)} />
+      <SuggestList rows={$suggest.rows} active={$suggest.active} typed={$suggest.typed} on:pick={(e) => pick(e.detail.row)} on:hover={(e) => suggest.hover(e.detail.index)} />
     </div>
   {/if}
   {#if choices.length}

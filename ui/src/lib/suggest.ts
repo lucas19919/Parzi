@@ -1,5 +1,5 @@
 import type { Bookmark, Pin, Visit } from "./browserData";
-import { toAddress } from "./tabs";
+import { addressKind, toAddress } from "./tabs.ts";
 
 export interface Suggestion {
   kind: "search" | "url" | "phrase" | "history" | "bookmark";
@@ -13,8 +13,8 @@ export function bare(url: string) {
 }
 
 export function looksLikeUrl(text: string) {
-  const t = text.trim();
-  return /^https?:\/\//i.test(t) || /^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(t) || (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t));
+  const kind = addressKind(text);
+  return kind !== "search" && kind !== "empty";
 }
 
 export function firstRows(typed: string, completed: string): Suggestion[] {
@@ -71,4 +71,27 @@ export function mergeRows(...groups: Suggestion[][]): Suggestion[] {
 
 export function boxText(row: Suggestion) {
   return row.kind === "search" || row.kind === "phrase" ? row.text : bare(row.url);
+}
+
+/** The rest of an address the person has been to, to complete what they typed in place. */
+export function completeAddress(typed: string, visits: { url: string; count: number }[], marks: { url: string }[]): string {
+  const t = typed.toLowerCase();
+  if (t.length < 2 || /\s/.test(t) || /^https?:/.test(t)) return "";
+  const scores = new Map<string, number>();
+  const add = (url: string, score: number) => {
+    const b = bare(url);
+    const c = t.includes("/") ? b : b.split("/")[0];
+    if (c.length > t.length && c.toLowerCase().startsWith(t)) scores.set(c, (scores.get(c) ?? 0) + score);
+  };
+  for (const v of visits) add(v.url, v.count + 1);
+  for (const m of marks) add(m.url, 3);
+  let best = "";
+  let top = 0;
+  for (const [c, score] of scores) {
+    if (score > top || (score === top && c.length < best.length)) {
+      best = c;
+      top = score;
+    }
+  }
+  return best;
 }

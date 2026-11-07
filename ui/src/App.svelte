@@ -35,7 +35,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
@@ -690,8 +690,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function newSession() {
     const draft: Tab = { ...sessionTab(), cwd: folder || recentFolder() };
     draft.composer = ensureComposer(draft.composer);
-    const idx = tabs.findIndex((x) => x.id === activeId);
-    tabs = [...tabs.slice(0, idx + 1), draft, ...tabs.slice(idx + 1)];
+    tabs = placeTab(tabs, draft, activeId);
     selectTab(draft.id);
     void tick().then(() => omnibar?.focus());
   }
@@ -704,12 +703,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (!background) selectTab(existing.id);
     } else {
       const t = pageTab(url, id, owner ?? null);
-      if (background) {
-        const idx = tabs.findIndex((x) => x.id === activeId);
-        tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
-      } else {
-        addTab(t);
-      }
+      if (background) tabs = placeTab(tabs, t, activeId);
+      else addTab(t);
     }
   }
 
@@ -721,9 +716,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const t = pageTab(url, undefined, null, sessionId);
-    const mine = tabs.map((x, i) => (x.sessionId === sessionId || x.owner === sessionId || x.group === sessionId ? i : -1)).filter((i) => i >= 0);
-    const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
-    tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+    tabs = placeTab(tabs, t, activeId, sessionId);
     selectTab(t.id);
   }
 
@@ -792,16 +785,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const t = artifactTab(doc, group);
-    const mine = group ? tabs.map((x, i) => (x.sessionId === group || x.owner === group || x.group === group ? i : -1)).filter((i) => i >= 0) : [];
-    const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
-    tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+    tabs = placeTab(tabs, t, activeId, group);
     selectTab(t.id);
   }
 
   function openPageNext(url: string) {
     const t = pageTab(url);
-    const idx = tabs.findIndex((x) => x.id === activeId);
-    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    tabs = placeTab(tabs, t, activeId);
     selectTab(t.id);
   }
 
@@ -816,8 +806,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const t = pageTab(url, undefined, from.owner);
-    const idx = tabs.findIndex((x) => x.id === opener);
-    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    tabs = placeTab(tabs, t, opener);
     api.browserPrepare(t.id, url, from.owner).catch(() => {});
   }
 
@@ -911,9 +900,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (host) {
       const t = { ...sessionTab(id, title), group: host };
       t.composer = ensureComposer(t.composer);
-      const mine = tabs.map((x, i) => (x.sessionId === host || x.group === host || x.owner === host ? i : -1)).filter((i) => i >= 0);
-      const at = Math.max(...mine) + 1;
-      tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+      tabs = placeTab(tabs, t, activeId, host);
       selectTab(t.id);
       return;
     }
@@ -1679,8 +1666,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (cmd.focus !== false) openSession(id);
       else if (!tabs.some((t) => t.sessionId === id)) {
         const t = sessionTab(id, cmd.title || "Session");
-        const idx = tabs.findIndex((x) => x.id === activeId);
-        tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+        tabs = placeTab(tabs, t, activeId);
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
     else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();

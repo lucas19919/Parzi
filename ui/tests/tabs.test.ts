@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
+import { addressKind, ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, placeTab, sessionTab, pageTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
 
 test("hostOf strips protocol and path", () => {
   assert.equal(hostOf("https://github.com/lucas/parzi"), "github.com");
@@ -67,4 +67,27 @@ test("saved Work, Tasks, Brain, Projects and History tabs don't come back", () =
   assert.equal(restoreTab({ id: "t7", kind: "history", title: "History" }), null);
   assert.equal(restoreTab({ id: "t3", kind: "settings", title: "Settings" }), null);
   assert.equal(restoreTab({ id: "t4", kind: "mystery", title: "?" }), null);
+});
+
+test("a new tab goes after its session's last tab, else right after the one named", () => {
+  const a = { ...sessionTab("s1", "One"), id: "a" };
+  const ap = { ...pageTab("https://x.dev/"), id: "ap", group: "s1" };
+  const b = { ...sessionTab("s2", "Two"), id: "b" };
+  const t = { ...pageTab("https://y.dev/"), id: "t" };
+  const ids = (l: { id: string }[]) => l.map((x) => x.id);
+  assert.deepEqual(ids(placeTab([a, ap, b], t, "b", "s1")), ["a", "ap", "t", "b"]);
+  assert.deepEqual(ids(placeTab([a, ap, b], t, "a")), ["a", "t", "ap", "b"]);
+  assert.deepEqual(ids(placeTab([a, ap, b], t, "a", "nobody")), ["a", "t", "ap", "b"], "an unknown group falls back to after");
+  assert.deepEqual(ids(placeTab([a, b], t, "gone")), ["t", "a", "b"]);
+});
+
+test("the address box decides once what it holds", () => {
+  assert.equal(addressKind("  "), "empty");
+  assert.equal(addressKind("https://parzi.dev/x"), "full");
+  assert.equal(addressKind("localhost:5173/app"), "local");
+  assert.equal(addressKind("docs.rs/serde"), "domain");
+  assert.equal(addressKind("how to center a div"), "search");
+  assert.equal(toAddress("localhost:5173"), "http://localhost:5173");
+  assert.equal(toAddress("docs.rs"), "https://docs.rs");
+  assert.equal(toAddress("rust lifetimes"), "https://duckduckgo.com/?q=rust%20lifetimes");
 });
