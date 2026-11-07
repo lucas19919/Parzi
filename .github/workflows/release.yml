@@ -61,18 +61,12 @@ jobs:
 
             ### What changed
 
-            - Connectors work in sessions. Agents can now call the tools of every connector you turned on in Settings, such as diagonaldiagrams, GitHub, Notion and Linear, with the same approvals as Parzi's own tools. Before, connectors could be tested in Settings but no session could use them.
-            - Diagrams come from diagonaldiagrams and show in the thread. Agents no longer draw their own SVG or HTML pages, and charts all use one style.
-            - Plans wait for your yes. When an agent starts a plan or adds, drops or rewords work, you see the change and choose Use this plan, Not now, or say what to change. Progress still updates on its own. The plan card shows phases, the goal, and who is on each item.
-            - Far fewer failed tool calls. Claude no longer reaches for a shell Parzi refuses, Codex waits long enough for long commands and your approvals, tools accept the arguments agents send, and every refusal says why and what to do next.
-            - Helper sessions started from an Ask or Edits session ask you instead of failing quietly.
-            - Test runs get a card in the thread: passed or failed at a glance, which tests failed, and the first failure's message. It reads cargo, node, Jest, Vitest, pytest and go test output.
-            - Connectors install behind a company proxy, run calls side by side, and show their full error when you open one that fails. Agents are told which connectors work, so they say so instead of guessing.
-            - Corners are the same 12px everywhere, small icon buttons included.
-            - Browser fixes: a page no longer hides behind the loading shimmer after a quick second click, Ctrl+B and Ctrl+H work inside pages again, and the shield always shows the current site. The web box and a page's address bar suggest the same way.
-            - Agent instructions are rewritten in plain words, with you in the loop on big work and at the end of each plan phase.
-
-            Sessions saved before this still show their old HTML and SVG cards and old charts.
+            - Agents can use anything in Parzi's window, the way you do: open tabs and sessions, pick the model and effort, open the side column and the file card, change settings and the theme. Named actions cover the common things, and every other button, switch and field is reachable too. Anything that deletes, removes, resets or signs out still waits for your yes.
+            - Ask an agent to change the look ("make it graphite", "turn on glass cards") and it does it right away instead of sending you to Settings.
+            - Charts animate: bars grow, lines draw on, numbers count up and rows rise in the first time a chart scrolls into view, and an updated chart eases to its new values. Reduced motion shows them still.
+            - The Home wallpaper can fill the whole window, and the cards over it can be clear, glass or solid (Settings, Appearance, Wallpaper).
+            - An accepted plan opens in the thread. The side column's plan card lists the plan's items, and steps aside while the plan is open in the thread.
+            - While an agent works, what it says between steps folds into its working instead of reading as its answer.
 
             ### Download
 
