@@ -1,66 +1,24 @@
-.pref-section { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
+/* Settings: the styles more than one section uses. A section's own <style>
+   keeps only what is its own. Rows, cards, buttons and fields come from the
+   page layout in theme.css; sizes are the --h-field, --w-ctl and --w-field
+   tokens there. */
 
-/* One height everywhere, and the segments fill it, so a picked segment sits
-   the same inset (--inset) from every edge and its corner nests. */
-.segmented-control {
-  display: inline-flex; align-items: stretch; box-sizing: border-box;
-  height: calc(var(--space) * 8); background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius); padding: var(--space); gap: var(--space); flex: none;
-}
-.seg-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: none; border-radius: var(--radius-in); color: var(--muted);
-  font-size: var(--fs-md); font-weight: 500; padding: 0 calc(var(--space) * 3); cursor: pointer;
-  transition: background var(--dur) ease, color var(--dur) ease; font-family: inherit;
-  white-space: nowrap;
-}
-.seg-btn:hover { color: var(--text); }
-.seg-btn.active { background: var(--selected); color: var(--text); }
+/* ── Layout ─────────────────────────────────────────────────────────── */
 
-.switch {
-  width: 38px; height: 22px; flex: none; padding: 0; position: relative;
-  border: none; border-radius: 999px;
-  background: color-mix(in srgb, var(--text) 18%, transparent);
-  cursor: pointer;
-  transition: background var(--dur) ease;
-}
-.switch .knob {
-  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
-  border-radius: 50%; background: var(--text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  transition: left var(--dur) ease;
-}
-.switch:hover { filter: brightness(1.08); }
-.switch.on { background: var(--accent); }
-.switch.on .knob { left: 19px; background: var(--bg); }
-
-.skel {
-  border-radius: var(--radius);
-  background: linear-gradient(100deg, var(--panel) 40%, var(--line) 50%, var(--panel) 60%);
-  background-size: 200% 100%;
-  animation: skel 1.2s ease-in-out infinite;
-  min-height: 52px;
-}
-.skel.tall { min-height: 110px; }
-@keyframes skel { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
-
-.load-err {
-  display: flex; align-items: center; justify-content: space-between; gap: calc(var(--space) * 3);
-  font-size: var(--fs-sm); color: var(--bad-text);
-  background: transparent;
-  border: 1px solid var(--bad);
-  border-radius: var(--radius); padding: calc(var(--space) * 3) calc(var(--space) * 4);
+.pref-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 2);
 }
 
-/* Even insets: the horizontal spacing matches the vertical. Rows that hold one
-   control (`ctl-row`) and title rows keep the standard row height instead. */
+/* Even insets: the horizontal spacing matches the vertical. Rows that hold
+   one control (`ctl-row`) and title rows keep the standard row height. */
 .page .rows.pad-even > .row:not(.ctl-row):not(.row-title) {
   padding: calc(var(--space) * 4);
 }
-/* A row with one control is as tall as one with a 32px field: 8px, the field, 8px,
-   and the 1px line above it. */
+
+/* A row with one control is as tall as one with a field: 8px, the field,
+   8px, and the 1px line above it. */
 .page .rows .row.ctl-row {
   min-height: calc(var(--space) * 12 + 1px);
 }
@@ -71,8 +29,92 @@
   justify-content: center;
 }
 
-/* Card grid, same theme as theme cards (packs of connectors, registry agents). */
-.packs {
+/* Fields and their buttons in a row are one height. */
+.page .rows .tin.fixed,
+.page .rows .row > .tin.key,
+.page .rows .save-row > :is(.tin, .btn),
+.page .rows .details :is(.tin, .btn) {
+  height: var(--h-field);
+}
+
+/* ── Controls ───────────────────────────────────────────────────────── */
+
+/* One height everywhere, and the segments fill it, so a picked segment
+   sits the same inset (--inset) from every edge and its corner nests. */
+.segmented-control {
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
+  gap: var(--space);
+  box-sizing: border-box;
+  height: var(--h-field);
+  padding: var(--space);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 calc(var(--space) * 3);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-in);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur) ease, color var(--dur) ease;
+}
+.seg-btn:hover {
+  color: var(--text);
+}
+.seg-btn.active {
+  background: var(--selected);
+  color: var(--text);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background var(--dur) ease;
+}
+.switch .knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  background: var(--text);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: left var(--dur) ease;
+}
+.switch:hover {
+  filter: brightness(1.08);
+}
+.switch.on {
+  background: var(--accent);
+}
+.switch.on .knob {
+  left: 19px;
+  background: var(--bg);
+}
+
+/* ── Card grids (themes, wallpapers, registry agents) ───────────────── */
+
+.packs,
+.thumbs {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: calc(var(--space) * 3);
@@ -104,17 +146,6 @@
   cursor: default;
   opacity: var(--disabled);
 }
-.pack-top {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 2);
-  min-width: 0;
-  width: 100%;
-}
-.pack-top > .pack-name,
-.pack-head > .pack-name {
-  flex: 1;
-}
 .pack-head {
   display: flex;
   align-items: center;
@@ -122,21 +153,60 @@
   min-width: 0;
   width: 100%;
 }
+.pack-head > .pack-name {
+  flex: 1;
+}
 .pack-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
   font-size: var(--fs-sm);
   font-weight: 500;
-  color: var(--text);
 }
 .pack-cmd {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--muted);
   font-family: var(--mono), ui-monospace, monospace;
   font-size: var(--fs-xs);
-  color: var(--muted);
+}
+
+/* ── Loading and errors ─────────────────────────────────────────────── */
+
+.skel {
+  min-height: 52px;
+  background: linear-gradient(100deg, var(--panel) 40%, var(--line) 50%, var(--panel) 60%);
+  background-size: 200% 100%;
+  border-radius: var(--radius);
+  animation: skel 1.2s ease-in-out infinite;
+}
+.skel.tall {
+  min-height: 110px;
+}
+@keyframes skel {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel {
+    animation: none;
+  }
+}
+
+.load-err {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 3);
+  padding: calc(var(--space) * 3) calc(var(--space) * 4);
+  background: transparent;
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  color: var(--bad-text);
+  font-size: var(--fs-sm);
 }

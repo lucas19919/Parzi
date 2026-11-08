@@ -488,109 +488,198 @@
 {/if}
 
 <style>
-  .packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: calc(var(--space) * 3); }
-  .pack { position: relative; }
-  .pack > .pack-btn { width: 100%; }
-  .pack.on .pack-btn { border-color: var(--accent); background: var(--line); color: var(--text); }
-  .pp {
-    position: relative; display: flex; flex-direction: column; gap: var(--space); height: 68px; padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
-    width: 100%; box-sizing: border-box;
-    border-radius: var(--radius-in); overflow: hidden; background: var(--pp-st);
-    border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
-  }
-  .pp-line { display: block; height: 4px; border-radius: var(--radius-sm); background: var(--pp-tx); opacity: 0.85; width: 62%; }
-  .pp-line.short { width: 40%; background: var(--pp-td); }
-  .pp-bar {
-    position: absolute; left: calc(var(--space) * 2); right: calc(var(--space) * 2); bottom: calc(var(--space) * 2); height: 16px;
-    border-radius: var(--radius-sm); background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
-    border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
-  }
-  .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: var(--radius-sm); background: var(--pp-ac); }
-  .art-dot { display: inline-flex; flex: none; color: var(--muted); }
-  .pack-actions { position: absolute; top: 9px; right: 9px; display: flex; gap: var(--space); opacity: 0; }
-  .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
-  .mini-icon {
-    min-width: 20px; height: 20px; padding: 0 var(--space); line-height: 1;
-    border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
-    font: inherit; font-size: var(--fs-xs); cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center;
-  }
-  .mini-icon:hover { color: var(--text); }
-  .mini-icon.armed { color: var(--bad-text); font-weight: 600; }
-  .pack-rename {
-    font: inherit; font-size: var(--fs-sm); color: var(--text);
-    background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius);
-    padding: var(--space) var(--space); width: 100%; box-sizing: border-box; outline: none;
-  }
+  /* ── Themes: a card per pack with a little drawing of its colours ── */
 
-  .thumbs {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: calc(var(--space) * 3);
+  .pack {
+    position: relative;
+  }
+  .pack > .pack-btn {
     width: 100%;
   }
-  .thumb {
+  .pack.on .pack-btn {
+    background: var(--line);
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .pp {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space);
+    box-sizing: border-box;
     width: 100%;
     height: 68px;
-    padding: 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
+    overflow: hidden;
+    background: var(--pp-st);
+    border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
+    border-radius: var(--radius-in);
+  }
+  .pp-line {
+    display: block;
+    width: 62%;
+    height: 4px;
+    background: var(--pp-tx);
+    border-radius: var(--radius-sm);
+    opacity: 0.85;
+  }
+  .pp-line.short {
+    width: 40%;
+    background: var(--pp-td);
+  }
+  .pp-bar {
+    position: absolute;
+    left: calc(var(--space) * 2);
+    right: calc(var(--space) * 2);
+    bottom: calc(var(--space) * 2);
+    height: 16px;
+    background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
+    border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
+    border-radius: var(--radius-sm);
+  }
+  .pp-bar i {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    background: var(--pp-ac);
+    border-radius: var(--radius-sm);
+  }
+  .art-dot {
+    display: inline-flex;
+    flex: none;
+    color: var(--muted);
+  }
+  .pack-rename {
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--space);
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    outline: none;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+  }
+
+  /* Rename and delete, shown on hover over a theme or a wallpaper. */
+  .pack-actions {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    display: flex;
+    gap: var(--space);
+    opacity: 0;
+  }
+  .pack:hover .pack-actions,
+  .pack-actions:focus-within {
+    opacity: 1;
+  }
+  .mini-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 var(--space);
+    background: var(--panel);
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-xs);
+    line-height: 1;
+    cursor: pointer;
+  }
+  .mini-icon:hover {
+    color: var(--text);
+  }
+  .mini-icon.armed {
+    color: var(--bad-text);
+    font-weight: 600;
+  }
+
+  /* ── Wallpapers ── */
+
+  .thumb-wrap {
+    position: relative;
+  }
+  .thumb {
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 100%;
+    height: 68px;
+    padding: 0;
+    overflow: hidden;
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
     cursor: pointer;
-    overflow: hidden;
   }
   .thumb img {
+    display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    display: block;
   }
-  .thumb:hover { border-color: var(--text); color: var(--text); }
-  .thumb.on { border-color: var(--accent); }
-  .thumb.add { border-style: dashed; }
-  .thumb-wrap { position: relative; }
-  .thumb-wrap .mini-icon { position: absolute; top: 4px; right: 4px; opacity: 0; }
-  .thumb-wrap:hover .mini-icon, .mini-icon:focus-visible { opacity: 1; }
-  .mini-icon.armed { opacity: 1; }
-  .pos { flex: none; width: 240px; max-width: 100%; }
+  .thumb:hover {
+    border-color: var(--text);
+    color: var(--text);
+  }
+  .thumb.on {
+    border-color: var(--accent);
+  }
+  .thumb.add {
+    border-style: dashed;
+  }
+  .thumb-wrap .mini-icon {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    opacity: 0;
+  }
+  .thumb-wrap:hover .mini-icon,
+  .mini-icon:focus-visible,
+  .mini-icon.armed {
+    opacity: 1;
+  }
+  /* A slider in a row: wallpaper height, position and dither. */
+  .pos {
+    flex: none;
+    width: 240px;
+    max-width: 100%;
+  }
 
-  .row > .packs {
-    flex: 1;
-    min-width: 0;
-  }
-  .save-row > .tin,
-  .save-row > .btn {
-    height: calc(var(--space) * 8);
-  }
-  .rows > .row > .tin:not(.fixed) {
-    flex: 1;
-    min-width: 0;
-  }
+  /* ── Rows: segmented choices span the control column evenly ── */
 
-  .rows .tin.fixed {
-    height: calc(var(--space) * 8);
-  }
   .rows :global(.segmented-control) {
-    width: 190px;
+    width: var(--w-ctl);
   }
   .rows :global(.segmented-control .seg-btn) {
     flex: 1 1 0;
-    text-align: center;
     padding-left: 0;
     padding-right: 0;
+    text-align: center;
   }
-
-  .rows > .row > :global(.cf) { flex: 1; min-width: 0; }
-  .panel-wrap { display: flex; flex: 1; min-width: 0; }
-  .panel-wrap > :global(.cf) { flex: 1; min-width: 0; }
+  .rows > .row > :global(.cf),
+  .panel-wrap > :global(.cf) {
+    flex: 1;
+    min-width: 0;
+  }
+  .panel-wrap {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  /* A quiet outlined button next to a field (Auto, reset). */
   .mini {
     flex: none;
-    height: calc(var(--space) * 8);
+    height: var(--h-field);
     padding: 0 calc(var(--space) * 3);
     background: none;
     border: 1px solid var(--line);
@@ -601,9 +690,11 @@
     cursor: pointer;
   }
   .mini:hover {
-    color: var(--text);
     background: var(--hover);
+    color: var(--text);
   }
-
-  .actions-row-end { display: flex; justify-content: flex-end; }
+  .actions-row-end {
+    display: flex;
+    justify-content: flex-end;
+  }
 </style>

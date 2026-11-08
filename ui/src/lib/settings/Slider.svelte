@@ -33,27 +33,72 @@
 </div>
 
 <style>
-  /* Not named `row`: a Settings card's rows would add their padding and height a second time. */
-  .slider { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: calc(var(--space) * 4); width: 100%; }
-  .slider.bare { grid-template-columns: 1fr; }
-  .info { display: flex; flex-direction: column; gap: var(--space); min-width: 0; }
-  .lab { font-size: var(--fs-md); font-weight: 500; color: var(--text); }
-  .sctl { display: flex; align-items: center; gap: calc(var(--space) * 3); min-width: 0; }
+  /* Not named `row`: a Settings card's rows would add their padding and
+     height a second time. */
+  .slider {
+    display: grid;
+    grid-template-columns: 132px 1fr;
+    align-items: center;
+    gap: calc(var(--space) * 4);
+    width: 100%;
+  }
+  .slider.bare {
+    grid-template-columns: 1fr;
+  }
+  .info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space);
+    min-width: 0;
+  }
+  .lab {
+    color: var(--text);
+    font-size: var(--fs-md);
+    font-weight: 500;
+  }
+  .sctl {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 3);
+    min-width: 0;
+  }
   input[type="range"] {
-    -webkit-appearance: none; appearance: none;
-    flex: 1; min-width: 0; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; font-size: var(--fs-sm);
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    margin: 0;
     background: linear-gradient(90deg, var(--accent) var(--p), var(--line) var(--p));
+    border-radius: 999px;
+    outline: none;
+    font-size: var(--fs-sm);
+    cursor: pointer;
   }
   input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: var(--text); border: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--text);
+    border: none;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
     transition: transform var(--dur) ease;
   }
   input[type="range"]:hover::-webkit-slider-thumb,
-  input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
-  input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.15);
+  }
+  input[type="range"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+  }
   .val {
-    flex: none; font-size: var(--fs-xs); color: var(--muted);
-    width: 44px; text-align: right; font-variant-numeric: tabular-nums;
+    flex: none;
+    width: 44px;
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
   }
 </style>

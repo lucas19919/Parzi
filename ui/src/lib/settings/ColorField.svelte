@@ -36,18 +36,61 @@
 </label>
 
 <style>
-  .cf { display: flex; align-items: center; gap: calc(var(--space) * 3); min-width: 0; }
+  .cf {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 3);
+    min-width: 0;
+  }
   .sw {
-    position: relative; width: 28px; height: 28px; flex: none; border-radius: 50%; overflow: hidden;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line); cursor: pointer;
+    position: relative;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    overflow: hidden;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line);
+    cursor: pointer;
   }
-  .sw input { position: absolute; inset: -10px; width: 44px; height: 44px; opacity: 0; cursor: pointer; padding: 0; border: none; }
-  .lab { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* Same box as the font fields below: 190px wide, 32px tall. */
+  .sw input {
+    position: absolute;
+    inset: -10px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: none;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .lab {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: var(--fs-md);
+    font-weight: 500;
+  }
+  /* The same box as the font fields: the control column, one field tall. */
   .hex {
-    width: 190px; height: calc(var(--space) * 8); box-sizing: border-box; flex: none; background: var(--bg); border: 1px solid var(--line);
-    border-radius: var(--radius); color: var(--muted); padding: 0 calc(var(--space) * 2); outline: none;
-    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-sm); text-transform: uppercase;
+    flex: none;
+    box-sizing: border-box;
+    width: var(--w-ctl);
+    height: var(--h-field);
+    padding: 0 calc(var(--space) * 2);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    outline: none;
+    color: var(--muted);
+    font-family: var(--mono), ui-monospace, monospace;
+    font-size: var(--fs-sm);
+    text-transform: uppercase;
   }
-  .hex:focus { border-color: var(--accent); color: var(--text); box-shadow: none; }
+  .hex:focus {
+    border-color: var(--accent);
+    box-shadow: none;
+    color: var(--text);
+  }
 </style>
