@@ -331,7 +331,7 @@ pub fn deadline(op: &str, body: &Value) -> Option<Duration> {
         | "tab.shot" => PAGE_DEADLINE,
         "tab.open" | "desk.open" | "desk.screenshot" => Duration::from_secs(30),
         // The window answers within 20s (control.rs UI_CALL_WAIT).
-        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" => {
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" | "app.show_file" => {
             Duration::from_secs(25)
         }
         "providers" => Duration::from_secs(120),

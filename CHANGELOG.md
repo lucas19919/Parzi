@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Agents can put a file in front of you: a plan, a doc they wrote or a project file opens in the File card beside the conversation, markdown rendered (the ui_show_file tool).
 - The File card browses the session's project: search, the files changed this session first, then all files; click one to read it and the arrow to go back. Opening a file from anywhere on your computer works again.
 - Buttons on glass cards are a faint tint with no outline, one surface with the glass instead of grey on grey.
 - Glass cards, the glass composer and glass tabs over the wallpaper have no outline: the frost is the edge. Clear cards keep theirs.
