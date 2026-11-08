@@ -2241,16 +2241,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     border-radius: 0;
   }
   /* Cards over the wallpaper on Home (the side column, the File card and the
-     composer): clear (outlined, the default), glass
-     (frosted) or solid (the panel colour), as set in Appearance. Only here:
-     everywhere else surfaces stay solid. */
+     composer): clear (outlined, the default), glass (frosted, no outline:
+     the frost is the edge) or solid (the panel colour), as set in
+     Appearance. Only here: everywhere else surfaces stay solid. */
   .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     transition:
       background var(--dur) ease,
+      border-color var(--dur) ease,
       backdrop-filter var(--dur) ease;
   }
   :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: color-mix(in srgb, var(--panel) 52%, transparent);
+    border-color: transparent;
     -webkit-backdrop-filter: blur(18px) saturate(1.2);
     backdrop-filter: blur(18px) saturate(1.2);
   }
@@ -2271,6 +2273,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .over-art :global(.tabs .tab:hover:not(.active)),
   .over-art :global(.panel-btn:hover:not(.active)) {
     background: color-mix(in srgb, var(--panel) 38%, transparent);
+  }
+  /* Glass tabs drop the ring like glass cards; a touch of the text colour in
+     the frost keeps the open one visible as a pill on any picture. */
+  :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:is(.active, :hover)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:is(.active, :hover)) {
+    background: color-mix(in srgb, var(--text) 12%, color-mix(in srgb, var(--panel) 45%, transparent));
+    border-color: transparent;
+  }
+  :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:hover:not(.active)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:hover:not(.active)) {
+    background: color-mix(in srgb, var(--text) 7%, color-mix(in srgb, var(--panel) 30%, transparent));
   }
   :global(html[data-art-cards="solid"]) .over-art :global(.tabs .tab:is(.active, :hover)),
   :global(html[data-art-cards="solid"]) .over-art :global(.panel-btn:is(.active, :hover)) {
