@@ -531,6 +531,17 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   read_text_file: (a) => `# ${String(a.path).split(/[\\/]/).pop()}\n\nA file for the mock backend. See [the sibling](./sibling.md), main.rs and github.com/parzi.\n`,
   git_branch: () => "main",
   git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600, top: "D:\\Repos\\Parzi", files: ["ui/src/lib/FilePanel.svelte", "src-tauri/src/files.rs", "CHANGELOG.md", "docs/notes.md"] }),
+  list_dir: (a) => {
+    const at = String(a.path).replace(/\\/g, "/");
+    const tree: Record<string, { name: string; dir: boolean }[]> = {
+      "": [{ name: "crates", dir: true }, { name: "docs", dir: true }, { name: "src-tauri", dir: true }, { name: "ui", dir: true }, { name: "CHANGELOG.md", dir: false }, { name: "Cargo.toml", dir: false }, { name: "README.md", dir: false }],
+      docs: [{ name: "plans", dir: true }, { name: "releasing.md", dir: false }],
+      "docs/plans": [{ name: "mobile.md", dir: false }],
+      ui: [{ name: "src", dir: true }, { name: "package.json", dir: false }],
+    };
+    const key = Object.keys(tree).find((k) => k && at.endsWith(`/${k}`)) ?? "";
+    return tree[key] ?? [];
+  },
   pick_text_file: () => ({ path: "C:\\Users\\me\\Desktop\\todo.md", content: "# Todo\n\n- Try the file card\n" }),
   list_files: (a) => ["README.md", "CHANGELOG.md", "ui/src/App.svelte", "ui/src/lib/FilePanel.svelte", "ui/src/lib/Omnibar.svelte", "ui/src/lib/Thread.svelte", "src-tauri/src/files.rs", "crates/parzi-core/src/theme.rs", "docs/releasing.md"].filter((f) => f.toLowerCase().includes(String(a.query ?? "").toLowerCase())),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],

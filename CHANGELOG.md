@@ -7,7 +7,8 @@ a full release moves it under its version. See `docs/releasing.md`.
 ## Unreleased
 
 - Agents can put a file in front of you: a plan, a doc they wrote or a project file opens in the File card beside the conversation, markdown rendered (the ui_show_file tool).
-- The File card browses the session's project: search, the files changed this session first, then all files; click one to read it and the arrow to go back. Opening a file from anywhere on your computer works again.
+- The File card browses the session's project as a tree of its folders, with the files changed in the working tree on top and a search across the whole project; click a file to read it and the arrow to go back. Your projects' folders work before any session has run in them, and opening a file from anywhere on your computer works again.
+- Glass tabs use the same glass as the cards.
 - Buttons on glass cards are a faint tint with no outline, one surface with the glass instead of grey on grey.
 - Glass cards, the glass composer and glass tabs over the wallpaper have no outline: the frost is the edge. Clear cards keep theirs.
 - Updates show up on their own: Parzi looks every half hour and when you come back to the window, retries soon if a look or a download fails, and keeps a downloaded update ready instead of fetching it again.

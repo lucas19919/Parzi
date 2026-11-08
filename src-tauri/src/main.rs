@@ -835,6 +835,7 @@ fn main() {
             files::read_image_data_url,
             files::read_text_file,
             files::pick_text_file,
+            files::list_dir,
             files::stage_image,
             files::save_as,
             files::reveal_saved,
