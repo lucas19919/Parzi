@@ -2295,13 +2295,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
      and the line above the composer read as on a dark theme. Glass and
      solid cards and the composer keep the light theme's own colours: light
      frosted glass with dark text, like light widgets on a dark wallpaper.
-     Clear cards have no surface of their own, so they stay dark. */
+     The open tab and toggles that are on are the same light glass. Clear
+     cards have no surface of their own, so they stay dark. */
   :global(html[data-scene="dark"]) .over-art {
     --bg: var(--scene-bg);
     --text: var(--scene-text);
     --accent: var(--scene-accent);
   }
-  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     --bg: var(--scene-text);
     --text: var(--scene-bg);
     --accent: var(--theme-accent);
@@ -2309,7 +2310,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* The colours made from the pair, made again wherever it changes. */
   :global(html[data-scene="dark"]) .over-art,
-  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
     --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
     --line: color-mix(in srgb, var(--text) 12%, var(--bg));
@@ -2328,7 +2329,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Light glass holds more of its own colour than dark glass: at half
      strength it turns grey over a dimmed picture. */
-  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     background: color-mix(in srgb, var(--panel) 80%, transparent);
     -webkit-backdrop-filter: blur(24px) saturate(1.4);
     backdrop-filter: blur(24px) saturate(1.4);
