@@ -507,17 +507,16 @@
     text-overflow: ellipsis;
   }
   .close {
-    width: 24px;
-    height: 24px;
+    width: 18px;
+    height: 18px;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space);
+    padding: 0;
     background: transparent;
-    background-clip: content-box;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--muted);
     cursor: pointer;
     opacity: 0;

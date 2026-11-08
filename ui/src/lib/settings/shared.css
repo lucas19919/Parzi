@@ -6,7 +6,7 @@
   border-radius: var(--radius); padding: var(--space); gap: var(--space); flex: none;
 }
 .seg-btn {
-  background: transparent; border: none; border-radius: var(--radius); color: var(--muted);
+  background: transparent; border: none; border-radius: var(--radius-in); color: var(--muted);
   font-size: var(--fs-md); font-weight: 500; padding: var(--space) calc(var(--space) * 3); cursor: pointer;
   transition: background var(--dur) ease, color var(--dur) ease; font-family: inherit;
   white-space: nowrap;
@@ -82,7 +82,7 @@
   align-items: flex-start;
   gap: var(--space);
   min-width: 0;
-  padding: calc(var(--space) * 2);
+  padding: var(--space);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius);

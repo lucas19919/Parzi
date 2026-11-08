@@ -73,7 +73,7 @@
     padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--text);
     font-size: var(--fs-base);
     text-align: left;

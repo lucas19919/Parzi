@@ -1364,7 +1364,7 @@
     padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--text);
     text-align: left;
     cursor: pointer;
@@ -1385,7 +1385,7 @@
   .opt-row {
     display: flex;
     align-items: center;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
   }
   .opt-row:hover:not(.on) {
     background: var(--hover);

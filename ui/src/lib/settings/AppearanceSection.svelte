@@ -467,13 +467,13 @@
   .pp {
     position: relative; display: flex; flex-direction: column; gap: var(--space); height: 68px; padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
     width: 100%; box-sizing: border-box;
-    border-radius: var(--radius); overflow: hidden; background: var(--pp-st);
+    border-radius: var(--radius-in); overflow: hidden; background: var(--pp-st);
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
   .pp-line { display: block; height: 4px; border-radius: var(--radius-sm); background: var(--pp-tx); opacity: 0.85; width: 62%; }
   .pp-line.short { width: 40%; background: var(--pp-td); }
   .pp-bar {
-    position: absolute; left: 10px; right: 10px; bottom: 8px; height: 16px;
+    position: absolute; left: calc(var(--space) * 2); right: calc(var(--space) * 2); bottom: calc(var(--space) * 2); height: 16px;
     border-radius: var(--radius-sm); background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
