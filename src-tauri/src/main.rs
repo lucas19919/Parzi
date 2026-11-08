@@ -834,6 +834,7 @@ fn main() {
             files::git_status,
             files::read_image_data_url,
             files::read_text_file,
+            files::pick_text_file,
             files::stage_image,
             files::save_as,
             files::reveal_saved,

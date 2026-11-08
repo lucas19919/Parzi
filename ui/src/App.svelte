@@ -2259,6 +2259,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
   }
+  /* Buttons on glass are one surface with it: a faint wash of the text
+     colour that lets the picture through, no grey fill and no outline. */
+  :global(html[data-art-cards="glass"]) .over-art :global(.info .card .btn:not(.primary)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.files .card .btn:not(.primary)) {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border-color: transparent;
+  }
+  :global(html[data-art-cards="glass"]) .over-art :global(.info .card .btn:not(.primary):hover:not(:disabled)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--text) 14%, transparent);
+    border-color: transparent;
+  }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
      pointer are frosted glass (solid panel when the cards are solid), with
