@@ -3,10 +3,8 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import Icon from "../Icon.svelte";
   import { api, type ParziConfig } from "../api";
-  import type { ProviderStatus } from "../api";
   import { classifyPaste, nameFromProgram, splitLine } from "../cmdline";
   import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
-  import { PROVIDER_ORDER, nameOf, stateLabel } from "../providerRows";
   import SegControl from "./SegControl.svelte";
   import Switch from "./Switch.svelte";
   import { updateConfig } from "../config";
@@ -246,18 +244,12 @@
         .then((all) => (found = all as typeof found))
         .catch(() => {});
     }
-    const onFocus = () => {
-      if (which === "remote" && info && agents.length) void checkAgents(true);
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
   });
 
   async function load() {
     try {
       [cfg, info] = await Promise.all([api.getConfig(), remote.info()]);
       loadError = "";
-      if (which === "remote" && info) void checkAgents(false);
       if (which === "apps" && cfg) {
         for (const [id, srv] of Object.entries(cfg.mcp.servers)) {
           if ((srv as Server).enabled !== false) void check(id);
@@ -338,33 +330,6 @@
     health = rest;
   }
 
-  let agents: ProviderStatus[] = [];
-  let checking = false;
-
-  async function checkAgents(refresh: boolean) {
-    checking = true;
-    try {
-      const all = await remote.providers(refresh);
-      remoteBoard.set(all);
-      agents = PROVIDER_ORDER.map((id) => all.find((a) => a.provider === id)).filter((a): a is ProviderStatus => !!a);
-    } catch (e) {
-      notify(`Can't reach the server: ${e}`, true);
-    } finally {
-      checking = false;
-    }
-  }
-
-  async function agentAction(provider: string, action: "install" | "login") {
-    try {
-      await remote.agent(provider, action);
-      notify("Finish in the terminal window");
-    } catch (e) {
-      notify(String(e), true);
-    }
-  }
-
-  const agentState = (a: ProviderStatus) => ((a.state === "error" || a.state === "signed_out") && a.hint ? a.hint : stateLabel(a));
-
   async function unlink() {
     if (!info) return;
     const ok = await ask(`Unlink ${info.label}? Parzi keeps running there; set it up again to link back.`, {
@@ -377,7 +342,6 @@
       info = null;
       linked.set(null);
       remoteBoard.set([]);
-      agents = [];
       notify("Unlinked");
     } catch (e) {
       notify(`Could not unlink: ${e}`, true);
@@ -438,28 +402,6 @@
         </div>
       {/if}
     </div>
-    {#if info}
-      <div class="rows">
-        <div class="row row-title">
-          <span>Agents on the remote</span>
-          <span class="row-ctl auto"><button class="btn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button></span>
-        </div>
-        {#each agents as a (a.provider)}
-          <div class="row">
-            <span class="row-label">{nameOf(a.provider)}
-              <small class:ok={a.state === "ready"}>{agentState(a)}</small>
-            </span>
-            <span class="row-ctl auto">
-              {#if a.state === "not_installed"}
-                <button class="btn" on:click={() => agentAction(a.provider, "install")}>Install</button>
-              {:else if a.state !== "ready" && a.state !== "disabled"}
-                <button class="btn" on:click={() => agentAction(a.provider, "login")}>Sign in</button>
-              {/if}
-            </span>
-          </div>
-        {/each}
-      </div>
-    {/if}
   </div>
 
 {:else}

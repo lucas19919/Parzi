@@ -511,7 +511,14 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
       ? { label: "box", user: "lucas", host: "box.example.net", version: "0.1.27", linked_at: now, alive: true, synced_at: now - 180_000, device: "pc" }
       : null,
   remote_sync: () => "synced",
-  remote_providers: () => [],
+  remote_providers: () =>
+    params.get("remote")
+      ? [
+          { provider: "claude", state: "ready", version: "2.4.0", hint: "", usage: [{ label: "5h", used_percent: 64 }], models: [], gated: false, checked_at: now / 1000 },
+          { provider: "codex", state: "signed_out", version: "0.9.1", hint: "Sign in to Codex on box", usage: [], models: [], gated: false, checked_at: now / 1000 },
+          { provider: "opencode", state: "not_installed", version: "", hint: "", usage: [], models: [], gated: false, checked_at: now / 1000 },
+        ]
+      : [],
   remote_projects: () => [],
   brain_context: () => ({ project, text: "", attached: [], listed: [], overflow: [], chars: 0, tokens: 1840 }),
   brain_projects: () => [

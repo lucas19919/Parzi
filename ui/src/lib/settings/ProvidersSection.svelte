@@ -6,6 +6,7 @@
   import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits, signInAgent } from "../providerStore";
   import { BILLING_OPTIONS, PROVIDER_ORDER, billingNote, isUsable, nameOf, stateLabel, type Billing } from "../providerRows";
   import { updateConfig } from "../config";
+  import { refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "../remote";
   import SegControl from "./SegControl.svelte";
   import "./shared.css";
 
@@ -23,7 +24,16 @@
   let keyDrafts: Record<string, string> = {};
   const AGENT_ORDER = [...PROVIDER_ORDER, "acp"];
 
-  onMount(async () => {
+  onMount(() => {
+    const onFocus = () => {
+      if (where === "remote") void checkRemote(true);
+    };
+    window.addEventListener("focus", onFocus);
+    void load();
+    return () => window.removeEventListener("focus", onFocus);
+  });
+
+  async function load() {
     try {
       const [, c, keys] = await Promise.all([ensureBoard(), api.getConfig(), api.agentKeys()]);
       cfg = c;
@@ -36,7 +46,40 @@
       loading = false;
     }
     void refreshStale().catch(() => {});
-  });
+  }
+
+  // The agents on this computer, or on the linked server.
+  let where: "here" | "remote" = "here";
+  let remoteBusy = false;
+  $: places = $remoteInfo ? [{ value: "here", label: "This computer" }, { value: "remote", label: $remoteInfo.label }] : [];
+  $: if (!$remoteInfo) where = "here";
+
+  async function checkRemote(refresh: boolean) {
+    remoteBusy = true;
+    try {
+      await refreshRemoteBoard(refresh);
+    } catch (e) {
+      notify(`Can't reach ${$remoteInfo?.label ?? "the server"}: ${e}`, true);
+    } finally {
+      remoteBusy = false;
+    }
+  }
+
+  function pickPlace(v: string) {
+    where = v === "remote" ? "remote" : "here";
+    if (where === "remote") void checkRemote(!$remoteBoard.length);
+  }
+
+  async function remoteAction(id: string, action: "install" | "login") {
+    try {
+      await remote.agent(id, action);
+      notify("Finish in the terminal window");
+    } catch (e) {
+      notify(String(e), true);
+    }
+  }
+
+  $: remoteRows = PROVIDER_ORDER.map((id) => ({ id, p: $remoteBoard.find((b) => b.provider === id) }));
 
   $: statusOf = (id: string) => $board.find((b) => b.provider === id);
   $: entryOf = (id: string): ProviderEntry => cfg?.providers?.[id] ?? { enabled: true };
@@ -174,6 +217,53 @@
 {:else if err}
   <div class="load-err"><span>{err}</span></div>
 {:else}
+  {#if places.length}
+    <div class="pref-section">
+      <div class="rows">
+        <div class="row ctl-row">
+          <span class="row-label">Agents on</span>
+          <span class="row-ctl auto">
+            {#if where === "remote"}
+              <button class="btn" disabled={remoteBusy} on:click={() => checkRemote(true)}>{remoteBusy ? "Checking…" : "Check again"}</button>
+            {/if}
+            <SegControl label="Whose agents" options={places} value={where} on:pick={(e) => pickPlace(e.detail)} />
+          </span>
+        </div>
+      </div>
+    </div>
+  {/if}
+  {#if where === "remote"}
+    {#each remoteRows as { id, p } (id)}
+      <div class="pref-section">
+        <div class="rows">
+          <div class="row row-title">
+            <ProviderLogo provider={id} size={20} />
+            <span>{nameOf(id)}</span>
+          </div>
+          <div class="row">
+            <span class="row-label">{statusLine(p, true, remoteBusy)}</span>
+            <span class="row-ctl auto">
+              {#if p?.state === "not_installed"}
+                <button class="btn primary" on:click={() => remoteAction(id, "install")}>Install</button>
+              {:else if p && (p.state === "signed_out" || p.state === "error")}
+                <button class="btn primary" on:click={() => remoteAction(id, "login")}>Sign in</button>
+              {/if}
+            </span>
+          </div>
+          {#if p?.state === "ready" && p.usage?.length}
+            {#each p.usage as w (w.label)}
+              <div class="row">
+                <span class="usage-label">{w.label}</span>
+                <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
+                <span class="usage-num">{Math.round(w.used_percent)}%</span>
+                {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    {/each}
+  {:else}
     {#each AGENT_ORDER as id (id)}
         {@const p = statusOf(id)}
         {@const entry = entryOf(id)}
@@ -310,6 +400,7 @@
         </div>
       </div>
       {/each}
+  {/if}
 {/if}
 
 <style>
