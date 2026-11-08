@@ -243,6 +243,8 @@ export const api = {
 
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
   listFiles: (root: string, query: string) => invoke<string[]>("list_files", { root, query }),
+  /** One level of a folder: folders first, then files. */
+  listDir: (path: string) => invoke<{ name: string; dir: boolean }[]>("list_dir", { path }),
   gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
   gitBranches: (cwd: string) => invoke<{ current: string; all: string[] }>("git_branches", { cwd }),
   gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),

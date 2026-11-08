@@ -2304,16 +2304,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .over-art :global(.panel-btn:hover:not(.active)) {
     background: color-mix(in srgb, var(--panel) 38%, transparent);
   }
-  /* Glass tabs drop the ring like glass cards; a touch of the text colour in
-     the frost keeps the open one visible as a pill on any picture. */
+  /* Glass tabs are the cards' glass exactly, and drop the ring like them. */
   :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:is(.active, :hover)),
   :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:is(.active, :hover)) {
-    background: color-mix(in srgb, var(--text) 12%, color-mix(in srgb, var(--panel) 45%, transparent));
+    background: color-mix(in srgb, var(--panel) 52%, transparent);
     border-color: transparent;
-  }
-  :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:hover:not(.active)),
-  :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:hover:not(.active)) {
-    background: color-mix(in srgb, var(--text) 7%, color-mix(in srgb, var(--panel) 30%, transparent));
   }
   :global(html[data-art-cards="solid"]) .over-art :global(.tabs .tab:is(.active, :hover)),
   :global(html[data-art-cards="solid"]) .over-art :global(.panel-btn:is(.active, :hover)) {

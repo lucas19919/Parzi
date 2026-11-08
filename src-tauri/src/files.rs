@@ -135,7 +135,14 @@ fn scan_session_roots(store: &SessionStore) -> Vec<PathBuf> {
         .map(|m| m.cwd.trim().to_string())
         .filter(|c| !c.is_empty())
         .collect();
-    for cwd in cwds {
+    // The person's registered projects are theirs to browse too, before any
+    // session has run in them.
+    let projects = parzi_core::brain::projects()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.folder.trim().to_string())
+        .filter(|f| !f.is_empty());
+    for cwd in cwds.into_iter().chain(projects) {
         let raw = Path::new(&cwd);
         if !plain_local(raw) {
             continue;
@@ -243,6 +250,55 @@ fn confine(store: &SessionStore, raw: &str) -> Result<(PathBuf, PathBuf), String
 
 pub(crate) fn confined_path(store: &SessionStore, raw: &str) -> Result<PathBuf, String> {
     confine(store, raw).map(|(normal, _)| normal)
+}
+
+/// One entry of a folder, for the File card's tree.
+#[derive(serde::Serialize)]
+pub struct DirEntry {
+    name: String,
+    dir: bool,
+}
+
+/// What a folder holds, one level deep: folders first, then files, each by
+/// name; hidden entries and build output left out.
+#[tauri::command]
+pub async fn list_dir(state: State<'_, AppState>, path: String) -> Result<Vec<DirEntry>, String> {
+    const SKIP: &[&str] = &[
+        "node_modules",
+        "target",
+        "target-dev",
+        "dist",
+        ".venv",
+        "__pycache__",
+    ];
+    const MAX: usize = 1000;
+    let orch = state.orch.clone();
+    off_thread(move || {
+        let dir = confined_path(orch.store(), &path)?;
+        let mut out: Vec<DirEntry> = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || SKIP.contains(&name.as_str()) {
+                    return None;
+                }
+                let kind = e.file_type().ok()?;
+                (!kind.is_symlink()).then_some(DirEntry {
+                    name,
+                    dir: kind.is_dir(),
+                })
+            })
+            .take(MAX)
+            .collect();
+        out.sort_by(|a, b| {
+            b.dir
+                .cmp(&a.dir)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        Ok(out)
+    })
+    .await
 }
 
 #[tauri::command]
