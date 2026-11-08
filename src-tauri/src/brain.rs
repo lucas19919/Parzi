@@ -163,9 +163,9 @@ fn percent_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use crate::files::OPEN;
     use std::ffi::OsString;
+    use std::path::PathBuf;
 
     fn temp(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("parzi-brain-{tag}-{}", std::process::id()));

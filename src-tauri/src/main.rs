@@ -18,8 +18,8 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 mod dwm;
 
 mod adblock;
-mod artifact_frame;
 mod appearance;
+mod artifact_frame;
 mod brain;
 mod browser;
 mod control;
