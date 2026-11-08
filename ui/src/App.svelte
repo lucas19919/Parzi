@@ -2289,6 +2289,19 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     background: color-mix(in srgb, var(--text) 14%, transparent);
     border-color: transparent;
   }
+  /* Light theme, text straight on the picture: the full text colour instead
+     of grey, with a hairline edge in the page colour, not a glow. */
+  :global(html[data-tone="light"]) .over-art :global(.topbar),
+  :global(html[data-tone="light"]) .over-art :global(.ob .where) {
+    --muted: var(--text);
+  }
+  :global(html[data-tone="light"]) .over-art :global(.tabs .tab),
+  :global(html[data-tone="light"]) .over-art :global(.ob .where) {
+    text-shadow: 0 0 1px color-mix(in srgb, var(--bg) 70%, transparent);
+  }
+  :global(html[data-tone="light"]) .over-art :global(.topbar svg) {
+    filter: drop-shadow(0 0 1px color-mix(in srgb, var(--bg) 70%, transparent));
+  }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
      pointer are frosted glass (solid panel when the cards are solid), with
