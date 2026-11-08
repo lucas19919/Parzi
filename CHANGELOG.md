@@ -6,7 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
-- Light themes show the wallpaper in its own colours: no white veil or fade over it, and the dither no longer greys the picture. The title bar reads the picture behind it and turns all its text white over a dark picture, black over a light one; the line above the composer does the same.
+- Light themes show the wallpaper in its own colours: no white veil or fade over it, text over the picture in full colour, and the dither no longer greys the picture.
 - Agents can put a file in front of you: a plan, a doc they wrote or a project file opens in the File card beside the conversation, markdown rendered (the ui_show_file tool).
 - The File card browses the session's project as a tree of its folders, with the files changed in the working tree on top and a search across the whole project; click a file to read it and the arrow to go back. Your projects' folders work before any session has run in them, and opening a file from anywhere on your computer works again.
 - Glass tabs use the same glass as the cards.

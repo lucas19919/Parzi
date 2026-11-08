@@ -22,97 +22,16 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
   import { fade } from "svelte/transition";
-  import { canSample, cellLuminance, inkFor } from "./artInk";
 
   export let bg = "";
   const noise = noiseTile();
-
-  /* The title bar and the line above the composer are each marked with
-     the picture's brightness behind them as a whole, data-on="dark" or
-     "light", so a light theme can draw all of that text in one ink, light
-     where the picture is dark. Nothing is laid over the picture for it. */
-  const INKED = ".topbar, .ob .where";
-  let art: HTMLDivElement | undefined;
-  let shown: HTMLImageElement | undefined;
-  let source: HTMLImageElement | null = null;
-  let cells: { lum: Float32Array; w: number; h: number; step: number } | null = null;
-  let frame = 0;
-
-  $: load(bg);
-
-  function load(src: string) {
-    source = null;
-    cells = null;
-    clear();
-    if (!src) return;
-    // A separate copy for reading pixels: one the page may not read leaves
-    // the text as it is, and never stops the wallpaper itself showing.
-    const im = new Image();
-    im.crossOrigin = "anonymous";
-    im.onload = () => {
-      if (bg !== src) return;
-      source = im;
-      queue(true);
-    };
-    im.src = src;
-  }
-
-  function clear() {
-    for (const el of document.querySelectorAll<HTMLElement>("[data-on]")) delete el.dataset.on;
-  }
-
-  /** Re-reads the picture as it is drawn (size, crop) when `redraw`, then
-   *  marks the text over it, once per frame at most. */
-  function queue(redraw = false) {
-    if (redraw) cells = null;
-    if (frame) return;
-    frame = requestAnimationFrame(() => {
-      frame = 0;
-      if (!source || !art || !shown || document.documentElement.dataset.artFill !== "full") return clear();
-      if (!cells) cells = canSample(source, art, shown);
-      if (!cells) return clear();
-      const box = art.getBoundingClientRect();
-      for (const el of document.querySelectorAll<HTMLElement>(INKED)) {
-        const lum = cellLuminance(cells, el.getBoundingClientRect(), box);
-        const on = lum === null ? undefined : inkFor(lum);
-        if (el.dataset.on !== on) {
-          if (on) el.dataset.on = on;
-          else delete el.dataset.on;
-        }
-      }
-    });
-  }
-
-  let watch: MutationObserver | undefined;
-  const onResize = () => queue(true);
-  onMount(() => {
-    // Tabs open, close and rename; the line above the composer comes and
-    // goes. Only changes there (and the theme) re-mark the text.
-    watch = new MutationObserver((list) => {
-      for (const m of list) {
-        if (m.target === document.documentElement) return queue(true);
-        const t = m.target instanceof Element ? m.target : m.target.parentElement;
-        if (t?.closest(".topbar, .ob")) return queue();
-      }
-    });
-    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
-    watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-art-fill", "style"] });
-    window.addEventListener("resize", onResize);
-  });
-  onDestroy(() => {
-    watch?.disconnect();
-    if (typeof window !== "undefined") window.removeEventListener("resize", onResize);
-    if (frame) cancelAnimationFrame(frame);
-    if (typeof document !== "undefined") clear();
-  });
 </script>
 
 <div class="backdrop">
   {#if bg}
-    <div class="art" bind:this={art} transition:fade={{ duration: 200 }}>
-      <img src={bg} alt="" bind:this={shown} />
+    <div class="art" transition:fade={{ duration: 200 }}>
+      <img src={bg} alt="" />
       <div class="shade" />
       <div class="grain" aria-hidden="true" style:background-image={noise ? `url(${noise})` : undefined} />
     </div>
