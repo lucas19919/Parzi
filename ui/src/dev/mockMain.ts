@@ -10,12 +10,26 @@ if (new URLSearchParams(location.search).get("bg")) {
   c.width = 1600;
   c.height = 1000;
   const g = c.getContext("2d")!;
+  const bright = new URLSearchParams(location.search).get("bg") === "bright";
   const sky = g.createLinearGradient(0, 0, 0, c.height);
-  sky.addColorStop(0, "#1d3b6b");
-  sky.addColorStop(0.55, "#d9825b");
-  sky.addColorStop(1, "#2a1a2e");
+  // ?bg=bright: a glaring yellow sky with light rays, the hardest case for
+  // text on the picture.
+  sky.addColorStop(0, bright ? "#7a4a12" : "#1d3b6b");
+  sky.addColorStop(0.45, bright ? "#f5c542" : "#d9825b");
+  sky.addColorStop(1, bright ? "#c9781e" : "#2a1a2e");
   g.fillStyle = sky;
   g.fillRect(0, 0, c.width, c.height);
+  if (bright) {
+    for (let i = 0; i < 7; i++) {
+      g.fillStyle = `rgba(255, 250, 220, ${0.18 + (i % 3) * 0.08})`;
+      g.beginPath();
+      g.moveTo(200 + i * 210, 0);
+      g.lineTo(320 + i * 210, 0);
+      g.lineTo(900 + i * 160, c.height);
+      g.lineTo(760 + i * 160, c.height);
+      g.fill();
+    }
+  }
   g.fillStyle = "#f6d28b";
   g.beginPath();
   g.arc(1080, 560, 120, 0, Math.PI * 2);

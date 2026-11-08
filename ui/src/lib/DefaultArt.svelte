@@ -2,7 +2,7 @@
   /** A tile of random grey pixels, made once. Scaled up without smoothing,
    *  each pixel turns into a square dot of the dither size. */
   let tile = "";
-  function noiseTile(): string {
+  export function noiseTile(): string {
     if (tile || typeof document === "undefined") return tile;
     const n = 128;
     const c = document.createElement("canvas");
@@ -28,11 +28,17 @@
   const noise = noiseTile();
 </script>
 
+<!-- The window's backdrop on Home. The picture, blurred and tinted toward
+     the theme, is what the title bar and side column sit on, so they read
+     over any image. In a band the picture turns sharp below the title bar
+     and fades into the page; in full window the sharp picture is the stage
+     card instead (HomeArt.svelte) and this is the surround. -->
 <div class="backdrop">
   {#if bg}
     <div class="art" transition:fade={{ duration: 200 }}>
-      <img src={bg} alt="" />
-      <div class="shade" />
+      <img class="soft" src={bg} alt="" />
+      <div class="tint" />
+      <img class="sharp" src={bg} alt="" />
       <div class="grain" aria-hidden="true" style:background-image={noise ? `url(${noise})` : undefined} />
     </div>
   {/if}
@@ -47,9 +53,8 @@
     pointer-events: none;
     background: var(--bg);
   }
-  /* The band fades in and out on an eased curve, not a straight line: a
-     linear mask leaves a visible edge and, on a light theme, milky
-     mid-tones where the picture meets the page. */
+  /* The band fades out into the page on an eased curve: a linear mask
+     shows its edge and leaves milky mid-tones. */
   .art {
     position: absolute;
     top: 0;
@@ -59,12 +64,7 @@
     overflow: hidden;
     --fade: linear-gradient(
       to bottom,
-      rgb(0 0 0 / 0) 0%,
-      rgb(0 0 0 / 0.08) 5%,
-      rgb(0 0 0 / 0.28) 11%,
-      rgb(0 0 0 / 0.6) 18%,
-      rgb(0 0 0 / 0.88) 24%,
-      #000 30%,
+      #000 0%,
       #000 52%,
       rgb(0 0 0 / 0.86) 62%,
       rgb(0 0 0 / 0.6) 72%,
@@ -83,46 +83,34 @@
     object-fit: cover;
     object-position: center var(--bg-y, 50%);
   }
-  /* On a dark theme the shade dims the picture a little and darkens the top
-     behind the tabs. A light theme gets no shade: a wash of white only greys
-     the picture out. Text over it carries its own halo instead (App.svelte). */
-  .shade {
+  /* The surround: blurred well past any detail, then tinted most of the
+     way to the theme, like Windows' Mica. Text keeps its contrast; the
+     window keeps the picture's colour. Scaled so the blur has no edge. */
+  .soft {
+    filter: blur(64px) saturate(1.4);
+    transform: scale(1.2);
+  }
+  .tint {
     position: absolute;
     inset: 0;
-    background:
-      linear-gradient(to bottom, color-mix(in srgb, var(--bg) 72%, transparent), transparent 55%),
-      color-mix(in srgb, var(--bg) 30%, transparent);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
   }
-  /* On a light theme the band starts at the top edge: fading a picture in
-     from white only greys its top. It still fades out into the page. */
-  :global(html[data-tone="light"]) .art {
-    --fade: linear-gradient(
-      to bottom,
-      #000 0%,
-      #000 52%,
-      rgb(0 0 0 / 0.86) 62%,
-      rgb(0 0 0 / 0.6) 72%,
-      rgb(0 0 0 / 0.32) 82%,
-      rgb(0 0 0 / 0.12) 91%,
-      rgb(0 0 0 / 0) 100%
-    );
+  /* In a band the sharp picture starts just below the title bar, growing
+     out of the blur rather than out of white. */
+  .sharp {
+    --in: linear-gradient(to bottom, rgb(0 0 0 / 0) 0, rgb(0 0 0 / 0) 40px, rgb(0 0 0 / 0.55) 64px, #000 104px);
+    -webkit-mask-image: var(--in);
+    mask-image: var(--in);
   }
-  :global(html[data-tone="light"]) .shade {
-    background: none;
-  }
-  /* Full window: the picture fills Home. */
+  /* Full window: the surround covers the window; the sharp picture is the
+     stage card. */
   :global(html[data-art-fill="full"]) .art {
     height: 100%;
     -webkit-mask-image: none;
     mask-image: none;
   }
-  :global(html[data-art-fill="full"]) .shade {
-    background:
-      linear-gradient(to bottom, color-mix(in srgb, var(--bg) 55%, transparent), transparent 22%),
-      color-mix(in srgb, var(--bg) 38%, transparent);
-  }
-  :global(html[data-tone="light"][data-art-fill="full"]) .shade {
-    background: none;
+  :global(html[data-art-fill="full"]) .sharp {
+    display: none;
   }
   /* Dither, sized and strengthened in Appearance (--dither-size, --dither).
      Soft light lightens and darkens around the picture's own tones, so it
