@@ -15,6 +15,7 @@
   import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
+  import HomeArt from "./lib/HomeArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
@@ -358,6 +359,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
+  // Full window: Home's stage is a card showing the picture, over a blurred
+  // surround (HomeArt and DefaultArt).
+  let artFull = false;
+  $: homeArt = showWallpaper && !!bg && artFull;
+  onMount(() => {
+    const sync = () => (artFull = document.documentElement.dataset.artFill === "full");
+    sync();
+    const watch = new MutationObserver(sync);
+    watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-art-fill"] });
+    return () => watch.disconnect();
+  });
 
   function clearCover() {
     cover = null;
@@ -1972,8 +1984,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         />
       {/key}
     {:else}
-      {#if tab.kind === "session" && (hasSession || infoShown || coverOn)}
+      {#if tab.kind === "session" && (hasSession || infoShown || coverOn || homeArt)}
         <div class="stagerow" class:solo={!hasSession && !coverOn} out:fade|local={{ duration: motion.duration }}>
+          {#if homeArt}
+            <HomeArt {bg} />
+          {/if}
           {#if hasSession || coverOn}
           <section class="session" out:fade|local={{ duration: motion.duration }}>
             {#if coverOn || parent}
@@ -2262,26 +2277,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
   }
-  /* Over the wallpaper the title bar is one frosted strip across the
-     window, so tabs and buttons sit on an even surface over any picture,
-     never on the picture itself. Solid cards make it solid. */
-  .over-art :global(.topbar) {
-    background: color-mix(in srgb, var(--bg) 66%, transparent);
-    -webkit-backdrop-filter: blur(24px) saturate(1.3);
-    backdrop-filter: blur(24px) saturate(1.3);
-    border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-  }
-  :global(html[data-art-cards="solid"]) .over-art :global(.topbar) {
-    background: var(--bg);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  /* Grey does not read on a picture: chrome over it uses near full text
-     colour for words and icons alike. */
-  .over-art :global(.topbar),
-  .over-art :global(.ob),
-  .over-art :global(.info .card),
-  .over-art :global(.files .card) {
+  /* The composer and its line sit on the sharp picture: grey does not read
+     on a photo, so muted text there uses near full text colour. */
+  .over-art :global(.ob) {
     --muted: color-mix(in srgb, var(--text) 90%, var(--bg));
     --faint: color-mix(in srgb, var(--text) 70%, var(--bg));
   }
@@ -2289,9 +2287,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
      shadow in the page colour lifts it off light and dark parts alike. */
   :global(html[data-art-fill="full"]) .over-art :global(.ob .where) {
     text-shadow:
-      0 0 1px color-mix(in srgb, var(--bg) 90%, transparent),
-      0 1px 3px color-mix(in srgb, var(--bg) 80%, transparent),
-      0 0 8px color-mix(in srgb, var(--bg) 45%, transparent);
+      0 0 1px color-mix(in srgb, var(--bg) 95%, transparent),
+      0 1px 2px color-mix(in srgb, var(--bg) 90%, transparent),
+      0 0 6px color-mix(in srgb, var(--bg) 75%, transparent),
+      0 0 14px color-mix(in srgb, var(--bg) 50%, transparent);
   }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
