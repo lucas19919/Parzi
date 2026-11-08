@@ -46,6 +46,12 @@
   --radius: 12px;
   --gap: calc(var(--space) * 2);
   --radius-sm: calc(var(--space));
+  /* Layered corners. Something rounded inside a box (a menu row, a picked
+     segment, a swatch) sits one inset from the box's outer edge, its 1px
+     border plus a space, and takes the box's corner minus that inset, so the
+     two curves run parallel. Boxes that hold rows pad by --space. */
+  --inset: calc(var(--space) + 1px);
+  --radius-in: max(0px, calc(var(--radius) - var(--inset)));
 
 
 

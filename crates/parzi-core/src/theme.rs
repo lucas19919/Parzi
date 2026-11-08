@@ -61,6 +61,12 @@ pub struct BackgroundTheme {
     /// "glass" (frosted) or "solid" (the panel colour).
     #[serde(default = "d_bg_cards")]
     pub cards: String,
+    /// How strong the dither over the wallpaper is, 0 (off) to 1.
+    #[serde(default = "d_bg_dither")]
+    pub dither: f64,
+    /// How big each dither dot is, in pixels, 1 to 6.
+    #[serde(default = "d_bg_dither_size")]
+    pub dither_size: u32,
 }
 
 fn d_ui_font() -> String {
@@ -137,6 +143,14 @@ fn d_bg_fill() -> String {
 fn d_bg_cards() -> String {
     "clear".into()
 }
+fn d_bg_dither() -> f64 {
+    0.25
+}
+fn d_bg_dither_size() -> u32 {
+    1
+}
+/// The most the dither shows through at full strength.
+const DITHER_MAX_OPACITY: f64 = 0.22;
 
 impl Default for FontTheme {
     fn default() -> Self {
@@ -170,6 +184,8 @@ impl Default for BackgroundTheme {
             y: d_bg_y(),
             fill: d_bg_fill(),
             cards: d_bg_cards(),
+            dither: d_bg_dither(),
+            dither_size: d_bg_dither_size(),
         }
     }
 }
@@ -203,6 +219,12 @@ impl Theme {
         if !matches!(t.background.cards.as_str(), "clear" | "glass" | "solid") {
             t.background.cards = d_bg_cards();
         }
+        t.background.dither = if t.background.dither.is_finite() {
+            t.background.dither.clamp(0.0, 1.0)
+        } else {
+            d_bg_dither()
+        };
+        t.background.dither_size = t.background.dither_size.clamp(1, 6);
         t.font.size = t.font.size.clamp(10, 20);
         t.font.mono_size = t.font.mono_size.clamp(9, 18);
         t
@@ -219,7 +241,7 @@ impl Theme {
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
             --bg:{};--text:{};--accent:{};--panel:{};--bg-height:{}%;--bg-y:{}%;\
-            --art-fill:{};--art-cards:{};}}\n",
+            --art-fill:{};--art-cards:{};--dither:{:.3};--dither-size:{}px;}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -232,6 +254,8 @@ impl Theme {
             (t.background.y * 100.0).round(),
             t.background.fill,
             t.background.cards,
+            t.background.dither * DITHER_MAX_OPACITY,
+            t.background.dither_size,
         )
     }
 }
@@ -491,6 +515,12 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     if !sets("cards") {
         theme.background.cards = current.background.cards.clone();
     }
+    if !sets("dither") {
+        theme.background.dither = current.background.dither;
+    }
+    if !sets("dither_size") {
+        theme.background.dither_size = current.background.dither_size;
+    }
 
     let bgs = paths::backgrounds_dir()?;
     let mut art = vec![];
@@ -556,6 +586,12 @@ pub struct ThemeChange {
     /// "clear", "glass" or "solid".
     #[serde(default)]
     pub cards: Option<String>,
+    /// Dither strength over the wallpaper: 0 to 100 (percent), or "off".
+    #[serde(default)]
+    pub dither: Option<String>,
+    /// Dither dot size in pixels, 1 to 6.
+    #[serde(default)]
+    pub dither_size: Option<String>,
 }
 
 impl ThemeChange {
@@ -568,6 +604,8 @@ impl ThemeChange {
             &self.panel,
             &self.wallpaper,
             &self.cards,
+            &self.dither,
+            &self.dither_size,
         ]
         .iter()
         .all(|v| v.as_deref().is_none_or(|s| s.trim().is_empty()))
@@ -609,6 +647,33 @@ fn same_look(a: &ColorTheme, b: &ColorTheme) -> bool {
         && a.panel.eq_ignore_ascii_case(&b.panel)
 }
 
+/// A dither strength as a percent, 0 to 100: "40", "40%" or "off".
+fn dither_percent(v: &str) -> Result<f64> {
+    let v = v.trim().to_lowercase();
+    if matches!(v.as_str(), "off" | "none" | "no") {
+        return Ok(0.0);
+    }
+    v.trim_end_matches('%')
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|n| n.is_finite() && (0.0..=100.0).contains(n))
+        .ok_or_else(|| {
+            ParziError::Validation(format!("dither `{v}` is a percent from 0 to 100, or off"))
+        })
+}
+
+/// A dither dot size in pixels, 1 to 6: "2" or "2px".
+fn dither_px(v: &str) -> Result<u32> {
+    let v = v.trim().to_lowercase();
+    v.trim_end_matches("px")
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|n| (1..=6).contains(n))
+        .ok_or_else(|| ParziError::Validation(format!("dither_size `{v}` is 1 to 6 pixels")))
+}
+
 /// The look as it is now, in a line or two: the theme, the wallpaper, the cards.
 pub fn describe() -> Result<String> {
     let t = Theme::load().unwrap_or_default().normalized();
@@ -628,13 +693,15 @@ pub fn describe() -> Result<String> {
         "no wallpaper".to_string()
     } else {
         format!(
-            "wallpaper shown as a {}, {} cards over it",
+            "wallpaper shown as a {}, {} cards over it, dither {:.0}% at {}px",
             if t.background.fill == "full" {
                 "full window"
             } else {
                 "band"
             },
-            t.background.cards
+            t.background.cards,
+            t.background.dither * 100.0,
+            t.background.dither_size
         )
     };
     Ok(format!(
@@ -692,6 +759,12 @@ pub fn change(c: &ThemeChange) -> Result<String> {
                 "cards `{v}` is clear, glass or solid"
             )));
         }
+    }
+    if let Some(v) = given(&c.dither) {
+        dither_percent(&v)?;
+    }
+    if let Some(v) = given(&c.dither_size) {
+        dither_px(&v)?;
     }
     if let Some(p) = given(&c.pack) {
         pack_named(&p)?;
@@ -754,6 +827,19 @@ pub fn change(c: &ThemeChange) -> Result<String> {
         }
         said.push(format!("{v} cards over the wallpaper"));
         t.background.cards = v;
+    }
+    if let Some(v) = given(&c.dither) {
+        let pct = dither_percent(&v)?;
+        t.background.dither = pct / 100.0;
+        said.push(if pct == 0.0 {
+            "no dither".to_string()
+        } else {
+            format!("dither at {pct:.0}%")
+        });
+    }
+    if let Some(v) = given(&c.dither_size) {
+        t.background.dither_size = dither_px(&v)?;
+        said.push(format!("{}px dither dots", t.background.dither_size));
     }
     t.save()?;
     let mut out = format!("Parzi now has {}.", said.join(", "));

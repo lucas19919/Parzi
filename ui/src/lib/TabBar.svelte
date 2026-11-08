@@ -418,7 +418,6 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 3);
-    border-radius: inherit;
   }
   .pick:focus-visible {
     outline: none;
@@ -507,17 +506,16 @@
     text-overflow: ellipsis;
   }
   .close {
-    width: 24px;
-    height: 24px;
+    width: 18px;
+    height: 18px;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space);
+    padding: 0;
     background: transparent;
-    background-clip: content-box;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--muted);
     cursor: pointer;
     opacity: 0;

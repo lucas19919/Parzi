@@ -13,12 +13,15 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::desk;
+
+mod gateway;
 use crate::handler::ui_event;
 use crate::orchestrator::Orchestrator;
 use crate::rpc::{self, fail, str_arg, tokens_equal};
 use crate::tools::{
     humanize_tool_call, Approval, Approver, AskRequest, Asker, AutoApprover, ToolCallInfo,
 };
+pub use gateway::{GatewayConfig, DEFAULT_PORT as GATEWAY_PORT};
 
 const MAX_REQUEST: u64 = 16 * 1024 * 1024;
 const EVENTS_PAGE: usize = 400;
@@ -232,6 +235,9 @@ struct State {
 #[must_use]
 pub struct Daemon {
     pub port: u16,
+    /// Where the gateway listens, when it is on.
+    pub gateway: Option<std::net::SocketAddr>,
+    gateway_task: Option<JoinHandle<()>>,
     pub approver: Arc<ParkedApprover>,
     cancel: CancellationToken,
     accept: Option<JoinHandle<()>>,
@@ -253,6 +259,9 @@ impl Drop for Daemon {
             task.abort();
         }
         if let Some(task) = self.pump.take() {
+            task.abort();
+        }
+        if let Some(task) = self.gateway_task.take() {
             task.abort();
         }
         let _ = std::fs::remove_file(&self.file);
@@ -285,7 +294,7 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
     }
     let token = uuid::Uuid::new_v4().simple().to_string();
     let file = root.join("serve.json");
-    write_serve_file(
+    write_private(
         &file,
         &json!({ "port": addr.port(), "token": token }).to_string(),
     )?;
@@ -304,6 +313,21 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
         events,
         stop: cancel.clone(),
     });
+    let gateway_cfg = GatewayConfig::load();
+    let gateway = if gateway_cfg.enabled {
+        match gateway::start(state.clone(), &gateway_cfg).await {
+            Ok(g) => {
+                tracing::info!("gateway listening on {}", g.addr);
+                Some(g)
+            }
+            Err(e) => {
+                tracing::warn!("{e}; running without the gateway");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let accept_cancel = cancel.clone();
     let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     let accept = tokio::spawn(async move {
@@ -333,8 +357,14 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
         pump_orch.kick().await;
         pump_orch.pump_loop().await;
     });
+    let (gateway, gateway_task) = match gateway {
+        Some(g) => (Some(g.addr), Some(g.task)),
+        None => (None, None),
+    };
     Ok(Daemon {
         port: addr.port(),
+        gateway,
+        gateway_task,
         approver,
         cancel,
         accept: Some(accept),
@@ -405,7 +435,8 @@ pub fn serve_locked() -> bool {
     !matches!(file.try_lock_exclusive(), Ok(true))
 }
 
-fn write_serve_file(path: &Path, body: &str) -> Result<(), String> {
+/// Writes a file only this user can read, replacing it whole.
+pub(crate) fn write_private(path: &Path, body: &str) -> Result<(), String> {
     if path.exists() {
         let _ = std::fs::remove_file(path);
     }
@@ -416,7 +447,9 @@ fn write_serve_file(path: &Path, body: &str) -> Result<(), String> {
         if let Some(dir) = path.parent() {
             let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
         }
-        let tmp = path.with_file_name(format!(".serve.{}.tmp", std::process::id()));
+        // Unique per write: two files (or two threads) may be saved at once.
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+        let tmp = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
         let _ = std::fs::remove_file(&tmp);
         let mut file = OpenOptions::new()
             .write(true)
@@ -468,9 +501,50 @@ async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String
     Ok(())
 }
 
+/// Everything a follower sees, in order: run events and the side events
+/// (approvals, questions). Shared by the local socket and the gateway.
+struct EventFeed {
+    runs: broadcast::Receiver<(String, crate::handler::RunEvent)>,
+    side: broadcast::Receiver<Value>,
+    stop: CancellationToken,
+}
+
+impl EventFeed {
+    fn new(state: &State) -> Self {
+        Self {
+            runs: state.orch.subscribe(),
+            side: state.events.subscribe(),
+            stop: state.stop.clone(),
+        }
+    }
+
+    /// The next event, or `None` once the engine stops.
+    async fn next(&mut self) -> Option<Value> {
+        loop {
+            let next = tokio::select! {
+                () = self.stop.cancelled() => return None,
+                run = self.runs.recv() => match run {
+                    Ok((session, ev)) => ui_event(&session, &ev),
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        Some(json!({ "kind": "lagged", "missed": n }))
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                },
+                other = self.side.recv() => match other {
+                    Ok(v) => Some(v),
+                    Err(broadcast::error::RecvError::Lagged(_)) => None,
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                },
+            };
+            if next.is_some() {
+                return next;
+            }
+        }
+    }
+}
+
 async fn stream(mut write: tokio::net::tcp::OwnedWriteHalf, state: &State) -> Result<(), String> {
-    let mut runs = state.orch.subscribe();
-    let mut side = state.events.subscribe();
+    let mut feed = EventFeed::new(state);
     let send = |v: &Value| {
         let mut line = serde_json::to_string(v).unwrap_or_default();
         line.push('\n');
@@ -480,29 +554,13 @@ async fn stream(mut write: tokio::net::tcp::OwnedWriteHalf, state: &State) -> Re
         .write_all(send(&json!({ "ok": true, "stream": true })).as_bytes())
         .await
         .map_err(|e| e.to_string())?;
-    loop {
-        let next = tokio::select! {
-            () = state.stop.cancelled() => return Ok(()),
-            run = runs.recv() => match run {
-                Ok((session, ev)) => ui_event(&session, &ev),
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    Some(json!({ "kind": "lagged", "missed": n }))
-                }
-                Err(broadcast::error::RecvError::Closed) => return Ok(()),
-            },
-            other = side.recv() => match other {
-                Ok(v) => Some(v),
-                Err(broadcast::error::RecvError::Lagged(_)) => None,
-                Err(broadcast::error::RecvError::Closed) => return Ok(()),
-            },
-        };
-        if let Some(v) = next {
-            write
-                .write_all(send(&v).as_bytes())
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+    while let Some(v) = feed.next().await {
+        write
+            .write_all(send(&v).as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
     }
+    Ok(())
 }
 
 async fn dispatch(state: &State, req: &Value) -> Value {

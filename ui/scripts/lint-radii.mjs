@@ -1,6 +1,8 @@
 // Checks corners on the rendered mock UI, which the static token lint cannot:
 // every control and picture of 16px or more has the one box corner
-// (--radius), and no element anywhere has a corner off the scale.
+// (--radius), no element anywhere has a corner off the scale, and anything
+// rounded that sits in a rounded box's corner is layered: the same inset on
+// both sides, and the box's corner minus that inset (--radius-in).
 //
 //   npm run dev            (in another terminal)
 //   npm run lint:radii     (PARZI_UI_URL overrides the mock address)
@@ -39,8 +41,10 @@ function check() {
   const box = parseFloat(getComputedStyle(probe).borderTopLeftRadius);
   probe.style.borderRadius = "var(--radius-sm)";
   const mark = parseFloat(getComputedStyle(probe).borderTopLeftRadius);
+  probe.style.borderRadius = "var(--radius-in)";
+  const inner = parseFloat(getComputedStyle(probe).borderTopLeftRadius);
   probe.remove();
-  const scale = new Set([0, mark, box]);
+  const scale = new Set([0, mark, inner, box]);
   const found = [];
   const name = (el) => {
     const cls = [...el.classList].filter((c) => !c.startsWith("s-") && !c.startsWith("svelte-"));
@@ -65,6 +69,47 @@ function check() {
     const control = el.matches("button, input:not([type=range]), select, textarea, [role=button], [role=tab], [role=option], img");
     if (control && r.width >= 16 && r.height >= 16 && px.some((c) => c === mark)) {
       found.push(`${name(el)} ${Math.round(r.width)}x${Math.round(r.height)}: a control or picture has the mark corner, use --radius`);
+    }
+  }
+  // Layered corners. A hoverable control counts even while it is clear,
+  // since it shows a fill under the pointer. The window frame is the OS's.
+  const clear = (c) => !c || c === "transparent" || /rgba\([^)]*,\s*0\)$/.test(c);
+  const surface = (cs) =>
+    !clear(cs.backgroundColor) || cs.backgroundImage !== "none" ||
+    (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== "none" && !clear(cs.borderTopColor));
+  const CORNERS = [["t", "l", "borderTopLeftRadius"], ["t", "r", "borderTopRightRadius"], ["b", "r", "borderBottomRightRadius"], ["b", "l", "borderBottomLeftRadius"]];
+  for (const el of document.querySelectorAll("body *")) {
+    if (el.closest(".preview, .art iframe, .msg, .viz, .switch, .slider")) continue;
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    if (!surface(cs) && !el.matches("button, a[href], [role=option], [role=menuitem], [role=tab]")) continue;
+    let box = el.parentElement;
+    let bs = null;
+    for (; box && box !== document.body; box = box.parentElement) {
+      bs = getComputedStyle(box);
+      if (surface(bs) && CORNERS.some(([, , k]) => parseFloat(bs[k]) > 0)) break;
+    }
+    if (!box || box === document.body || box.matches(".shell")) continue;
+    const a = box.getBoundingClientRect();
+    const b = el.getBoundingClientRect();
+    if (b.width < 2 || b.height < 2) continue;
+    const gap = { l: b.left - a.left, t: b.top - a.top, r: a.right - b.right, b: a.bottom - b.bottom };
+    for (const [y, x, k] of CORNERS) {
+      const outer = parseFloat(bs[k]);
+      const own = parseFloat(cs[k]);
+      if (!(outer > 0) || outer >= 999 || own >= 999 || cs[k].endsWith("%")) continue;
+      if (gap[y] < 0 || gap[x] < 0 || gap[y] >= outer || gap[x] >= outer) continue;
+      // A clear control with square corners shows no shape of its own.
+      if (!(own > 0) && !surface(cs)) continue;
+      // A row run edge to edge in a box that clips it takes the box's corner.
+      if (!(own > 0) && Math.max(gap[y], gap[x]) <= 1.5 && bs.overflow !== "visible") continue;
+      const want = Math.max(0, outer - Math.max(gap[y], gap[x]));
+      if (Math.abs(gap[y] - gap[x]) > 0.5) {
+        found.push(`${name(el)}: sits ${gap[y].toFixed(0)}px and ${gap[x].toFixed(0)}px from its box's corner, keep one inset`);
+      } else if (Math.abs(own - want) > 0.5) {
+        found.push(`${name(el)}: corner ${own}px inside a ${outer}px box at ${gap[x].toFixed(0)}px, use ${want}px (--radius-in at the standard inset)`);
+      }
+      break;
     }
   }
   return found;

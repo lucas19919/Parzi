@@ -90,3 +90,33 @@ fn a_bad_ask_says_what_would_work_and_changes_nothing() {
     );
     assert_eq!(Theme::load().unwrap().colors.accent, before);
 }
+
+#[test]
+fn dither_strength_and_size_are_set_checked_and_kept_by_a_pack() {
+    let _turn = home();
+    let done = ask(serde_json::json!({"dither": "40%", "dither_size": "3px"})).unwrap();
+    assert!(done.contains("dither at 40%, 3px dither dots"), "{done}");
+    let t = Theme::load().unwrap();
+    assert!((t.background.dither - 0.4).abs() < 1e-9);
+    assert_eq!(t.background.dither_size, 3);
+    let css = t.to_css_vars();
+    assert!(css.contains("--dither:0.088;--dither-size:3px;"), "{css}");
+
+    // Nothing changes when one value is wrong.
+    let err = ask(serde_json::json!({"dither": "10", "dither_size": "9"})).unwrap_err();
+    assert!(err.contains("1 to 6"), "{err}");
+    let err = ask(serde_json::json!({"dither": "150"})).unwrap_err();
+    assert!(err.contains("0 to 100"), "{err}");
+    assert_eq!(Theme::load().unwrap().background.dither_size, 3);
+
+    ask(serde_json::json!({"pack": "graphite"})).unwrap();
+    let t = Theme::load().unwrap();
+    assert_eq!(t.background.dither_size, 3, "a pack keeps the dither");
+    assert!(ask(serde_json::json!({"dither": "off"}))
+        .unwrap()
+        .contains("no dither"));
+    assert!(Theme::load()
+        .unwrap()
+        .to_css_vars()
+        .contains("--dither:0.000;"));
+}

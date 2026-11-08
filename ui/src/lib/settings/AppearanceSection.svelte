@@ -18,6 +18,8 @@
   let backgrounds: BackgroundFile[] = [];
   let yPct = 50;
   let hPct = 34;
+  let ditherPct = 25;
+  let ditherPx = 1;
   let loading = true;
   let err = "";
   let packName = "";
@@ -82,6 +84,20 @@
     touch();
   }
 
+  function onDither(v: number) {
+    if (!theme || !Number.isFinite(v)) return;
+    ditherPct = Math.round(v);
+    theme.background.dither = ditherPct / 100;
+    touch();
+  }
+
+  function onDitherSize(v: number) {
+    if (!theme || !Number.isFinite(v)) return;
+    ditherPx = Math.round(v);
+    theme.background.dither_size = ditherPx;
+    touch();
+  }
+
   function onHeight(v: number) {
     if (!theme || !Number.isFinite(v)) return;
     hPct = Math.round(v);
@@ -94,6 +110,10 @@
     yPct = typeof y === "number" && Number.isFinite(y) ? Math.round(y * 100) : 50;
     const h = theme?.background.height;
     hPct = typeof h === "number" && Number.isFinite(h) ? Math.round(h * 100) : 34;
+    const d = theme?.background.dither;
+    ditherPct = typeof d === "number" && Number.isFinite(d) ? Math.round(d * 100) : 25;
+    const ds = theme?.background.dither_size;
+    ditherPx = typeof ds === "number" && Number.isFinite(ds) ? Math.round(ds) : 1;
   }
 
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
@@ -409,6 +429,14 @@
           <span class="row-label">Position</span>
           <div class="pos"><Slider bare label="Wallpaper position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} /></div>
         </div>
+        <div class="row ctl-row">
+          <span class="row-label">Dither</span>
+          <div class="pos"><Slider bare label="Dither strength" bind:value={ditherPct} min={0} max={100} unit="%" on:input={(e) => onDither(e.detail)} /></div>
+        </div>
+        <div class="row ctl-row">
+          <span class="row-label">Dither size</span>
+          <div class="pos"><Slider bare label="Dither size" bind:value={ditherPx} min={1} max={6} unit="px" on:input={(e) => onDitherSize(e.detail)} /></div>
+        </div>
       {/if}
     </div>
   </section>
@@ -467,13 +495,13 @@
   .pp {
     position: relative; display: flex; flex-direction: column; gap: var(--space); height: 68px; padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
     width: 100%; box-sizing: border-box;
-    border-radius: var(--radius); overflow: hidden; background: var(--pp-st);
+    border-radius: var(--radius-in); overflow: hidden; background: var(--pp-st);
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
   .pp-line { display: block; height: 4px; border-radius: var(--radius-sm); background: var(--pp-tx); opacity: 0.85; width: 62%; }
   .pp-line.short { width: 40%; background: var(--pp-td); }
   .pp-bar {
-    position: absolute; left: 10px; right: 10px; bottom: 8px; height: 16px;
+    position: absolute; left: calc(var(--space) * 2); right: calc(var(--space) * 2); bottom: calc(var(--space) * 2); height: 16px;
     border-radius: var(--radius-sm); background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
@@ -544,14 +572,11 @@
     min-width: 0;
   }
 
-  .rows .tin.fixed,
-  .rows :global(.segmented-control) {
+  .rows .tin.fixed {
     height: calc(var(--space) * 8);
   }
   .rows :global(.segmented-control) {
-    align-items: center;
     width: 190px;
-    box-sizing: border-box;
   }
   .rows :global(.segmented-control .seg-btn) {
     flex: 1 1 0;

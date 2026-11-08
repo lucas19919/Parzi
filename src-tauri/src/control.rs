@@ -1,4 +1,3 @@
-
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -27,12 +26,7 @@ const MAX_STREAMS: usize = 16;
 const PENDING_FOR: Duration = Duration::from_secs(15);
 const CONSENT_FOR: Duration = Duration::from_secs(10 * 60);
 const KEEPALIVE: Duration = Duration::from_secs(30);
-const SETTINGS: &[&str] = &[
-    "general",
-    "providers",
-    "connections",
-    "appearance",
-];
+const SETTINGS: &[&str] = &["general", "providers", "connections", "appearance"];
 const NO_TAB: &str = "this session has no page tab yet: open one with browser.open";
 const ALLOW_A_WHILE: &str = "Allow for 10 minutes";
 const ALLOW_ONCE: &str = "Allow once";
@@ -672,7 +666,9 @@ impl Ctx {
         locked(&self.desk.calls).remove(&id);
         match answer {
             Ok(Ok(v)) => Ok(v),
-            _ => Err("the Parzi window did not answer; it may be busy or minimised, try again".into()),
+            _ => Err(
+                "the Parzi window did not answer; it may be busy or minimised, try again".into(),
+            ),
         }
     }
 
@@ -1061,6 +1057,12 @@ async fn desk_theme(ctx: &Ctx, req: &Value) -> Value {
         let mut v = req.clone();
         if let Some(o) = v.as_object_mut() {
             o.remove("session");
+            // Agents send dither as 40 as often as "40".
+            for x in o.values_mut() {
+                if x.is_number() {
+                    *x = Value::String(x.to_string());
+                }
+            }
         }
         v
     }) {
@@ -1616,8 +1618,14 @@ mod tests {
         let asked = json!({ "focus": true });
         assert!(!takes_focus("s1", &asked), "even when it asks");
         assert!(!takes_focus("s1", &json!({})));
-        assert!(takes_focus("", &json!({})), "the person's own command comes forward");
-        assert!(!takes_focus("", &json!({ "focus": false })), "--background still works");
+        assert!(
+            takes_focus("", &json!({})),
+            "the person's own command comes forward"
+        );
+        assert!(
+            !takes_focus("", &json!({ "focus": false })),
+            "--background still works"
+        );
     }
 
     #[test]

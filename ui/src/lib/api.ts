@@ -166,6 +166,10 @@ export interface Theme {
     fill?: "band" | "full";
     /** How cards look over it. */
     cards?: "clear" | "glass" | "solid";
+    /** Dither over the wallpaper, 0 (off) to 1. */
+    dither?: number;
+    /** Dither dot size in pixels, 1 to 6. */
+    dither_size?: number;
   };
 }
 
@@ -200,6 +204,12 @@ export type ComposerMode = "search" | "build";
 export const api = {
   appVersion: () => invoke<string>("app_version"),
   restartApp: () => invoke<void>("restart_app"),
+  /** A newer build on the stable channel, or on the dev channel (pre-releases too). */
+  updateCheck: (dev: boolean) => invoke<{ version: string; body?: string } | null>("update_check", { dev }),
+  updateDownload: () => invoke<void>("update_download"),
+  updateInstall: () => invoke<void>("update_install"),
+  onUpdateProgress: (fn: (p: { chunk: number; total: number | null }) => void) =>
+    listen<{ chunk: number; total: number | null }>("parzi://update-progress", (e) => fn(e.payload)),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
   openFilePath: (path: string) => invoke<void>("open_file_path", { path }),
 

@@ -2,6 +2,7 @@ pub mod ask_text;
 mod bench;
 pub mod connector_icon;
 pub mod desk;
+pub mod devices;
 pub mod doctor;
 mod gitmark;
 pub mod handler;

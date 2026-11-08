@@ -1,0 +1,53 @@
+name: Set up
+description: Rust from rust-toolchain.toml with a build cache, and the UI's Node packages. One place, for every workflow.
+
+inputs:
+  rust:
+    description: Install Rust and restore the build cache
+    default: "true"
+  node:
+    description: Install Node and the UI's packages
+    default: "false"
+  cache-key:
+    description: Share the Rust cache under this name (release builds use one)
+    default: ""
+  cache-workspaces:
+    description: Cargo workspaces the cache covers
+    default: ". -> target"
+  cache-save:
+    description: Save the cache when the job ends
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # rust-toolchain.toml names the version and components. Some runners
+    # (Linux on ARM) may come without rustup.
+    - if: inputs.rust == 'true'
+      shell: bash
+      run: |
+        if ! command -v rustup >/dev/null; then
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        rustup toolchain install
+        rustc --version
+
+    - if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        workspaces: ${{ inputs.cache-workspaces }}
+        save-if: ${{ inputs.cache-save }}
+
+    - if: inputs.node == 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: ui/package-lock.json
+
+    - if: inputs.node == 'true'
+      shell: bash
+      run: npm --prefix ui ci

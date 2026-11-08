@@ -114,6 +114,46 @@ enum Cmd {
         #[command(subcommand)]
         action: RemoteCmd,
     },
+    #[command(about = "The door phones and other devices use into parzi serve")]
+    Gateway {
+        #[command(subcommand)]
+        action: GatewayCmd,
+    },
+    #[command(about = "Devices paired with this machine's engine, such as a phone")]
+    Devices {
+        #[command(subcommand)]
+        action: DevicesCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum GatewayCmd {
+    #[command(about = "Turn the gateway on. It listens on this machine only unless --lan")]
+    On {
+        #[arg(long, help = "Open it to the local network, unencrypted")]
+        lan: bool,
+        #[arg(long, help = "The port. Default 7337")]
+        port: Option<u16>,
+    },
+    #[command(about = "Turn the gateway off")]
+    Off,
+    #[command(about = "Whether the gateway is on, and where")]
+    Status,
+}
+
+#[derive(Subcommand)]
+enum DevicesCmd {
+    #[command(about = "Paired devices and when each was last seen")]
+    List,
+    #[command(about = "Pair a device and print its token, shown only this once")]
+    Add {
+        #[arg(help = "A name you will recognise, like \"Pixel\"")]
+        name: String,
+        #[arg(long, default_value = "operate", help = "read, operate or admin")]
+        scope: String,
+    },
+    #[command(about = "Unpair a device by id or name; its token stops working")]
+    Revoke { which: String },
 }
 
 #[derive(Subcommand)]
@@ -437,6 +477,8 @@ async fn main() -> Result<()> {
         Cmd::Approval { action } => cmd_approval(action).await,
         Cmd::Agent { action } => cmd_agent(action).await,
         Cmd::Remote { action } => cmd_remote(action).await,
+        Cmd::Gateway { action } => cmd_gateway(action).await,
+        Cmd::Devices { action } => cmd_devices(action),
     }
 }
 
@@ -468,6 +510,9 @@ async fn cmd_serve() -> Result<()> {
         eprintln!("token file: {}", path.display());
     }
     eprintln!("this socket is local. A remote machine is reached through SSH.");
+    if let Some(addr) = daemon.gateway {
+        eprintln!("gateway for paired devices on {addr}");
+    }
     tokio::select! {
         r = tokio::signal::ctrl_c() => r.context("waiting for ctrl-c")?,
         () = terminated() => {}
@@ -706,6 +751,97 @@ async fn remote_link() -> Result<(parzi_runtime::remote::Saved, parzi_runtime::r
         .await
         .map_err(|e| anyhow::anyhow!("{}: {e}", saved.target.label()))?;
     Ok((saved, link))
+}
+
+async fn cmd_gateway(action: GatewayCmd) -> Result<()> {
+    use parzi_runtime::osserve::{GatewayConfig, GATEWAY_PORT};
+    paths::ensure_dirs().context("creating ~/.parzi")?;
+    let mut cfg = GatewayConfig::load();
+    match action {
+        GatewayCmd::Status => {
+            if cfg.enabled {
+                println!("on, listening on {}", cfg.listen);
+            } else {
+                println!("off");
+            }
+            println!("{} paired device(s)", parzi_runtime::devices::list().len());
+            return Ok(());
+        }
+        GatewayCmd::On { lan, port } => {
+            let host = if lan { "0.0.0.0" } else { "127.0.0.1" };
+            cfg = GatewayConfig {
+                enabled: true,
+                listen: format!("{host}:{}", port.unwrap_or(GATEWAY_PORT)),
+            };
+        }
+        GatewayCmd::Off => cfg.enabled = false,
+    }
+    cfg.save().map_err(|e| anyhow::anyhow!(e))?;
+    if cfg.enabled {
+        println!("gateway on, listening on {}", cfg.listen);
+        if cfg.address().is_ok_and(|a| !a.ip().is_loopback()) {
+            println!(
+                "open to the local network and unencrypted: use it only on a network you trust"
+            );
+        }
+    } else {
+        println!("gateway off");
+    }
+    restart_serve().await;
+    Ok(())
+}
+
+/// Restarts the engine's user service if it is running, so a gateway change
+/// takes effect; otherwise says how.
+async fn restart_serve() {
+    let restarted = tokio::process::Command::new("systemctl")
+        .args([
+            "--user",
+            "try-restart",
+            parzi_runtime::provision::SERVICE_NAME,
+        ])
+        .status()
+        .await
+        .is_ok_and(|s| s.success());
+    if restarted && parzi_runtime::osserve::serve_locked() {
+        println!("restarted the engine");
+    } else if parzi_runtime::osserve::serve_locked() {
+        println!("restart parzi serve for this to take effect");
+    }
+}
+
+fn cmd_devices(action: DevicesCmd) -> Result<()> {
+    use parzi_runtime::devices::{self, Scope};
+    paths::ensure_dirs().context("creating ~/.parzi")?;
+    match action {
+        DevicesCmd::List => {
+            let all = devices::list();
+            if all.is_empty() {
+                println!("no paired devices");
+            }
+            for d in all {
+                println!(
+                    "{}  {}  {}  last seen {}",
+                    d.id,
+                    d.name,
+                    d.scope.as_str(),
+                    d.last_seen.as_deref().unwrap_or("never")
+                );
+            }
+        }
+        DevicesCmd::Add { name, scope } => {
+            let scope = Scope::parse(&scope)
+                .ok_or_else(|| anyhow::anyhow!("scope is read, operate or admin"))?;
+            let (d, token) = devices::issue(&name, scope).map_err(|e| anyhow::anyhow!(e))?;
+            println!("paired {} ({}) as {}", d.name, d.id, d.scope.as_str());
+            println!("token, shown only now: {token}");
+        }
+        DevicesCmd::Revoke { which } => {
+            let d = devices::revoke(&which).map_err(|e| anyhow::anyhow!(e))?;
+            println!("unpaired {} ({})", d.name, d.id);
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_remote(action: RemoteCmd) -> Result<()> {

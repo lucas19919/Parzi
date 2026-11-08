@@ -2256,6 +2256,27 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .ob .box)) {
     background: var(--panel);
   }
+  /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
+     the open tab, the side-column toggles when on, and either under the
+     pointer are frosted glass (solid panel when the cards are solid), with
+     a ring light enough to catch the edge. */
+  .over-art :global(.tabs .tab:is(.active, :hover)),
+  .over-art :global(.panel-btn:is(.active, :hover)) {
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    border-color: color-mix(in srgb, var(--text) 16%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+  .over-art :global(.tabs .tab:hover:not(.active)),
+  .over-art :global(.panel-btn:hover:not(.active)) {
+    background: color-mix(in srgb, var(--panel) 38%, transparent);
+  }
+  :global(html[data-art-cards="solid"]) .over-art :global(.tabs .tab:is(.active, :hover)),
+  :global(html[data-art-cards="solid"]) .over-art :global(.panel-btn:is(.active, :hover)) {
+    background: var(--panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 
   main {
     position: relative;

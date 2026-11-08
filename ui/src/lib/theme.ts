@@ -24,6 +24,9 @@ export function normalizeHex(s: string): string {
   return h.toUpperCase();
 }
 
+/** Matches DITHER_MAX_OPACITY in the engine's theme.rs. */
+const DITHER_MAX_OPACITY = 0.22;
+
 function themeVars(t: Theme): Record<string, string> {
   return {
     "--font": cssFontList(t.font.family),
@@ -38,6 +41,9 @@ function themeVars(t: Theme): Record<string, string> {
     "--bg-y": `${Math.round(t.background.y * 100)}%`,
     "--art-fill": t.background.fill ?? "band",
     "--art-cards": t.background.cards ?? "clear",
+    // As the engine writes them: strength times the most it ever shows.
+    "--dither": (Math.min(1, Math.max(0, t.background.dither ?? 0.25)) * DITHER_MAX_OPACITY).toFixed(3),
+    "--dither-size": `${Math.min(6, Math.max(1, Math.round(t.background.dither_size ?? 1)))}px`,
   };
 }
 
@@ -58,7 +64,7 @@ export function previewTheme(t: Theme) {
   syncArt();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y", "--art-fill", "--art-cards"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y", "--art-fill", "--art-cards", "--dither", "--dither-size"];
 
 function clearPreview() {
   const s = document.documentElement.style;

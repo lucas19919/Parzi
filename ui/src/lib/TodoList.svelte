@@ -97,6 +97,9 @@
   .head:hover {
     color: var(--text);
   }
+  .bar .icon-btn {
+    border-radius: var(--radius-in);
+  }
   .title {
     flex: 1;
   }

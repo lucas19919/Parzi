@@ -21,7 +21,8 @@ const sizeProp = /(?:^|[;{\s])font-size\s*:\s*([^;]+);/g;
 const weightProp = /(?:^|[;{\s])font-weight\s*:\s*([^;]+);/g;
 
 // Only the switch and the slider track are pills. Every box is --radius,
-// marks inside text or a control are --radius-sm, dots and knobs are 50%.
+// a rounded thing inside a box's corner is --radius-in, marks inside text or
+// a control are --radius-sm, dots and knobs are 50%.
 // Which of the two a box needs depends on what it is, so lint-radii.mjs
 // checks that on the rendered page.
 const PILLS = new Set(["lib/settings/shared.css", "lib/settings/Slider.svelte"]);
@@ -47,7 +48,7 @@ for (const file of styled) {
   }
   for (const m of css.matchAll(radiusProp)) {
     const rest = m[1]
-      .replace(/var\(--(?:radius|radius-sm)\)/g, "")
+      .replace(/var\(--(?:radius|radius-sm|radius-in)\)/g, "")
       .replace(/\b0\b/g, "")
       .replace(/50%/g, "")
       .replace(/inherit/g, "")

@@ -244,7 +244,7 @@
     height: 32px;
     padding: 0 calc(var(--space) * 2);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--muted);
   }
   .search input {
@@ -289,7 +289,7 @@
     padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--text);
     font-size: var(--fs-md);
     text-align: left;

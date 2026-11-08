@@ -311,36 +311,31 @@ unsafe fn stream_bytes(stream: &IStream) -> windows::core::Result<Vec<u8>> {
 }
 
 pub fn rest_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, deep: bool) {
-    let _ = wv.with_webview(move |platform| {
-        unsafe {
-            let Ok(core) = platform.controller().CoreWebView2() else {
-                return;
-            };
-            if let Ok(core) = core.cast::<ICoreWebView2_19>() {
-                let _ = core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
-            }
-            if deep {
-                if let Ok(core) = core.cast::<ICoreWebView2_3>() {
-                    let _ = core
-                        .TrySuspend(&TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(()))));
-                }
+    let _ = wv.with_webview(move |platform| unsafe {
+        let Ok(core) = platform.controller().CoreWebView2() else {
+            return;
+        };
+        if let Ok(core) = core.cast::<ICoreWebView2_19>() {
+            let _ = core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
+        }
+        if deep {
+            if let Ok(core) = core.cast::<ICoreWebView2_3>() {
+                let _ =
+                    core.TrySuspend(&TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(()))));
             }
         }
     });
 }
 
 pub fn wake_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
-    let _ = wv.with_webview(move |platform| {
-        unsafe {
-            let Ok(core) = platform.controller().CoreWebView2() else {
-                return;
-            };
-            if let Ok(core) = core.cast::<ICoreWebView2_19>() {
-                let _ =
-                    core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL);
-            }
-            resume(&core);
+    let _ = wv.with_webview(move |platform| unsafe {
+        let Ok(core) = platform.controller().CoreWebView2() else {
+            return;
+        };
+        if let Ok(core) = core.cast::<ICoreWebView2_19>() {
+            let _ = core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL);
         }
+        resume(&core);
     });
 }
 

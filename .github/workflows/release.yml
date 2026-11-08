@@ -1,14 +1,89 @@
 name: Release
 
+# Two ways in (see docs/releasing.md):
+# - Actions, Release, Run workflow. Pick dev (the default), patch, minor or
+#   major, or type an exact version. It writes the version to every file,
+#   commits, tags and builds, on the branch it was run from.
+# - Push a tag vX.Y.Z or vX.Y.Z-dev.N that matches the version in the files.
+# A version with a suffix is a pre-release: the stable updater never offers
+# it, the dev channel does. The notes come from CHANGELOG.md.
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: What to release
+        type: choice
+        options: [dev, patch, minor, major]
+        default: dev
+      version:
+        description: Or an exact version, like 1.5.0-dev.1 (wins over the choice above)
+        required: false
+        default: ""
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
 
 jobs:
-  release:
-    permissions:
-      contents: write
+  # Settles the version and opens the release page with its notes; the
+  # builds below attach their files to it.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bump, commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          WANT: ${{ inputs.version || inputs.bump }}
+        run: |
+          v=$(node scripts/release.mjs cut "$WANT")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release $v"
+          git tag "v$v"
+          git push origin "HEAD:$GITHUB_REF_NAME" "v$v"
+
+      - name: Version
+        id: version
+        run: |
+          node scripts/release.mjs check
+          v=$(node scripts/release.mjs version)
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but the files say $v. Release with Actions, Release, Run workflow, or run node scripts/release.mjs set first."
+            exit 1
+          fi
+          case "$v" in *-*) pre=true ;; *) pre=false ;; esac
+          { echo "version=$v"; echo "tag=v$v"; echo "prerelease=$pre"; } >> "$GITHUB_OUTPUT"
+
+      - name: Open the release page
+        env:
+          V: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          node scripts/release.mjs notes "$V" > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md --prerelease="$PRE"
+          else
+            gh release create "$TAG" --verify-tag --title "Parzi $TAG" --notes-file notes.md --prerelease="$PRE"
+          fi
+
+  app:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -20,28 +95,20 @@ jobs:
             # out of latest.json.
             args: "--target aarch64-apple-darwin --bundles app,dmg"
     runs-on: ${{ matrix.platform }}
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-
-      # Same toolchain as ci.yml and cache.yml: it is part of the cache key.
-      - uses: dtolnay/rust-toolchain@master
-        with: { toolchain: "1.98.0" }
+        with: { ref: "${{ needs.prepare.outputs.tag }}" }
 
       # Restores what cache.yml saved on main. A cache saved here would be
       # scoped to this tag, which no later release can read: don't save.
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup
         with:
-          shared-key: release-app
-          workspaces: src-tauri -> target
-          save-if: false
-
-      - run: npm --prefix ui ci
+          node: "true"
+          cache-key: release-app
+          cache-workspaces: src-tauri -> target
+          cache-save: "false"
 
       # Pinned: floating @v0 once pulled a CLI with different hook-cwd
       # behavior and broke a release. Bump deliberately, never floating.
@@ -50,55 +117,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Parzi ${{ github.ref_name }}"
-          # Replace "What changed" on every release. A stale section ships
-          # on the next tag, because this file is the published body.
-          releaseBody: |
-            ## Parzi ${{ github.ref_name }}
-
-            One harness, six providers — Claude, Codex, Antigravity, OpenCode, Grok, Cursor.
-
-            ### What changed
-
-            - Agents can use anything in Parzi's window, the way you do: open tabs and sessions, pick the model and effort, open the side column and the file card, change settings and the theme. Named actions cover the common things, and every other button, switch and field is reachable too. Anything that deletes, removes, resets or signs out still waits for your yes.
-            - Ask an agent to change the look ("make it graphite", "turn on glass cards") and it does it right away instead of sending you to Settings.
-            - Charts animate: bars grow, lines draw on, numbers count up and rows rise in the first time a chart scrolls into view, and an updated chart eases to its new values. Reduced motion shows them still.
-            - The Home wallpaper can fill the whole window, and the cards over it can be clear, glass or solid (Settings, Appearance, Wallpaper).
-            - An accepted plan opens in the thread. The side column's plan card lists the plan's items, and steps aside while the plan is open in the thread.
-            - While an agent works, what it says between steps folds into its working instead of reading as its answer.
-
-            ### Download
-
-            | Your machine | Pick this file |
-            | --- | --- |
-            | Windows 10 / 11, 64-bit | `Parzi-Setup.exe` — one click, no admin needed, opens Parzi when it's done |
-            | macOS, Apple Silicon | `Parzi_*_aarch64.dmg` — drag Parzi into Applications |
-            | Command line, not the app | `parzi-cli-windows-x64.exe` or `parzi-cli-macos-arm64` — drives sessions and tabs from scripts |
-            | Your own Linux server (ParziOS) | `parzi-linux-x64` or `parzi-linux-arm64` — the desktop's *Set up remote* installs it for you |
-
-            `Parzi_*_x64-setup.exe` and `Parzi*.app.tar.gz` are the files the in-app updater downloads. You don't need them.
-
-            ### First launch (once per machine)
-
-            - **Windows:** SmartScreen asks once because setup isn't Authenticode-signed yet — *More info → Run anyway*.
-            - **macOS:** Gatekeeper blocks the first open because the build isn't Apple-notarized — open Parzi once, then *System Settings → Privacy & Security → Open Anyway*. Afterwards it launches normally.
-
-            ### Updates
-
-            Parzi checks for new versions on launch and offers them in the app — no manual reinstalls.
-
-            > Your threads and settings live in `~/.parzi` and are never touched by updates or reinstalls.
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: "Parzi ${{ needs.prepare.outputs.tag }}"
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           args: ${{ matrix.args }}
 
       - name: Re-attach bundles the uploader may have dropped
-        if: always() && startsWith(github.ref, 'refs/tags/')
+        if: always()
         continue-on-error: true
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
           # Only the installers and their updater signatures: the dmg folder
@@ -108,7 +136,7 @@ jobs:
                  src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
           for f in "${files[@]}"; do
             [ -f "$f" ] || continue
-            gh release upload "${{ github.ref_name }}" "$f" --clobber
+            gh release upload "$TAG" "$f" --clobber
           done
 
       # Without notarization Gatekeeper still asks once, but an unsealed bundle
@@ -127,21 +155,17 @@ jobs:
       # The one-click setup people download: a small window around the NSIS
       # installer above, which stays what the in-app updater runs.
       - name: Build and attach Parzi-Setup.exe
-        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Windows'
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version="${{ github.ref_name }}"
-          export PARZI_INSTALLER="$PWD/src-tauri/target/release/bundle/nsis/Parzi_${version#v}_x64-setup.exe"
+          export PARZI_INSTALLER="$PWD/src-tauri/target/release/bundle/nsis/Parzi_${TAG#v}_x64-setup.exe"
           test -f "$PARZI_INSTALLER"
           cargo build --release --locked --manifest-path setup/Cargo.toml
           cp setup/target/release/parzi-setup.exe Parzi-Setup.exe
-          gh release upload "${{ github.ref_name }}" Parzi-Setup.exe --clobber
+          gh release upload "$TAG" Parzi-Setup.exe --clobber
 
   cli:
-    permissions:
-      contents: write
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -163,35 +187,43 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+        with: { ref: "${{ needs.prepare.outputs.tag }}" }
 
-      - uses: dtolnay/rust-toolchain@master
-        with: { toolchain: "1.98.0" }
-
-      # The CLI waits for the app job's release anyway, so it builds cold;
-      # saving a tag-scoped cache here would only crowd out main's caches.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          save-if: false
+      # A tag-scoped cache would only crowd out main's caches: don't save.
+      - uses: ./.github/actions/setup
+        with: { cache-save: "false" }
 
       - name: Build parzi CLI
         run: cargo build --release -p parzi-cli
 
       - name: Attach CLI to the release
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          # The app job creates the release; wait for it (up to ~30 min).
-          for i in $(seq 1 60); do
-            gh release view "${{ github.ref_name }}" >/dev/null 2>&1 && break
-            sleep 30
-          done
           cp "${{ matrix.build }}" "${{ matrix.exe }}"
           files=("${{ matrix.exe }}")
           if [[ "${{ matrix.exe }}" == parzi-linux-* ]]; then
             sha256sum "${{ matrix.exe }}" > "${{ matrix.exe }}.sha256"
             files+=("${{ matrix.exe }}.sha256")
           fi
-          gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+  # The dev channel: a rolling pre-release, `updater-dev`, holding the newest
+  # build's latest.json, stable or dev. Parzi's "Dev builds" switch checks it.
+  # It is a pre-release, so /releases/latest (the stable channel) never sees it.
+  channel:
+    needs: [prepare, app]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Point the dev channel at this build
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release download "$TAG" --pattern latest.json --dir out
+          if ! gh release view updater-dev >/dev/null 2>&1; then
+            gh release create updater-dev --prerelease --title "Dev channel" \
+              --notes "Where Parzi's Dev builds setting looks for updates. Not an install: see the releases above." \
+              --target "${{ github.sha }}"
+          fi
+          gh release upload updater-dev out/latest.json --clobber

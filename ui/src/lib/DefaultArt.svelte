@@ -1,7 +1,31 @@
+<script context="module" lang="ts">
+  /** A tile of random grey pixels, made once. Scaled up without smoothing,
+   *  each pixel turns into a square dot of the dither size. */
+  let tile = "";
+  function noiseTile(): string {
+    if (tile || typeof document === "undefined") return tile;
+    const n = 128;
+    const c = document.createElement("canvas");
+    c.width = c.height = n;
+    const ctx = c.getContext("2d");
+    if (!ctx) return "";
+    const img = ctx.createImageData(n, n);
+    for (let i = 0; i < img.data.length; i += 4) {
+      const v = Math.random() * 255;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    tile = c.toDataURL("image/png");
+    return tile;
+  }
+</script>
+
 <script lang="ts">
   import { fade } from "svelte/transition";
 
   export let bg = "";
+  const noise = noiseTile();
 </script>
 
 <div class="backdrop">
@@ -9,7 +33,7 @@
     <div class="art" transition:fade={{ duration: 200 }}>
       <img src={bg} alt="" />
       <div class="shade" />
-      <div class="grain" aria-hidden="true" />
+      <div class="grain" aria-hidden="true" style:background-image={noise ? `url(${noise})` : undefined} />
     </div>
   {/if}
 </div>
@@ -61,11 +85,12 @@
       linear-gradient(to bottom, color-mix(in srgb, var(--bg) 55%, transparent), transparent 22%),
       color-mix(in srgb, var(--bg) 38%, transparent);
   }
+  /* Dither, sized and strengthened in Appearance (--dither-size, --dither). */
   .grain {
     position: absolute;
     inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-size: 140px 140px;
-    opacity: 0.055;
+    background-size: calc(var(--dither-size, 1px) * 128) calc(var(--dither-size, 1px) * 128);
+    image-rendering: pixelated;
+    opacity: var(--dither, 0.055);
   }
 </style>

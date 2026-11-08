@@ -121,11 +121,12 @@
 <style>
   .plan {
     margin: var(--space) 0 0;
-    padding: calc(var(--space) * 2) calc(var(--space) * 2);
+    padding: var(--space);
     border: 1px solid var(--line);
     border-radius: var(--radius);
   }
   .head-row {
+    padding: var(--space) var(--space) 0;
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
@@ -165,7 +166,7 @@
     color: var(--text);
   }
   .empty {
-    margin: 0 calc(var(--space) * 2) var(--space);
+    margin: 0 calc(var(--space) * 3) var(--space);
     color: var(--muted);
     font-size: var(--fs-sm);
     line-height: 1.5;
@@ -201,10 +202,10 @@
     gap: calc(var(--space) * 3);
     width: 100%;
     min-height: 30px;
-    padding: var(--space) calc(var(--space) * 2);
+    padding: var(--space) calc(var(--space) * 3);
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-in);
     color: var(--text);
     font: inherit;
     font-size: var(--fs-md);
@@ -244,11 +245,11 @@
     color: var(--warn-text);
   }
   .goal {
-    margin: 0 calc(var(--space) * 2) calc(var(--space) * 2);
+    margin: 0 calc(var(--space) * 3) calc(var(--space) * 2);
     line-height: 1.5;
   }
   .phase {
-    margin: calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
+    margin: calc(var(--space) * 2) calc(var(--space) * 3) var(--space);
   }
 
 </style>

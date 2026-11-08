@@ -4,7 +4,7 @@
   import Icon from "../Icon.svelte";
   import { permissionName } from "../pageRules";
   import { tooltip } from "../tooltip";
-  import { check as checkUpdates, dlDone, dlTotal, installUpdate, updateMsg, updateState, updateVersion } from "../updateStore";
+  import { check as checkUpdates, devChannel, dlDone, dlTotal, installUpdate, setDevChannel, updateMsg, updateState, updateVersion } from "../updateStore";
   import { clearFinishedSessions } from "../sessions";
   import ConnectionsSection from "./ConnectionsSection.svelte";
   import Switch from "./Switch.svelte";
@@ -119,6 +119,12 @@
           </button>
         {/if}
       </span>
+    </div>
+    <div class="row">
+      <span class="row-label">Dev builds
+        <small>Get pre-release builds as soon as they are out. They can be rough.</small>
+      </span>
+      <span class="row-ctl auto"><Switch on={$devChannel} title="Dev builds" on:toggle={() => setDevChannel(!$devChannel)} /></span>
     </div>
   </div>
 </div>
