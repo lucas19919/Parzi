@@ -2289,6 +2289,29 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     background: color-mix(in srgb, var(--text) 14%, transparent);
     border-color: transparent;
   }
+  /* Light theme, picture filling the window: Home is a dark scene (the
+     theme marks data-scene). Over the picture the theme's colours swap,
+     its text colour the ground and its ground the text, so the tabs, the
+     composer and the cards read as they do on a dark theme. The colours
+     made from them are made again here, from the swapped pair. */
+  :global(html[data-scene="dark"]) .over-art {
+    --bg: var(--scene-bg);
+    --text: var(--scene-text);
+    --accent: var(--scene-accent);
+    --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
+    --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
+    --line: color-mix(in srgb, var(--text) 12%, var(--bg));
+    --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
+    --hover: color-mix(in srgb, var(--text) 6%, transparent);
+    --selected: color-mix(in srgb, var(--text) 10%, transparent);
+    --link: color-mix(in srgb, var(--accent) 70%, var(--text));
+    --ok-text: color-mix(in srgb, var(--ok) 40%, var(--text));
+    --warn-text: color-mix(in srgb, var(--warn) 35%, var(--text));
+    --bad-text: color-mix(in srgb, var(--bad) 62%, var(--text));
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, var(--text));
+    color: var(--text);
+    color-scheme: dark;
+  }
   /* Light theme, text straight on the picture: the full text colour instead
      of grey, with a hairline edge in the page colour, not a glow. */
   :global(html[data-tone="light"]) .over-art :global(.topbar),

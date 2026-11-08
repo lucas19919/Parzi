@@ -29,6 +29,28 @@ if (new URLSearchParams(location.search).get("bg")) {
     g.lineTo(0, c.height);
     g.fill();
   }
+  // ?bg=pale: a bright day sky over a red field, the hard case for white text.
+  if (new URLSearchParams(location.search).get("bg") === "pale") {
+    const day = g.createLinearGradient(0, 0, 0, c.height);
+    day.addColorStop(0, "#7f9cc4");
+    day.addColorStop(0.45, "#dfe8f2");
+    day.addColorStop(0.7, "#f2f4f7");
+    g.fillStyle = day;
+    g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = "rgba(255,255,255,0.85)";
+    for (const [x, y, r] of [[260, 260, 90], [360, 240, 70], [1150, 200, 110], [1270, 230, 80], [700, 420, 60]]) {
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = "#c8394a";
+    g.beginPath();
+    g.moveTo(0, 820);
+    g.lineTo(c.width, 700);
+    g.lineTo(c.width, c.height);
+    g.lineTo(0, c.height);
+    g.fill();
+  }
   document.dispatchEvent(new CustomEvent("parzi:bg", { detail: c.toDataURL("image/jpeg", 0.85) }));
 }
 
