@@ -2254,27 +2254,44 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     -webkit-backdrop-filter: blur(18px) saturate(1.2);
     backdrop-filter: blur(18px) saturate(1.2);
   }
+  /* A light theme's glass holds more of its own colour, so dark parts of
+     the picture do not turn it grey. */
+  :global(html[data-tone="light"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+    background: color-mix(in srgb, var(--panel) 68%, transparent);
+  }
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
   }
-  /* Chrome straight on the wallpaper (the other tabs, the title bar's
-     buttons, the line above the composer) gets a faint glass backing of its
-     own, so it reads over light and dark parts of any picture without a
-     veil over the whole thing. */
-  .over-art :global(.tabs .tab:not(.active)),
-  .over-art :global(.tabs .new),
-  :global(html[data-art-fill="full"]) .over-art :global(.ob .where),
-  .over-art :global(.topbar .icon-btn),
-  .over-art :global(.panel-btn:not(.active)),
-  .over-art :global(.win-btn) {
-    background: color-mix(in srgb, var(--panel) 30%, transparent);
-    -webkit-backdrop-filter: blur(14px) saturate(1.15);
-    backdrop-filter: blur(14px) saturate(1.15);
+  /* Over the wallpaper the title bar is one frosted strip across the
+     window, so tabs and buttons sit on an even surface over any picture,
+     never on the picture itself. Solid cards make it solid. */
+  .over-art :global(.topbar) {
+    background: color-mix(in srgb, var(--bg) 66%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    backdrop-filter: blur(24px) saturate(1.3);
+    border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
   }
+  :global(html[data-art-cards="solid"]) .over-art :global(.topbar) {
+    background: var(--bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* Grey does not read on a picture: chrome over it uses near full text
+     colour for words and icons alike. */
+  .over-art :global(.topbar),
+  .over-art :global(.ob),
+  .over-art :global(.info .card),
+  .over-art :global(.files .card) {
+    --muted: color-mix(in srgb, var(--text) 90%, var(--bg));
+    --faint: color-mix(in srgb, var(--text) 70%, var(--bg));
+  }
+  /* The line above the composer sits on the picture in full window: a tight
+     shadow in the page colour lifts it off light and dark parts alike. */
   :global(html[data-art-fill="full"]) .over-art :global(.ob .where) {
-    width: fit-content;
-    padding: calc(var(--space) / 2) calc(var(--space) * 2);
-    border-radius: var(--radius-sm);
+    text-shadow:
+      0 0 1px color-mix(in srgb, var(--bg) 90%, transparent),
+      0 1px 3px color-mix(in srgb, var(--bg) 80%, transparent),
+      0 0 8px color-mix(in srgb, var(--bg) 45%, transparent);
   }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the

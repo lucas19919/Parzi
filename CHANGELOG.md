@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Over the wallpaper the title bar is one frosted strip, so tabs and buttons read on any picture, and grey labels and icons there and in the cards switch to near full text colour.
 - The wallpaper on a light theme keeps its colours: no white wash over it, the band no longer fades in from white at the top, and its fade out into the page is smooth. Tabs, title bar buttons and the line above the composer get a faint glass backing over the picture so they stay readable on any image, light or dark. The dither now blends with the picture instead of greying it.
 - Agents on your server live in Settings, Providers, next to this computer's: pick the server at the top and each agent shows as the same card, with its status, usage and an Install or Sign in button.
 - The File card turns glass (or solid) over the wallpaper like the other cards, instead of staying see-through.
