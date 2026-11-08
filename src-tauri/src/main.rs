@@ -34,6 +34,7 @@ mod search;
 mod sessions;
 mod settings;
 mod siteprefs;
+mod updates;
 mod vault;
 mod watchdog;
 mod worktree;
@@ -676,6 +677,7 @@ fn main() {
                 tracing::warn!("device id not saved: {e}");
             }
             app.manage(remote::RemoteState::default());
+            app.manage(updates::Updates::default());
             remote::start_ticker(app.handle());
             app.manage(AppState {
                 orch,
@@ -762,6 +764,9 @@ fn main() {
             artifact_frame::artifact_frame,
             app_version,
             restart_app,
+            updates::update_check,
+            updates::update_download,
+            updates::update_install,
             ui_error,
             window_fullscreen,
             begin_window_drag,

@@ -10,11 +10,30 @@ export const updateMsg = writable("");
 export const dlTotal = writable(0);
 export const dlDone = writable(0);
 
+/** Dev builds: pre-releases as well as releases. Opt-in, on this computer. */
+const DEV_KEY = "parzi.updates.dev";
+function readDev(): boolean {
+  try {
+    return localStorage.getItem(DEV_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+export const devChannel = writable(readDev());
+export function setDevChannel(on: boolean) {
+  devChannel.set(on);
+  try {
+    localStorage.setItem(DEV_KEY, on ? "1" : "0");
+  } catch {
+    /* kept for this run only */
+  }
+  readyVersion = "";
+  void check(true);
+}
+
 interface PendingUpdate {
   version: string;
   body?: string;
-  download: (cb?: (e: unknown) => void) => Promise<void>;
-  install: () => Promise<void>;
 }
 
 let scheduled = false;
@@ -37,11 +56,10 @@ export async function check(force = false) {
   if (!force && get(updateState) === "ready") return;
   updateState.set("checking");
   try {
-    const { check } = await import("@tauri-apps/plugin-updater");
-    const u = (await check()) as PendingUpdate | null;
+    const u: PendingUpdate | null = await api.updateCheck(get(devChannel));
     if (!u) {
       updateState.set("uptodate");
-      updateMsg.set("You're on the latest version.");
+      updateMsg.set(get(devChannel) ? "You're on the latest dev build." : "You're on the latest version.");
       return;
     }
     if (u.version === readyVersion) {
@@ -67,17 +85,21 @@ async function downloadInBackground() {
   dlTotal.set(0);
   dlDone.set(0);
   updateMsg.set("Downloading update in the background…");
+  const stop = await api
+    .onUpdateProgress((p) => {
+      if (p.total) dlTotal.set(p.total);
+      dlDone.update((n) => n + p.chunk);
+    })
+    .catch(() => () => {});
   try {
-    await pending.download((e: unknown) => {
-      const ev = e as { event: string; data?: { contentLength?: number; chunkLength?: number } };
-      if (ev.event === "Started") dlTotal.set(ev.data?.contentLength ?? 0);
-      else if (ev.event === "Progress") dlDone.update((n) => n + (ev.data?.chunkLength ?? 0));
-    });
+    await api.updateDownload();
+    stop();
     downloading = false;
     readyVersion = pending.version;
     updateState.set("ready");
     updateMsg.set("Update downloaded. Restart Parzi to use it.");
   } catch (e) {
+    stop();
     downloading = false;
     updateState.set("error");
     updateMsg.set(`Download failed: ${e}`);
@@ -89,7 +111,7 @@ export async function installUpdate() {
   updateState.set("downloading");
   updateMsg.set("Finishing install…");
   try {
-    await pending.install();
+    await api.updateInstall();
   } catch (e) {
     updateState.set("error");
     updateMsg.set(`Install failed: ${e}`);

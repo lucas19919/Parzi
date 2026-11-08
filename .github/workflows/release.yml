@@ -65,6 +65,8 @@ jobs:
             - Toggles are one height everywhere, and the picked segment sits the same distance from each edge.
             - Over the wallpaper, the open tab, a hovered tab and the side-column toggle are frosted glass (solid when cards are solid), so they no longer vanish into the picture.
             - The wallpaper's grain is now a dither you can tune: strength and dot size, under Settings, Appearance, Wallpaper. Agents can set them too.
+            - Dev builds: turn them on in Settings, General, and Parzi updates to pre-releases like this one as soon as they are out. Off, it stays on full releases.
+            - Phones are coming: `parzi serve` can open a gateway for paired devices (`parzi gateway on`, `parzi devices add`), the first step of Parzi mobile.
             - Windows checks: the stdio MCP connection no longer trips clippy, and three tests that only ran on Windows now pass there.
 
             ### Download
@@ -196,3 +198,27 @@ jobs:
             files+=("${{ matrix.exe }}.sha256")
           fi
           gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
+
+  # The dev channel: a rolling pre-release, `updater-dev`, holding the newest
+  # build's latest.json, stable or dev. Parzi's "Dev builds" switch checks it.
+  # It is a pre-release, so /releases/latest (the stable channel) never sees it.
+  channel:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Point the dev channel at this build
+        shell: bash
+        run: |
+          gh release download "${{ github.ref_name }}" --pattern latest.json --dir out
+          if ! gh release view updater-dev >/dev/null 2>&1; then
+            gh release create updater-dev --prerelease --title "Dev channel" \
+              --notes "Where Parzi's Dev builds setting looks for updates. Not an install: see the releases above." \
+              --target "${{ github.sha }}"
+          fi
+          gh release upload updater-dev out/latest.json --clobber
