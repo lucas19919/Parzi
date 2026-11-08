@@ -2240,21 +2240,41 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* Cards over the wallpaper on Home: clear (outlined, the default), glass
+  /* Cards over the wallpaper on Home (the side column, the File card and the
+     composer): clear (outlined, the default), glass
      (frosted) or solid (the panel colour), as set in Appearance. Only here:
      everywhere else surfaces stay solid. */
-  .over-art :global(:is(.info .card, .ob .box)) {
+  .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     transition:
       background var(--dur) ease,
       backdrop-filter var(--dur) ease;
   }
-  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .ob .box)) {
+  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: color-mix(in srgb, var(--panel) 52%, transparent);
     -webkit-backdrop-filter: blur(18px) saturate(1.2);
     backdrop-filter: blur(18px) saturate(1.2);
   }
-  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .ob .box)) {
+  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
+  }
+  /* Chrome straight on the wallpaper (the other tabs, the title bar's
+     buttons, the line above the composer) gets a faint glass backing of its
+     own, so it reads over light and dark parts of any picture without a
+     veil over the whole thing. */
+  .over-art :global(.tabs .tab:not(.active)),
+  .over-art :global(.tabs .new),
+  :global(html[data-art-fill="full"]) .over-art :global(.ob .where),
+  .over-art :global(.topbar .icon-btn),
+  .over-art :global(.panel-btn:not(.active)),
+  .over-art :global(.win-btn) {
+    background: color-mix(in srgb, var(--panel) 30%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    backdrop-filter: blur(14px) saturate(1.15);
+  }
+  :global(html[data-art-fill="full"]) .over-art :global(.ob .where) {
+    width: fit-content;
+    padding: calc(var(--space) / 2) calc(var(--space) * 2);
+    border-radius: var(--radius-sm);
   }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the

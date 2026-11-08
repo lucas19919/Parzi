@@ -121,9 +121,7 @@
       </span>
     </div>
     <div class="row">
-      <span class="row-label">Dev builds
-        <small>Get pre-release builds as soon as they are out. They can be rough.</small>
-      </span>
+      <span class="row-label">Dev builds</span>
       <span class="row-ctl auto"><Switch on={$devChannel} title="Dev builds" on:toggle={() => setDevChannel(!$devChannel)} /></span>
     </div>
   </div>

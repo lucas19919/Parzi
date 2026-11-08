@@ -362,7 +362,9 @@ const config = {
 
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
-  colors: { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
+  colors: params.get("light")
+    ? { sidebar: "#f2f1ee", stage: "#f7f6f3", accent: "#1f1f1f", text: "#1c1c1c", text_dim: "#6b6b6b", bar: "#efeeea", border: "#dcdad5", panel: "" }
+    : { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
   background: {
     image: params.get("bg") ? "backgrounds/mock.png" : "",
     height: 0.34,
@@ -490,7 +492,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     ],
   }),
   get_theme: () => theme,
-  get_theme_css: () => `:root{--accent:${theme.colors.accent};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
+  get_theme_css: () => `:root{--accent:${theme.colors.accent};--bg:${theme.colors.stage};--text:${theme.colors.text};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
   // Keeps the window's answers to desk calls, for checks to read.
   desk_answer: (a) => {
     const w = window as unknown as { __deskAnswers?: Record<string, unknown> };
@@ -511,7 +513,14 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
       ? { label: "box", user: "lucas", host: "box.example.net", version: "0.1.27", linked_at: now, alive: true, synced_at: now - 180_000, device: "pc" }
       : null,
   remote_sync: () => "synced",
-  remote_providers: () => [],
+  remote_providers: () =>
+    params.get("remote")
+      ? [
+          { provider: "claude", state: "ready", version: "2.4.0", hint: "", usage: [{ label: "5h", used_percent: 64 }], models: [], gated: false, checked_at: now / 1000 },
+          { provider: "codex", state: "signed_out", version: "0.9.1", hint: "Sign in to Codex on box", usage: [], models: [], gated: false, checked_at: now / 1000 },
+          { provider: "opencode", state: "not_installed", version: "", hint: "", usage: [], models: [], gated: false, checked_at: now / 1000 },
+        ]
+      : [],
   remote_projects: () => [],
   brain_context: () => ({ project, text: "", attached: [], listed: [], overflow: [], chars: 0, tokens: 1840 }),
   brain_projects: () => [
