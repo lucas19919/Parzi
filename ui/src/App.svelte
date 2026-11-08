@@ -2257,6 +2257,25 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
   }
+  /* Chrome straight on the wallpaper (the other tabs, the title bar's
+     buttons, the line above the composer) gets a faint glass backing of its
+     own, so it reads over light and dark parts of any picture without a
+     veil over the whole thing. */
+  .over-art :global(.tabs .tab:not(.active)),
+  .over-art :global(.tabs .new),
+  :global(html[data-art-fill="full"]) .over-art :global(.ob .where),
+  .over-art :global(.topbar .icon-btn),
+  .over-art :global(.panel-btn:not(.active)),
+  .over-art :global(.win-btn) {
+    background: color-mix(in srgb, var(--panel) 30%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    backdrop-filter: blur(14px) saturate(1.15);
+  }
+  :global(html[data-art-fill="full"]) .over-art :global(.ob .where) {
+    width: fit-content;
+    padding: calc(var(--space) / 2) calc(var(--space) * 2);
+    border-radius: var(--radius-sm);
+  }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
      pointer are frosted glass (solid panel when the cards are solid), with

@@ -56,6 +56,23 @@ function syncArt() {
   const cards = css.getPropertyValue("--art-cards").trim();
   root.dataset.artFill = fill === "full" ? "full" : "band";
   root.dataset.artCards = cards === "glass" || cards === "solid" ? cards : "clear";
+  root.dataset.tone = isLight(css.getPropertyValue("--bg")) ? "light" : "dark";
+}
+
+/** Whether a colour is light, by its relative luminance. Any CSS colour the
+ *  browser understands works: the canvas turns it into RGB. */
+function isLight(colour: string): boolean {
+  const c = document.createElement("canvas").getContext("2d");
+  if (!c || !colour.trim()) return false;
+  c.fillStyle = "#000";
+  c.fillStyle = colour.trim();
+  c.fillRect(0, 0, 1, 1);
+  const [r, g, b] = c.getImageData(0, 0, 1, 1).data;
+  const lin = (v: number) => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b) > 0.4;
 }
 
 export function previewTheme(t: Theme) {

@@ -362,7 +362,9 @@ const config = {
 
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
-  colors: { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
+  colors: params.get("light")
+    ? { sidebar: "#f2f1ee", stage: "#f7f6f3", accent: "#1f1f1f", text: "#1c1c1c", text_dim: "#6b6b6b", bar: "#efeeea", border: "#dcdad5", panel: "" }
+    : { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
   background: {
     image: params.get("bg") ? "backgrounds/mock.png" : "",
     height: 0.34,
@@ -490,7 +492,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     ],
   }),
   get_theme: () => theme,
-  get_theme_css: () => `:root{--accent:${theme.colors.accent};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
+  get_theme_css: () => `:root{--accent:${theme.colors.accent};--bg:${theme.colors.stage};--text:${theme.colors.text};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
   // Keeps the window's answers to desk calls, for checks to read.
   desk_answer: (a) => {
     const w = window as unknown as { __deskAnswers?: Record<string, unknown> };
