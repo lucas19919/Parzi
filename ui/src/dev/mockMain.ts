@@ -16,15 +16,6 @@ if (new URLSearchParams(location.search).get("bg")) {
   sky.addColorStop(1, "#2a1a2e");
   g.fillStyle = sky;
   g.fillRect(0, 0, c.width, c.height);
-  // ?bg=split: a sky dark on the left and pale on the right, to check text
-  // that sits on both.
-  if (new URLSearchParams(location.search).get("bg") === "split") {
-    const side = g.createLinearGradient(0, 0, c.width, 0);
-    side.addColorStop(0.3, "rgba(200,218,236,0)");
-    side.addColorStop(0.6, "rgba(200,218,236,1)");
-    g.fillStyle = side;
-    g.fillRect(0, 0, c.width, c.height * 0.45);
-  }
   g.fillStyle = "#f6d28b";
   g.beginPath();
   g.arc(1080, 560, 120, 0, Math.PI * 2);

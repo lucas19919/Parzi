@@ -2302,22 +2302,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-tone="light"]) .over-art :global(.topbar svg) {
     filter: drop-shadow(0 0 1px color-mix(in srgb, var(--bg) 70%, transparent));
   }
-  /* Where the picture behind it is dark (DefaultArt marks data-on), that
-     text turns to light ink, the page colour, edged in the text colour.
-     A glass pill (the open tab, a toggle that is on) keeps dark ink. */
-  .over-art {
-    --ink-light: var(--bg);
-    --ink-edge: color-mix(in srgb, var(--text) 60%, transparent);
-  }
-  :global(html[data-tone="light"]) .over-art :global([data-on="dark"]:not(.active)) {
-    --text: var(--ink-light);
-    --muted: var(--ink-light);
-    color: var(--ink-light);
-    text-shadow: 0 0 1px var(--ink-edge);
-  }
-  :global(html[data-tone="light"]) .over-art :global([data-on="dark"]:not(.active) svg) {
-    filter: drop-shadow(0 0 1px var(--ink-edge));
-  }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
      pointer are frosted glass (solid panel when the cards are solid), with
