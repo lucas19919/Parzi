@@ -320,7 +320,7 @@ pub async fn ensure_serving(exe: &Path, wait: Duration) -> Result<String, String
     }
 }
 
-fn op_wait(op: &str) -> Duration {
+pub(crate) fn op_wait(op: &str) -> Duration {
     match op {
         "providers" | "doctor" => Duration::from_secs(90),
         "session.send" | "session.kill" | "session.delete" => Duration::from_secs(60),
