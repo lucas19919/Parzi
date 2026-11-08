@@ -2240,20 +2240,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* Cards over the wallpaper on Home: clear (outlined, the default), glass
+  /* Cards over the wallpaper on Home (the side column, the File card and the
+     composer): clear (outlined, the default), glass
      (frosted) or solid (the panel colour), as set in Appearance. Only here:
      everywhere else surfaces stay solid. */
-  .over-art :global(:is(.info .card, .ob .box)) {
+  .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     transition:
       background var(--dur) ease,
       backdrop-filter var(--dur) ease;
   }
-  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .ob .box)) {
+  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: color-mix(in srgb, var(--panel) 52%, transparent);
     -webkit-backdrop-filter: blur(18px) saturate(1.2);
     backdrop-filter: blur(18px) saturate(1.2);
   }
-  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .ob .box)) {
+  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
   }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
