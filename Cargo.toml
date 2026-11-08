@@ -17,9 +17,14 @@ repository = "https://github.com/lucas19919/Parzi"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
+# Style hints warn; real mistakes fail `cargo clippy` everywhere, CI included.
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -2 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
 
 [profile.release]
 opt-level = "z"

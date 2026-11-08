@@ -59,6 +59,11 @@ strip = true
 [lints.rust]
 unsafe_code = "deny"
 
+# Style hints warn; real mistakes fail `cargo clippy` everywhere, CI included.
 [lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -2 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }

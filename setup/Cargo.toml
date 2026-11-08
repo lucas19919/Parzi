@@ -24,3 +24,10 @@ lto = "thin"
 strip = true
 codegen-units = 1
 panic = "abort"
+
+# Style hints warn; real mistakes fail `cargo clippy` everywhere, CI included.
+[lints.clippy]
+correctness = "deny"
+suspicious = "deny"
+complexity = "deny"
+perf = "deny"
