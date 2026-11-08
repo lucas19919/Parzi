@@ -572,14 +572,11 @@
     min-width: 0;
   }
 
-  .rows .tin.fixed,
-  .rows :global(.segmented-control) {
+  .rows .tin.fixed {
     height: calc(var(--space) * 8);
   }
   .rows :global(.segmented-control) {
-    align-items: center;
     width: 190px;
-    box-sizing: border-box;
   }
   .rows :global(.segmented-control .seg-btn) {
     flex: 1 1 0;

@@ -104,9 +104,9 @@ function check() {
       // A row run edge to edge in a box that clips it takes the box's corner.
       if (!(own > 0) && Math.max(gap[y], gap[x]) <= 1.5 && bs.overflow !== "visible") continue;
       const want = Math.max(0, outer - Math.max(gap[y], gap[x]));
-      if (Math.abs(gap[y] - gap[x]) > 1) {
+      if (Math.abs(gap[y] - gap[x]) > 0.5) {
         found.push(`${name(el)}: sits ${gap[y].toFixed(0)}px and ${gap[x].toFixed(0)}px from its box's corner, keep one inset`);
-      } else if (Math.abs(own - want) > 1) {
+      } else if (Math.abs(own - want) > 0.5) {
         found.push(`${name(el)}: corner ${own}px inside a ${outer}px box at ${gap[x].toFixed(0)}px, use ${want}px (--radius-in at the standard inset)`);
       }
       break;

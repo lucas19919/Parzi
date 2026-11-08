@@ -418,7 +418,6 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 3);
-    border-radius: inherit;
   }
   .pick:focus-visible {
     outline: none;
