@@ -1061,6 +1061,12 @@ async fn desk_theme(ctx: &Ctx, req: &Value) -> Value {
         let mut v = req.clone();
         if let Some(o) = v.as_object_mut() {
             o.remove("session");
+            // Agents send dither as 40 as often as "40".
+            for x in o.values_mut() {
+                if x.is_number() {
+                    *x = Value::String(x.to_string());
+                }
+            }
         }
         v
     }) {

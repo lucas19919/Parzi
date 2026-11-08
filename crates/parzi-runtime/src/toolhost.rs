@@ -2253,8 +2253,14 @@ impl ToolHost {
                     "panel",
                     "wallpaper",
                     "cards",
+                    "dither",
+                    "dither_size",
                 ] {
-                    let v = s(k);
+                    // Dither comes as 40 as often as "40".
+                    let v = match args.get(k) {
+                        Some(Value::Number(n)) => n.to_string(),
+                        _ => s(k),
+                    };
                     if !v.is_empty() {
                         body[k] = Value::String(v);
                     }

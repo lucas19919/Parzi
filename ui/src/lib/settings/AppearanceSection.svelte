@@ -18,6 +18,8 @@
   let backgrounds: BackgroundFile[] = [];
   let yPct = 50;
   let hPct = 34;
+  let ditherPct = 25;
+  let ditherPx = 1;
   let loading = true;
   let err = "";
   let packName = "";
@@ -82,6 +84,20 @@
     touch();
   }
 
+  function onDither(v: number) {
+    if (!theme || !Number.isFinite(v)) return;
+    ditherPct = Math.round(v);
+    theme.background.dither = ditherPct / 100;
+    touch();
+  }
+
+  function onDitherSize(v: number) {
+    if (!theme || !Number.isFinite(v)) return;
+    ditherPx = Math.round(v);
+    theme.background.dither_size = ditherPx;
+    touch();
+  }
+
   function onHeight(v: number) {
     if (!theme || !Number.isFinite(v)) return;
     hPct = Math.round(v);
@@ -94,6 +110,10 @@
     yPct = typeof y === "number" && Number.isFinite(y) ? Math.round(y * 100) : 50;
     const h = theme?.background.height;
     hPct = typeof h === "number" && Number.isFinite(h) ? Math.round(h * 100) : 34;
+    const d = theme?.background.dither;
+    ditherPct = typeof d === "number" && Number.isFinite(d) ? Math.round(d * 100) : 25;
+    const ds = theme?.background.dither_size;
+    ditherPx = typeof ds === "number" && Number.isFinite(ds) ? Math.round(ds) : 1;
   }
 
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
@@ -408,6 +428,14 @@
         <div class="row ctl-row">
           <span class="row-label">Position</span>
           <div class="pos"><Slider bare label="Wallpaper position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} /></div>
+        </div>
+        <div class="row ctl-row">
+          <span class="row-label">Dither</span>
+          <div class="pos"><Slider bare label="Dither strength" bind:value={ditherPct} min={0} max={100} unit="%" on:input={(e) => onDither(e.detail)} /></div>
+        </div>
+        <div class="row ctl-row">
+          <span class="row-label">Dither size</span>
+          <div class="pos"><Slider bare label="Dither size" bind:value={ditherPx} min={1} max={6} unit="px" on:input={(e) => onDitherSize(e.detail)} /></div>
         </div>
       {/if}
     </div>

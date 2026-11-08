@@ -166,6 +166,10 @@ export interface Theme {
     fill?: "band" | "full";
     /** How cards look over it. */
     cards?: "clear" | "glass" | "solid";
+    /** Dither over the wallpaper, 0 (off) to 1. */
+    dither?: number;
+    /** Dither dot size in pixels, 1 to 6. */
+    dither_size?: number;
   };
 }
 
