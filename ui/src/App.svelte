@@ -2302,6 +2302,37 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-tone="light"]) .over-art :global(.topbar svg) {
     filter: drop-shadow(0 0 1px color-mix(in srgb, var(--bg) 70%, transparent));
   }
+  /* Where the picture behind the title bar (or the line above the
+     composer) is dark on the whole, DefaultArt marks it data-on="dark" and
+     all its text turns to light ink, the page colour, edged in the text
+     colour. One ink for the whole bar. The open tab and toggles that are on
+     keep dark ink on their glass. */
+  .over-art {
+    --ink-light: var(--bg);
+    --ink-dark: var(--text);
+    --ink-edge: color-mix(in srgb, var(--text) 60%, transparent);
+  }
+  :global(html[data-tone="light"]) .over-art :global([data-on="dark"]) {
+    --text: var(--ink-light);
+    --muted: var(--ink-light);
+    color: var(--ink-light);
+  }
+  :global(html[data-tone="light"]) .over-art :global([data-on="dark"] :is(.tab, .where)),
+  :global(html[data-tone="light"]) .over-art :global(.where[data-on="dark"]) {
+    text-shadow: 0 0 1px var(--ink-edge);
+  }
+  :global(html[data-tone="light"]) .over-art :global([data-on="dark"] svg) {
+    filter: drop-shadow(0 0 1px var(--ink-edge));
+  }
+  :global(html[data-tone="light"]) .over-art :global([data-on="dark"] .active) {
+    --text: var(--ink-dark);
+    --muted: var(--ink-dark);
+    color: var(--ink-dark);
+    text-shadow: none;
+  }
+  :global(html[data-tone="light"]) .over-art :global([data-on="dark"] .active svg) {
+    filter: none;
+  }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
      pointer are frosted glass (solid panel when the cards are solid), with
