@@ -86,16 +86,6 @@
   :global(html[data-tone="light"]) .shade {
     background: none;
   }
-  /* Except a short vignette under the tab strip, where dark text would
-     otherwise sit straight on the picture's sky. */
-  :global(html[data-tone="light"][data-art-fill="full"]) .shade {
-    background: linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--bg) 72%, transparent),
-      color-mix(in srgb, var(--bg) 40%, transparent) 40px,
-      transparent 104px
-    );
-  }
   :global(html[data-tone="light"]) .grain {
     mix-blend-mode: soft-light;
     opacity: min(1, calc(var(--dither, 0.055) * 3));
