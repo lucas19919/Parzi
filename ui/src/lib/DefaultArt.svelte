@@ -80,7 +80,17 @@
     -webkit-mask-image: none;
     mask-image: none;
   }
-  :global(html[data-art-fill="full"]) .shade {
+  /* A light theme gets no veil: a wash of white only fogs the picture.
+     Text over it reads by its own colour instead (App.svelte), and the
+     dither blends into the picture's tones rather than greying it. */
+  :global(html[data-tone="light"]) .shade {
+    background: none;
+  }
+  :global(html[data-tone="light"]) .grain {
+    mix-blend-mode: soft-light;
+    opacity: min(1, calc(var(--dither, 0.055) * 3));
+  }
+  :global(html:not([data-tone="light"])[data-art-fill="full"]) .shade {
     background:
       linear-gradient(to bottom, color-mix(in srgb, var(--bg) 55%, transparent), transparent 22%),
       color-mix(in srgb, var(--bg) 38%, transparent);

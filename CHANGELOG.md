@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Light themes with the wallpaper filling the window show Home over a dimmed picture with white title bar text, and the cards and composer as light frosted glass with dark text, the same over any image. With the wallpaper as a band, light themes show it in its own colours, with no white veil.
 - Agents can put a file in front of you: a plan, a doc they wrote or a project file opens in the File card beside the conversation, markdown rendered (the ui_show_file tool).
 - The File card browses the session's project as a tree of its folders, with the files changed in the working tree on top and a search across the whole project; click a file to read it and the arrow to go back. Your projects' folders work before any session has run in them, and opening a file from anywhere on your computer works again.
 - Glass tabs use the same glass as the cards.

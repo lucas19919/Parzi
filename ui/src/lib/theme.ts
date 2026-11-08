@@ -56,6 +56,38 @@ function syncArt() {
   const cards = css.getPropertyValue("--art-cards").trim();
   root.dataset.artFill = fill === "full" ? "full" : "band";
   root.dataset.artCards = cards === "glass" || cards === "solid" ? cards : "clear";
+  // A light theme with the picture filling the window shows Home as a dark
+  // scene: white text and dark glass over the picture, like a lock screen.
+  // The rest of the app stays light. data-tone is the tone over the picture.
+  const light = luminance(css.getPropertyValue("--bg")) > 0.4;
+  const scene = light && root.dataset.artFill === "full";
+  root.dataset.tone = light && !scene ? "light" : "dark";
+  if (scene) root.dataset.scene = "dark";
+  else delete root.dataset.scene;
+  // In the scene the theme's own colours swap (its text is the scene's
+  // ground); an accent too dark to see there turns to the theme's ground.
+  const accent = css.getPropertyValue("--accent");
+  const ground = css.getPropertyValue("--bg").trim();
+  root.style.setProperty("--scene-bg", css.getPropertyValue("--text").trim());
+  root.style.setProperty("--scene-text", ground);
+  root.style.setProperty("--theme-accent", accent.trim());
+  root.style.setProperty("--scene-accent", luminance(accent) < 0.18 ? ground : accent.trim());
+}
+
+/** Relative luminance of any CSS colour (0 dark, 1 light); the canvas turns
+ *  it into RGB. */
+function luminance(colour: string): number {
+  const c = document.createElement("canvas").getContext("2d");
+  if (!c || !colour.trim()) return 0;
+  c.fillStyle = "#000";
+  c.fillStyle = colour.trim();
+  c.fillRect(0, 0, 1, 1);
+  const [r, g, b] = c.getImageData(0, 0, 1, 1).data;
+  const lin = (v: number) => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
 export function previewTheme(t: Theme) {

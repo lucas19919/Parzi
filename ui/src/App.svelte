@@ -2289,6 +2289,64 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     background: color-mix(in srgb, var(--text) 14%, transparent);
     border-color: transparent;
   }
+  /* Light theme, picture filling the window: Home is a dark scene (the
+     theme marks data-scene). Over the picture the theme's colours swap,
+     its text colour the ground and its ground the text, so the title bar
+     and the line above the composer read as on a dark theme. Glass and
+     solid cards and the composer keep the light theme's own colours: light
+     frosted glass with dark text, like light widgets on a dark wallpaper.
+     The open tab and toggles that are on are the same light glass. Clear
+     cards have no surface of their own, so they stay dark. */
+  :global(html[data-scene="dark"]) .over-art {
+    --bg: var(--scene-bg);
+    --text: var(--scene-text);
+    --accent: var(--scene-accent);
+  }
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+    --bg: var(--scene-text);
+    --text: var(--scene-bg);
+    --accent: var(--theme-accent);
+    color-scheme: light;
+  }
+  /* The colours made from the pair, made again wherever it changes. */
+  :global(html[data-scene="dark"]) .over-art,
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+    --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
+    --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
+    --line: color-mix(in srgb, var(--text) 12%, var(--bg));
+    --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
+    --hover: color-mix(in srgb, var(--text) 6%, transparent);
+    --selected: color-mix(in srgb, var(--text) 10%, transparent);
+    --link: color-mix(in srgb, var(--accent) 70%, var(--text));
+    --ok-text: color-mix(in srgb, var(--ok) 40%, var(--text));
+    --warn-text: color-mix(in srgb, var(--warn) 35%, var(--text));
+    --bad-text: color-mix(in srgb, var(--bad) 62%, var(--text));
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, var(--text));
+    color: var(--text);
+  }
+  :global(html[data-scene="dark"]) .over-art {
+    color-scheme: dark;
+  }
+  /* Light glass holds more of its own colour than dark glass: at half
+     strength it turns grey over a dimmed picture. */
+  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    backdrop-filter: blur(24px) saturate(1.4);
+  }
+  /* Light theme, text straight on the picture: the full text colour instead
+     of grey, with a hairline edge in the page colour, not a glow. */
+  :global(html[data-tone="light"]) .over-art :global(.topbar),
+  :global(html[data-tone="light"]) .over-art :global(.ob .where) {
+    --muted: var(--text);
+  }
+  :global(html[data-tone="light"]) .over-art :global(.tabs .tab),
+  :global(html[data-tone="light"]) .over-art :global(.ob .where) {
+    text-shadow: 0 0 1px color-mix(in srgb, var(--bg) 70%, transparent);
+  }
+  :global(html[data-tone="light"]) .over-art :global(.topbar svg) {
+    filter: drop-shadow(0 0 1px color-mix(in srgb, var(--bg) 70%, transparent));
+  }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
      pointer are frosted glass (solid panel when the cards are solid), with
