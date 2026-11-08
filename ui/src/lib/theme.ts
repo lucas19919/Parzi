@@ -70,6 +70,7 @@ function syncArt() {
   const ground = css.getPropertyValue("--bg").trim();
   root.style.setProperty("--scene-bg", css.getPropertyValue("--text").trim());
   root.style.setProperty("--scene-text", ground);
+  root.style.setProperty("--theme-accent", accent.trim());
   root.style.setProperty("--scene-accent", luminance(accent) < 0.18 ? ground : accent.trim());
 }
 

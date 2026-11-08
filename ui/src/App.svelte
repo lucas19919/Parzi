@@ -2291,13 +2291,25 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Light theme, picture filling the window: Home is a dark scene (the
      theme marks data-scene). Over the picture the theme's colours swap,
-     its text colour the ground and its ground the text, so the tabs, the
-     composer and the cards read as they do on a dark theme. The colours
-     made from them are made again here, from the swapped pair. */
+     its text colour the ground and its ground the text, so the title bar
+     and the line above the composer read as on a dark theme. Glass and
+     solid cards and the composer keep the light theme's own colours: light
+     frosted glass with dark text, like light widgets on a dark wallpaper.
+     Clear cards have no surface of their own, so they stay dark. */
   :global(html[data-scene="dark"]) .over-art {
     --bg: var(--scene-bg);
     --text: var(--scene-text);
     --accent: var(--scene-accent);
+  }
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+    --bg: var(--scene-text);
+    --text: var(--scene-bg);
+    --accent: var(--theme-accent);
+    color-scheme: light;
+  }
+  /* The colours made from the pair, made again wherever it changes. */
+  :global(html[data-scene="dark"]) .over-art,
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
     --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
     --line: color-mix(in srgb, var(--text) 12%, var(--bg));
@@ -2310,7 +2322,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     --bad-text: color-mix(in srgb, var(--bad) 62%, var(--text));
     --accent-hover: color-mix(in srgb, var(--accent) 86%, var(--text));
     color: var(--text);
+  }
+  :global(html[data-scene="dark"]) .over-art {
     color-scheme: dark;
+  }
+  /* Light glass holds more of its own colour than dark glass: at half
+     strength it turns grey over a dimmed picture. */
+  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    backdrop-filter: blur(24px) saturate(1.4);
   }
   /* Light theme, text straight on the picture: the full text colour instead
      of grey, with a hairline edge in the page colour, not a glow. */
