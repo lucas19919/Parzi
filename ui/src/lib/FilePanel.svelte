@@ -16,7 +16,6 @@
 
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { open as pickPath } from "@tauri-apps/plugin-dialog";
   import InfoCard, { unfold } from "./InfoCard.svelte";
   import Icon from "./Icon.svelte";
   import ResizeGrip from "./ResizeGrip.svelte";
@@ -40,6 +39,65 @@
   let copied = false;
   let picker: HTMLInputElement | null = null;
 
+  // ── Browsing the project when no file is open ──
+  let query = "";
+  let files: string[] = [];
+  let changed: { path: string; label: string }[] = [];
+  let listed = "";
+  let listing: ReturnType<typeof setTimeout> | null = null;
+
+  const sep = (base: string) => (base.includes("\\") ? "\\" : "/");
+  const join = (base: string, rel: string) => `${base.replace(/[\\/]+$/, "")}${sep(base)}${rel.replace(/\//g, sep(base))}`;
+  const nameOf = (rel: string) => rel.split(/[\\/]/).pop() || rel;
+  const dirOf = (rel: string) => rel.split(/[\\/]/).slice(0, -1).join("/");
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+  async function list() {
+    const at = folder;
+    if (!at) {
+      files = [];
+      changed = [];
+      return;
+    }
+    const [all, git] = await Promise.all([
+      api.listFiles(at, query.trim()).catch(() => [] as string[]),
+      api.gitStatus(at).catch(() => null),
+    ]);
+    if (at !== folder) return;
+    files = all;
+    // Changed files show relative to the folder when they are inside it.
+    const top = git?.top || at;
+    const inside = norm(at).startsWith(norm(top)) ? norm(at).slice(norm(top).length).replace(/^\//, "") : "";
+    const q = query.trim().toLowerCase();
+    changed = (git?.files ?? [])
+      .map((rel) => {
+        const path = join(top, rel);
+        const r = rel.replace(/\\/g, "/");
+        const label = inside && r.toLowerCase().startsWith(`${inside}/`) ? r.slice(inside.length + 1) : r;
+        return { path, label };
+      })
+      .filter((f) => !q || f.label.toLowerCase().includes(q));
+  }
+
+  // Lists again when the folder or the search changes, and when the card
+  // comes back to the list.
+  $: wanted = shown && !doc ? `${folder}\n${query}` : "";
+  $: if (wanted && wanted !== listed) {
+    listed = wanted;
+    if (listing) clearTimeout(listing);
+    listing = setTimeout(() => void list(), query ? 150 : 0);
+  }
+  $: if (!wanted) listed = "";
+
+  async function openPath(path: string) {
+    try {
+      show(path, await api.readTextFile(path));
+    } catch {
+      // Not text (an image, a PDF): open it the system's way.
+      await api.openFilePath(path).catch(toastError);
+    }
+  }
+
   $: markdown = !!doc && (doc.kind === "markdown" || doc.kind === "md");
   // A file's id is its absolute path, a note's id its vault path.
   $: revealable = !!doc && /[\\/]/.test(doc.id);
@@ -56,8 +114,8 @@
     // The dev mock has no system dialog, so it uses the browser's picker.
     if (location.pathname.endsWith("mock.html")) return picker?.click();
     try {
-      const picked = await pickPath({ multiple: false, directory: false, defaultPath: folder || undefined, title: "Open file" });
-      if (typeof picked === "string" && picked) show(picked, await api.readTextFile(picked));
+      const picked = await api.pickTextFile(folder || undefined);
+      if (picked) show(picked.path, picked.content);
     } catch (err) {
       toast(`Couldn't open that file: ${err}`, true);
     }
@@ -110,16 +168,17 @@
 <aside class="files" class:shut={!shown} class:reading={!!doc} aria-label="Files" style="width: {shown ? width : 0}px" inert={!shown}>
   <ResizeGrip label="Resize files" min={FILE_MIN} max={FILE_MAX} on:resize />
   <div class="col">
-  <InfoCard id="reader" title={doc?.title || "File"}>
+  <InfoCard id="reader" title={doc?.title || (folder ? nameOf(folder) : "Files")}>
     <svelte:fragment slot="actions">
       {#if doc}
-        <button class="icon-btn" aria-label="Open file" use:tooltip={"Open file"} on:click={browse}><Icon name="file" /></button>
+        <button class="icon-btn" aria-label="Back to files" use:tooltip={"Back to files"} on:click={() => dispatch("close")}><Icon name="arrowLeft" /></button>
         <button class="icon-btn" aria-label={copied ? "Copied" : "Copy"} use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} /></button>
         <button class="icon-btn" aria-label="Save as file" use:tooltip={"Save as file"} on:click={save}><Icon name="download" /></button>
         {#if revealable}
           <button class="icon-btn" aria-label="Open in file explorer" use:tooltip={"Open in file explorer"} on:click={reveal}><Icon name="folder" /></button>
         {/if}
-        <button class="icon-btn" aria-label="Close file" use:tooltip={"Close file"} on:click={() => dispatch("close")}><Icon name="close" /></button>
+      {:else}
+        <button class="icon-btn" aria-label="Open a file from anywhere" use:tooltip={"Open a file from anywhere"} on:click={browse}><Icon name="file" /></button>
       {/if}
     </svelte:fragment>
     {#if doc}
@@ -133,8 +192,38 @@
           {/if}
         {/key}
       </div>
+    {:else if folder}
+      <label class="find">
+        <Icon name="search" size={12} />
+        <input bind:value={query} placeholder="Find a file" aria-label="Find a file in {nameOf(folder)}" spellcheck="false" autocomplete="off" />
+      </label>
+      {#if changed.length}
+        <div class="group">Changed</div>
+        {#each changed as f (f.path)}
+          <button class="info-line row" use:tooltip={f.label} on:click={() => openPath(f.path)}>
+            <Icon name="file" size={12} />
+            <span class="info-v">{nameOf(f.label)}</span>
+            {#if dirOf(f.label)}<span class="dir">{dirOf(f.label)}</span>{/if}
+          </button>
+        {/each}
+      {/if}
+      {#if files.length}
+        {#if changed.length}<div class="group">All files</div>{/if}
+        {#each files as rel (rel)}
+          <button class="info-line row" use:tooltip={rel} on:click={() => openPath(join(folder, rel))}>
+            <Icon name="file" size={12} />
+            <span class="info-v">{nameOf(rel)}</span>
+            {#if dirOf(rel)}<span class="dir">{dirOf(rel)}</span>{/if}
+          </button>
+        {/each}
+      {:else if query}
+        <div class="info-line quiet">Nothing matches "{query}"</div>
+      {/if}
     {:else}
-      <button class="btn" type="button" on:click={browse}>Select a file</button>
+      <button class="info-line row" on:click={browse}>
+        <Icon name="file" size={12} />
+        <span class="info-v">Open a file</span>
+      </button>
     {/if}
   </InfoCard>
   </div>
@@ -226,7 +315,52 @@
     white-space: nowrap;
     border: 0;
   }
-  .btn {
-    align-self: flex-start;
+  /* Search, quiet until focused, the same height as a line. */
+  .find {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    height: var(--h);
+    margin-bottom: var(--space);
+    padding: 0 calc(var(--space) * 2);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border-radius: var(--radius);
+    color: var(--muted);
+  }
+  .find:focus-within {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text);
+  }
+  .find input {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    outline: none;
+    box-shadow: none !important;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+  }
+  .group {
+    margin-top: calc(var(--space) * 2);
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+  .find + .group {
+    margin-top: 0;
+  }
+  /* The folder a file is in, after its name. */
+  .dir {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    color: var(--muted);
+    font-size: var(--fs-xs);
   }
 </style>

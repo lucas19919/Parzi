@@ -293,6 +293,26 @@ pub struct GitStatus {
     pub removed: u32,
     pub last_subject: String,
     pub last_time: i64,
+    /// The changed and new files, relative to `top` (at most `CHANGED_MAX`).
+    pub files: Vec<String>,
+    /// The repository's root folder.
+    pub top: String,
+}
+
+/// How many changed files git status lists by name.
+const CHANGED_MAX: usize = 200;
+
+/// The path a porcelain v2 status line is about: the last field, which may
+/// hold spaces (a rename's line ends `path<TAB>old path`).
+fn status_path(line: &str) -> Option<&str> {
+    let path = match line.as_bytes().first()? {
+        b'1' => line.splitn(9, ' ').nth(8)?,
+        b'2' => line.splitn(10, ' ').nth(9)?.split('\t').next()?,
+        b'u' => line.splitn(11, ' ').nth(10)?,
+        b'?' => line.get(2..)?,
+        _ => return None,
+    };
+    (!path.is_empty() && !path.ends_with('/')).then_some(path)
 }
 
 fn sum_numstat(out: &str) -> (u32, u32) {
@@ -324,6 +344,11 @@ fn parse_git_status(out: &str) -> GitStatus {
         } else if line.starts_with("? ") {
             s.untracked += 1;
         }
+        if s.files.len() < CHANGED_MAX {
+            if let Some(path) = status_path(line) {
+                s.files.push(path.to_string());
+            }
+        }
     }
     s
 }
@@ -353,6 +378,9 @@ pub async fn git_status(
         return Ok(None);
     };
     let mut s = parse_git_status(&out);
+    if let Some(top) = git_out(&cwd, &["rev-parse", "--show-toplevel"]).await {
+        s.top = top.trim().to_string();
+    }
     if let Some(stat) = git_out(&cwd, &["diff", "HEAD", "--numstat"]).await {
         (s.added, s.removed) = sum_numstat(&stat);
     }
@@ -437,22 +465,57 @@ const READ_TEXT_MAX: u64 = 1_000_000;
 #[tauri::command]
 pub async fn read_text_file(state: State<'_, AppState>, path: String) -> Result<String, String> {
     let orch = state.orch.clone();
-    off_thread(move || {
-        let p = confined_path(orch.store(), &path)?;
-        let meta = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-        if !meta.is_file() {
-            return Err(format!("{} is not a file", p.display()));
-        }
-        if meta.len() > READ_TEXT_MAX {
-            return Err("That file is too large to open here".into());
-        }
-        let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
-        if bytes.contains(&0) {
-            return Err("That file isn't text".into());
-        }
-        String::from_utf8(bytes).map_err(|_| "That file isn't text".into())
-    })
-    .await
+    off_thread(move || read_text(&confined_path(orch.store(), &path)?)).await
+}
+
+/// A text file's contents, refusing what is too large or not text.
+fn read_text(p: &Path) -> Result<String, String> {
+    let meta = std::fs::metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file", p.display()));
+    }
+    if meta.len() > READ_TEXT_MAX {
+        return Err("That file is too large to open here".into());
+    }
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    if bytes.contains(&0) {
+        return Err("That file isn't text".into());
+    }
+    String::from_utf8(bytes).map_err(|_| "That file isn't text".into())
+}
+
+#[derive(serde::Serialize)]
+pub struct PickedFile {
+    path: String,
+    content: String,
+}
+
+/// Opens the system file picker and reads the file the person chose. Their
+/// choice is the permission, so it may be anywhere on this computer; the
+/// page never names the path itself.
+#[tauri::command]
+pub async fn pick_text_file(
+    app: AppHandle,
+    start: Option<String>,
+) -> Result<Option<PickedFile>, String> {
+    let mut builder = app.dialog().file().set_title("Open a file");
+    if let Some(dir) = start.filter(|s| plain_local(Path::new(s.trim()))) {
+        builder = builder.set_directory(dir.trim());
+    }
+    let (tx, rx) = oneshot::channel();
+    builder.pick_file(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let Some(picked) = rx.await.map_err(|_| "the file dialog closed".to_string())? else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    let shown = path.to_string_lossy().into_owned();
+    let content = off_thread(move || read_text(&path)).await?;
+    Ok(Some(PickedFile {
+        path: shown,
+        content,
+    }))
 }
 
 #[tauri::command]
@@ -958,6 +1021,11 @@ mod tests {
                 s.untracked
             ),
             ("main", true, 2, 1, 3, 2)
+        );
+        assert_eq!(
+            s.files,
+            ["src/a.rs", "b.rs", "c.rs", "notes.txt"],
+            "dirs are left out"
         );
         let fresh = parse_git_status("# branch.oid (initial)\n# branch.head (detached)\n");
         assert_eq!(

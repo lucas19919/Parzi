@@ -769,6 +769,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     putFile({ id: path, title, kind: "markdown", content, version: 1 }, at);
   }
 
+  /** An agent's ui.show_file: the file or brain note opens in that session's
+   *  File card. Errors go back to the agent rather than to a toast. */
+  async function showFileFor(session: string, path: string, note: boolean): Promise<{ text: string }> {
+    const at = session || group;
+    if (note) {
+      const content = await brain.read(path).catch(() => null);
+      if (content == null) throw new Error(`There is no note ${path} in the brain, and no file of that name in the session's folder.`);
+      const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
+      putFile({ id: path, title, kind: "markdown", content, version: 1 }, at);
+    } else {
+      putFile(diskDoc(path, await api.readTextFile(path)), at);
+    }
+    return { text: `${path} is open in the File card${at === group ? "" : "; the person sees it when they open this session"}.` };
+  }
+
   /** A linked file opens in the file card; one that isn't workspace text opens outside Parzi. */
   async function openFileInCard(path: string) {
     const at = group;
@@ -1721,6 +1736,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         case "type":
           result = typeControl(n("ref"), str("text"), call.enter === true);
           break;
+        case "show_file":
+          result = await showFileFor(str("session"), str("path"), call.note === true);
+          break;
         default:
           result = { ok: false, error: `unknown call ${String(call.kind)}` };
       }
@@ -2258,6 +2276,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
+  }
+  /* Buttons on glass are one surface with it: a faint wash of the text
+     colour that lets the picture through, no grey fill and no outline. */
+  :global(html[data-art-cards="glass"]) .over-art :global(.info .card .btn:not(.primary)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.files .card .btn:not(.primary)) {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border-color: transparent;
+  }
+  :global(html[data-art-cards="glass"]) .over-art :global(.info .card .btn:not(.primary):hover:not(:disabled)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--text) 14%, transparent);
+    border-color: transparent;
   }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the

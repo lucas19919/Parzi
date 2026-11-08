@@ -419,6 +419,15 @@ fn ui_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "ui.show_file".into(),
+            description: "Put a file in front of the person: it opens in the File card beside the conversation, markdown rendered. For something they should read now, such as a plan, a doc you wrote, or a file you are pointing at. path: an absolute path, a path relative to this session's folder, or a note in the brain (projects/parzi.md). Say in a sentence what it is; do not paste it into chat too. A file to keep that is not on disk yet is ui_show_artifact.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            }),
+        },
+        ToolDef {
             name: "ui.offer_replies".into(),
             description: "End a turn that leaves the person a decision with one to three reply buttons under your reply: a go-ahead, a choice between two ways, approve or not. Call it last, after your final text. Labels are one to four words (\"Release 0.1.36\", \"Not yet\"); your recommendation goes first. A click sends its message (or the label) as the person's reply. Optional question: the decision in one short line. Skip it when nothing waits on them, and never for questions you need answered mid-turn (that is ask.user).".into(),
             schema: serde_json::json!({
@@ -461,7 +470,7 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_artifact" | "ui.offer_replies" | "ui.propose_task" | "todo.write"
+        "ui.show_artifact" | "ui.show_file" | "ui.offer_replies" | "ui.propose_task" | "todo.write"
     )
 }
 
@@ -1417,6 +1426,10 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "brain.write" => format!(
             "Writing note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
+        ),
+        "ui.show_file" => format!(
+            "Showing {}",
+            one_line(&str_arg("path").unwrap_or_else(|| "a file".into()), 60)
         ),
         "ui.show_artifact" => format!(
             "Publishing {}",

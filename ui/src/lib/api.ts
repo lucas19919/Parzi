@@ -250,6 +250,8 @@ export const api = {
   artifactFrame: (html: string) => invoke<string>("artifact_frame", { html }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
+  /** The system file picker; the file the person picks is read, wherever it is. */
+  pickTextFile: (start?: string) => invoke<{ path: string; content: string } | null>("pick_text_file", { start: start || null }),
   toolImage: (session: string, path: string) => invoke<string>("tool_image", { session, path }),
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
@@ -332,6 +334,10 @@ export interface GitStatus {
   removed: number;
   last_subject: string;
   last_time: number;
+  /** Changed and new files, relative to `top`. */
+  files?: string[];
+  /** The repository's root folder. */
+  top?: string;
 }
 
 export interface NoteMeta {

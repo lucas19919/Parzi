@@ -54,6 +54,20 @@ pub struct ToolHost {
     names: CallNames,
 }
 
+/// What ui.show_file opens: an absolute path as it is, a path relative to
+/// the session's folder when that file exists, and otherwise a brain note by
+/// its vault path (the bool).
+fn show_target(cwd: &str, raw: &str) -> (String, bool) {
+    let here = std::path::Path::new(cwd).join(raw);
+    if std::path::Path::new(raw).is_absolute() {
+        (raw.to_string(), false)
+    } else if !cwd.is_empty() && here.is_file() {
+        (here.to_string_lossy().into_owned(), false)
+    } else {
+        (raw.replace('\\', "/"), true)
+    }
+}
+
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     let rel = relative_text(cwd, path)?;
     let root = std::fs::canonicalize(cwd).ok()?;
@@ -872,6 +886,9 @@ impl ToolHost {
         });
         let args = &args;
         let id = uuid::Uuid::new_v4().to_string();
+        if name == "ui.show_file" {
+            return self.show_file(args).await;
+        }
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
         }
@@ -1996,6 +2013,42 @@ impl ToolHost {
         }
     }
 
+    /// Opens a file or a brain note in the File card beside this session. It
+    /// only shows something to the person, so it asks no one; the window
+    /// reads project files through the same confinement as everything else.
+    async fn show_file(&self, args: &Value) -> (bool, String) {
+        let raw = args
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if raw.is_empty() {
+            return (false, "ui.show_file needs a path".into());
+        }
+        let (path, note) = show_target(&self.p.tools.cwd, raw);
+        let body = serde_json::json!({ "session": self.p.session_id, "path": path, "note": note });
+        match self.desk_call("app.show_file", body).await {
+            Ok(v) if v.get("ok").and_then(Value::as_bool) == Some(false) => (
+                false,
+                v.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the File card could not open it")
+                    .to_string(),
+            ),
+            Ok(v) => (
+                true,
+                v.pointer("/result/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("It is open in the File card.")
+                    .to_string(),
+            ),
+            Err(e) => (
+                false,
+                format!("The Parzi window is not open, so nothing can be shown: {e}"),
+            ),
+        }
+    }
+
     async fn desk_call(&self, op: &str, body: Value) -> std::result::Result<Value, String> {
         crate::desk::request(op, body).await.map_err(String::from)
     }
@@ -2447,6 +2500,23 @@ impl PermissionGate for ToolHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn show_file_opens_project_files_and_falls_back_to_brain_notes() {
+        let dir = std::env::temp_dir().join(format!("parzi-show-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/plan.md"), "# Plan").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+        let (path, note) = show_target(&cwd, "docs/plan.md");
+        assert!(!note && path.ends_with("plan.md") && std::path::Path::new(&path).is_absolute());
+        assert_eq!(
+            show_target(&cwd, "projects\\parzi.md"),
+            ("projects/parzi.md".to_string(), true)
+        );
+        let abs = dir.join("docs/plan.md").to_string_lossy().into_owned();
+        assert_eq!(show_target("", &abs), (abs.clone(), false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn vendor_tools_fall_into_the_right_categories() {
