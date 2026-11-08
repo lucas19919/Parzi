@@ -70,6 +70,11 @@
   --h: 28px;
   --h-row: 36px;
   --h-row-lg: 46px;
+  /* A field, toggle or button that sits in a settings row. */
+  --h-field: calc(var(--space) * 8);
+  /* The right-hand control column of a settings row, and a text field's width. */
+  --w-ctl: 190px;
+  --w-field: 280px;
 
   --z-pop: 600;
   --z-tip: 2000;
@@ -206,7 +211,7 @@ kbd {
 .tin::placeholder { color: var(--muted); }
 .tin:focus { border-color: var(--accent); box-shadow: none; }
 .tin.mono { font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-sm); }
-.tin.fixed { width: 190px; flex: none; }
+.tin.fixed { width: var(--w-ctl); flex: none; }
 
 /* Text roles. Position gives hierarchy, so page and section titles match. */
 .t-page, .t-section { font-size: var(--fs-base); font-weight: 600; color: var(--text); }

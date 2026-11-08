@@ -404,48 +404,120 @@
 {/if}
 
 <style>
+  /* An agent that is off dims its name, not its switch. */
   .rows.off .row:first-child > :not(.row-ctl) {
     opacity: 0.55;
   }
-  .waiting { font-size: var(--fs-md); color: var(--muted); white-space: nowrap; }
+  .waiting {
+    color: var(--muted);
+    font-size: var(--fs-md);
+    white-space: nowrap;
+  }
+  .row-label.bad {
+    color: var(--bad-text);
+  }
+  .row-label.keyed {
+    color: var(--warn);
+  }
+  .tin.key {
+    flex: 1;
+    min-width: 0;
+  }
 
-  /* Hairline progress strip between rows while a provider sets up. */
-  .rows > .bar { margin: 0; }
-  .progress { display: block; height: 3px; background: var(--line); overflow: hidden; }
+  /* ── Setup progress: a hairline strip between rows ── */
+
+  .rows > .bar {
+    margin: 0;
+  }
+  .progress {
+    display: block;
+    height: 3px;
+    overflow: hidden;
+    background: var(--line);
+  }
   .progress > span {
-    display: block; height: 100%; width: 100%; background: var(--accent);
-    transform-origin: left; animation: fill var(--eta) linear forwards;
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: var(--accent);
+    transform-origin: left;
+    animation: fill var(--eta) linear forwards;
   }
-  .progress.sweep > span { width: 30%; animation: sweep 1.4s ease-in-out infinite; }
-  @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  .progress.sweep > span {
+    width: 30%;
+    animation: sweep 1.4s ease-in-out infinite;
+  }
+  @keyframes fill {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .progress > span, .progress.sweep > span { animation: none; }
+    .progress > span,
+    .progress.sweep > span {
+      animation: none;
+    }
   }
 
-  .usage-label { width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row-label.bad { color: var(--bad-text); }
-  .row-label.keyed { color: var(--warn); }
-  .tin.key { flex: 1; min-width: 0; height: calc(var(--space) * 8); }
-  .usage-bar { flex: 1; min-width: 40px; height: 5px; border-radius: var(--radius-sm); background: var(--line); overflow: hidden; }
-  .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-sm); }
-  .usage-fill.hot { background: var(--warn); }
-  .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
-  .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
+  /* ── Usage: label, bar, percent, reset ── */
 
-  /* Program/Command fields always visible; same 32px inputs as theme cards. */
-  .details .tin,
-  .details .btn {
-    height: calc(var(--space) * 8);
+  .usage-label {
+    flex: none;
+    width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  /* One textbox width everywhere so rows stop bouncing. */
+  .usage-bar {
+    flex: 1;
+    min-width: 40px;
+    height: 5px;
+    overflow: hidden;
+    background: var(--line);
+    border-radius: var(--radius-sm);
+  }
+  .usage-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--radius-sm);
+  }
+  .usage-fill.hot {
+    background: var(--warn);
+  }
+  .usage-num {
+    flex: none;
+    width: 34px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .usage-reset {
+    flex: none;
+    color: var(--muted);
+    font-size: var(--fs-md);
+  }
+
+  /* ── Custom agent: program and command fields ── */
+
+  /* One field width, so rows do not bounce; labels take the slack. */
   .rows > .details > .row > input.tin.mono,
   .rows > .details > .row > input.tin.fixed {
     flex: none;
-    width: 280px;
+    width: var(--w-field);
     max-width: 100%;
   }
-  /* Labels take the slack so inputs sit right-aligned. */
   .rows > .details > div.row.prog,
   .rows > .details > label.row.prog {
     justify-content: flex-start;

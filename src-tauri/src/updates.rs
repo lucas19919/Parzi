@@ -53,8 +53,14 @@ pub async fn update_check(
         version: u.version.clone(),
         body: u.body.clone(),
     });
-    *state.pending.lock().map_err(|e| e.to_string())? = found;
-    *state.bytes.lock().map_err(|e| e.to_string())? = None;
+    let mut pending = state.pending.lock().map_err(|e| e.to_string())?;
+    // A later look that finds the same build keeps the download it has, so
+    // regular checks never undo a ready update.
+    let same = pending.as_ref().map(|u| &u.version) == found.as_ref().map(|u| &u.version);
+    if !same {
+        *state.bytes.lock().map_err(|e| e.to_string())? = None;
+    }
+    *pending = found;
     Ok(info)
 }
 

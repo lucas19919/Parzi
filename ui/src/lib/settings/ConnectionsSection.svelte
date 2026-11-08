@@ -538,6 +538,7 @@
   .conn {
     border-top: 1px solid var(--line);
   }
+  /* A connector that is off dims, its switch does not. */
   .conn.off .row-main {
     opacity: 0.55;
   }
@@ -554,12 +555,29 @@
   .st-bad {
     color: var(--bad-text);
   }
-  .tiles {
+  /* The last error a connector gave, scrollable. */
+  .fail {
     flex: 1;
     min-width: 0;
+    max-height: 160px;
+    margin: 0;
+    overflow: auto;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Catalog: a tile per connector to add ── */
+
+  .tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--w-field), 1fr));
     gap: calc(var(--space) * 2);
+    flex: 1;
+    min-width: 0;
   }
   .tile {
     display: flex;
@@ -585,8 +603,8 @@
     cursor: default;
   }
   .tile-text {
-    flex: 1;
     display: flex;
+    flex: 1;
     flex-direction: column;
     min-width: 0;
   }
@@ -594,18 +612,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .fail {
-    flex: 1;
-    min-width: 0;
-    max-height: 160px;
-    margin: 0;
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: var(--fs-sm);
-    line-height: 1.5;
   }
 </style>

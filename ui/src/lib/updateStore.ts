@@ -40,26 +40,55 @@ let scheduled = false;
 let pending: PendingUpdate | null = null;
 let downloading = false;
 let readyVersion = "";
+let lastCheck = 0;
+let failures = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-const CHECK_EVERY = 6 * 3600 * 1000;
+/** How often a running Parzi looks for a new build. */
+export const CHECK_EVERY = 30 * 60 * 1000;
+/** Coming back to the window looks again if the last look is this old. */
+export const FOCUS_AFTER = 10 * 60 * 1000;
 
-// A found update does not survive a restart, so every launch looks again.
+/** After a failed look, when to try again: soon at first, then less often,
+ *  so a launch before the network is up still finds the update. */
+export function retryIn(failures: number): number {
+  const minutes = [1, 3, 10, 30][Math.min(Math.max(failures, 1), 4) - 1];
+  return minutes * 60 * 1000;
+}
+
+// Looks a few seconds after launch, every half hour while Parzi runs, and
+// when the window comes back after a while, so the indicator appears soon
+// after a build is out, not only after a look by hand.
 export function checkForUpdatesSoon(ms = 12000) {
   if (scheduled) return;
   scheduled = true;
   setTimeout(() => void check(false), ms);
   setInterval(() => void check(false), CHECK_EVERY);
+  window.addEventListener("focus", () => {
+    if (Date.now() - lastCheck > FOCUS_AFTER) void check(false);
+  });
 }
 
+/** Looks for a newer build. `force` is a look by hand: it shows what it is
+ *  doing and any error. A background look stays quiet and retries on its
+ *  own, and keeps a downloaded update ready unless a newer one is out. */
 export async function check(force = false) {
   if (downloading) return;
-  if (!force && get(updateState) === "ready") return;
-  updateState.set("checking");
+  lastCheck = Date.now();
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  const wasReady = get(updateState) === "ready";
+  if (force) updateState.set("checking");
   try {
     const u: PendingUpdate | null = await api.updateCheck(get(devChannel));
+    failures = 0;
     if (!u) {
-      updateState.set("uptodate");
-      updateMsg.set(get(devChannel) ? "You're on the latest dev build." : "You're on the latest version.");
+      if (force || !wasReady) {
+        updateState.set("uptodate");
+        updateMsg.set(get(devChannel) ? "You're on the latest dev build." : "You're on the latest version.");
+      }
       return;
     }
     if (u.version === readyVersion) {
@@ -73,8 +102,12 @@ export async function check(force = false) {
     updateMsg.set(`v${u.version} is available, downloading in the background…`);
     void downloadInBackground();
   } catch (e) {
-    updateState.set("error");
-    updateMsg.set(`Update check failed (${e}). Dev builds check nothing: install from a release to update.`);
+    failures += 1;
+    if (force) {
+      updateState.set("error");
+      updateMsg.set(`Update check failed (${e}). Dev builds check nothing: install from a release to update.`);
+    }
+    retryTimer = setTimeout(() => void check(false), retryIn(failures));
   }
 }
 
@@ -103,6 +136,9 @@ async function downloadInBackground() {
     downloading = false;
     updateState.set("error");
     updateMsg.set(`Download failed: ${e}`);
+    // Try again on its own: a dropped connection should not cost the update.
+    failures += 1;
+    retryTimer = setTimeout(() => void check(false), retryIn(failures));
   }
 }
 

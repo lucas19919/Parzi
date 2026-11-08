@@ -227,12 +227,21 @@
 </div>
 
 <style>
+  .progress-text {
+    flex: none;
+    color: var(--muted);
+    font-size: var(--fs-md);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Browser: sites with a remembered permission ── */
+
   .row.sites {
     flex-wrap: wrap;
   }
   .row.sites .site-list {
-    flex: 1 1 100%;
     display: flex;
+    flex: 1 1 100%;
     flex-direction: column;
     margin: var(--space) 0 0;
     padding: 0;
@@ -242,7 +251,7 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
-    min-height: 32px;
+    min-height: var(--h-field);
     padding: 0 var(--space) 0 calc(var(--space) * 2);
     border-radius: var(--radius);
     font-size: var(--fs-md);
@@ -271,12 +280,12 @@
     color: var(--text);
   }
   .forget {
-    flex: none;
-    width: 24px;
-    height: 24px;
     display: inline-flex;
+    flex: none;
     align-items: center;
     justify-content: center;
+    width: 24px;
+    height: 24px;
     padding: 0;
     background: none;
     border: none;
@@ -287,11 +296,5 @@
   .forget:hover {
     background: var(--selected);
     color: var(--text);
-  }
-  .progress-text {
-    flex: none;
-    font-size: var(--fs-md);
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
   }
 </style>

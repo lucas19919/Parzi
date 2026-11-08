@@ -15,7 +15,6 @@
   import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
-  import HomeArt from "./lib/HomeArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
@@ -359,17 +358,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
-  // Full window: Home's stage is a card showing the picture, over a blurred
-  // surround (HomeArt and DefaultArt).
-  let artFull = false;
-  $: homeArt = showWallpaper && !!bg && artFull;
-  onMount(() => {
-    const sync = () => (artFull = document.documentElement.dataset.artFill === "full");
-    sync();
-    const watch = new MutationObserver(sync);
-    watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-art-fill"] });
-    return () => watch.disconnect();
-  });
 
   function clearCover() {
     cover = null;
@@ -1984,11 +1972,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         />
       {/key}
     {:else}
-      {#if tab.kind === "session" && (hasSession || infoShown || coverOn || homeArt)}
+      {#if tab.kind === "session" && (hasSession || infoShown || coverOn)}
         <div class="stagerow" class:solo={!hasSession && !coverOn} out:fade|local={{ duration: motion.duration }}>
-          {#if homeArt}
-            <HomeArt {bg} />
-          {/if}
           {#if hasSession || coverOn}
           <section class="session" out:fade|local={{ duration: motion.duration }}>
             {#if coverOn || parent}
@@ -2256,41 +2241,23 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     border-radius: 0;
   }
   /* Cards over the wallpaper on Home (the side column, the File card and the
-     composer): clear (outlined, the default), glass
-     (frosted) or solid (the panel colour), as set in Appearance. Only here:
-     everywhere else surfaces stay solid. */
+     composer): clear (outlined, the default), glass (frosted, no outline:
+     the frost is the edge) or solid (the panel colour), as set in
+     Appearance. Only here: everywhere else surfaces stay solid. */
   .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     transition:
       background var(--dur) ease,
+      border-color var(--dur) ease,
       backdrop-filter var(--dur) ease;
   }
   :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: color-mix(in srgb, var(--panel) 52%, transparent);
+    border-color: transparent;
     -webkit-backdrop-filter: blur(18px) saturate(1.2);
     backdrop-filter: blur(18px) saturate(1.2);
   }
-  /* A light theme's glass holds more of its own colour, so dark parts of
-     the picture do not turn it grey. */
-  :global(html[data-tone="light"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
-    background: color-mix(in srgb, var(--panel) 68%, transparent);
-  }
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
-  }
-  /* The composer and its line sit on the sharp picture: grey does not read
-     on a photo, so muted text there uses near full text colour. */
-  .over-art :global(.ob) {
-    --muted: color-mix(in srgb, var(--text) 90%, var(--bg));
-    --faint: color-mix(in srgb, var(--text) 70%, var(--bg));
-  }
-  /* The line above the composer sits on the picture in full window: a tight
-     shadow in the page colour lifts it off light and dark parts alike. */
-  :global(html[data-art-fill="full"]) .over-art :global(.ob .where) {
-    text-shadow:
-      0 0 1px color-mix(in srgb, var(--bg) 95%, transparent),
-      0 1px 2px color-mix(in srgb, var(--bg) 90%, transparent),
-      0 0 6px color-mix(in srgb, var(--bg) 75%, transparent),
-      0 0 14px color-mix(in srgb, var(--bg) 50%, transparent);
   }
   /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
      the open tab, the side-column toggles when on, and either under the
@@ -2306,6 +2273,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .over-art :global(.tabs .tab:hover:not(.active)),
   .over-art :global(.panel-btn:hover:not(.active)) {
     background: color-mix(in srgb, var(--panel) 38%, transparent);
+  }
+  /* Glass tabs drop the ring like glass cards; a touch of the text colour in
+     the frost keeps the open one visible as a pill on any picture. */
+  :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:is(.active, :hover)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:is(.active, :hover)) {
+    background: color-mix(in srgb, var(--text) 12%, color-mix(in srgb, var(--panel) 45%, transparent));
+    border-color: transparent;
+  }
+  :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:hover:not(.active)),
+  :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:hover:not(.active)) {
+    background: color-mix(in srgb, var(--text) 7%, color-mix(in srgb, var(--panel) 30%, transparent));
   }
   :global(html[data-art-cards="solid"]) .over-art :global(.tabs .tab:is(.active, :hover)),
   :global(html[data-art-cards="solid"]) .over-art :global(.panel-btn:is(.active, :hover)) {
