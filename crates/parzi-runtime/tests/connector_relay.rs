@@ -75,6 +75,16 @@ async fn call(a: &Agent, name: &str, args: Value) -> Value {
         .clone()
 }
 
+/// Lists the connectors once, waiting as long as a cold machine needs, so a
+/// test about relaying tools does not race the two-second first-turn budget
+/// (the slow-connector test covers that budget).
+async fn warm(orch: &parzi_runtime::Orchestrator) {
+    let _ = orch
+        .mcp()
+        .session_tools(std::time::Duration::from_secs(30))
+        .await;
+}
+
 #[tokio::test]
 async fn an_agent_lists_and_calls_a_connector_through_parzi() {
     if !have_node() {
@@ -111,6 +121,7 @@ async fn an_agent_lists_and_calls_a_connector_through_parzi() {
         }),
     );
     let (orch, store) = orch_with(config("fake", connector(0)), &[fake]);
+    warm(&orch).await;
     let (meta, _rx) = orch
         .spawn("t", "claude", "go", None, "", "low", vec![], None)
         .await
@@ -199,6 +210,7 @@ async fn each_tool_keeps_its_own_choice() {
         seen: Mutex::default(),
     });
     let (orch, store) = orch_with(config("modes", srv), &[fake]);
+    warm(&orch).await;
     let (meta, _rx) = orch
         .spawn(
             "t",
