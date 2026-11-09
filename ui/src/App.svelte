@@ -42,6 +42,7 @@
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
+  import { freshNotice, notifyLevel, notifySounds } from "./lib/notifyPrefs";
   import { effortsFor, nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
@@ -444,12 +445,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } catch {}
   }
 
-  function toggleFiles(open = !fileOpen) {
+  function toggleFiles(open = !fileOpen, byHand = true) {
     fileOpen = open;
     try {
       localStorage.setItem("parzi.file.open", open ? "1" : "0");
     } catch {}
-    if (open && innerWidth < 900) toast("Widen the window to see the file");
+    if (open && byHand && innerWidth < 900) toast("Widen the window to see the file");
   }
 
   function resizeFile(e: { detail: { width: number } }) {
@@ -779,7 +780,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const next = { ...doc, version };
     if (at) sessionDocs = { ...sessionDocs, [at]: next };
     else looseDoc = next;
-    toggleFiles(true);
+    toggleFiles(true, false);
   }
 
   async function pinNote(path: string) {
@@ -1020,7 +1021,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (sendingTabs.has(target.id)) return;
-    if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
+    if (target.sessionId && otherAgent && freshNotice("app", "agent-switch")) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sendingTabs = new Set(sendingTabs).add(target.id);
     if (!fresh && target.sessionId) {
@@ -1556,39 +1557,65 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
 
-  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; chime?: boolean } = {}) {
-    if (session === shown && tab.kind === "session" && document.hasFocus()) return;
+  /** Tells the person about an agent they are not looking at, as much as
+   *  Settings, General, Notifications allows:
+   *  - "needs": an approval, question or request. A card line, a toast that
+   *    goes once it is answered, and a short tone if they are elsewhere.
+   *  - "done": a run finished. A quiet card line; a toast and tone only on
+   *    "all", and the tone only while the window is in the background.
+   *  - "problem": an error or a spending pause. A card line and a toast.
+   *  A subagent's finish or error is news for the agent that started it,
+   *  not the person, unless they asked for everything. A toast never shows
+   *  while the window is in the background: it would be gone before they
+   *  look, and the card keeps it. */
+  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; news: "needs" | "done" | "problem" }) {
+    const focused = document.hasFocus();
+    if (session === shown && tab.kind === "session" && focused) return;
+    const level = $notifyLevel;
+    const child = threads.some((t) => t.id === session && t.parent_id);
+    if (child && opts.news !== "needs" && level !== "all") return;
     const title = titleOf(session);
+    const key = opts.key ?? newsKey(session);
+    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key });
+    if (level === "off") return;
+    const toastIt = level === "all" || opts.news !== "done";
     // The card shows it when the column is open; a toast would say it twice.
-    if (!infoShown) notify(`${title} ${what}`, session);
-    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key: opts.key ?? newsKey(session) });
-    if (opts.chime !== undefined) chime(opts.chime);
+    if (toastIt && focused && !infoShown) keyedToast(key, `${title} ${what}`, { session, ms: opts.news === "needs" ? 10000 : 6000 });
+    if (!$notifySounds) return;
+    if (opts.news === "needs") chime(false);
+    else if (level === "all" && !focused) chime(opts.news === "done");
   }
 
   function settle(key: string) {
+    keyedToast(key, null);
     approvals = approvals.filter((a) => a.key !== key);
     questions = questions.filter((q) => q.key !== key);
     requests = requests.filter((r) => r.key !== key);
     dropNotification(key);
   }
 
+  const stopped = (error: string) => {
+    const t = (error ?? "").trim().toLowerCase();
+    return !!t && t.length <= 100 && (t.includes("cancelled") || t.includes("canceled"));
+  };
+
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
       const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
-      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, chime: false });
+      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options, details: e.details, multi: e.multi }];
-      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, chime: false });
+      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "request") {
       const fresh = !requests.some((r) => r.key === e.key);
       requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
-      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, chime: false });
+      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "expired") {
@@ -1614,9 +1641,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
       if (next) void sendHeld(e.session);
       const isChild = threads.some((t) => t.id === e.session && t.parent_id);
-      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { chime: false });
-      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { chime: true });
-      else announce(e.session, "stopped with an error", "error", { chime: false });
+      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { news: "problem" });
+      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { news: "done" });
+      // A stop someone asked for (the person, or a parent agent) is not an error.
+      else if (!stopped(e.error)) announce(e.session, "stopped with an error", "error", { news: "problem" });
       return;
     }
     if (!running.has(e.session) && e.kind !== "context") {
@@ -1659,7 +1687,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (e.kind === "context") {
       context = { used: e.used, limit: e.limit };
     } else if (e.kind === "notice") {
-      toast(e.text);
+      if ($notifyLevel !== "off" && freshNotice(e.session, e.text)) toast(e.text);
     }
   }
 
@@ -1737,8 +1765,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         .catch((e) => toast(`Couldn't load the new theme: ${e}`, true));
     }
     else if (cmd.op === "notify" && cmd.text) {
-      notify(cmd.text, cmd.session ?? "");
-      chime(true);
+      // An agent's own heads-up: at most one a minute per session, quiet on
+      // "off", and no tone while the person is looking at that session.
+      const sid = cmd.session ?? "";
+      if ($notifyLevel !== "off" && freshNotice(`notify:${sid}`, "", Date.now(), 60_000)) {
+        notify(cmd.text, sid);
+        const watching = document.hasFocus() && sid === shown && tab.kind === "session";
+        if ($notifySounds && !watching) chime(true);
+      }
     } else if (cmd.op === "approval" && cmd.key) {
       approvals = approvals.filter((a) => a.key !== cmd.key);
       if (cmd.label) toast(`${cmd.allow ? "Allowed" : "Denied"} from the command line: ${cmd.label}`);
@@ -1928,9 +1962,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       })
       .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
     void loadRemoteInfo().catch(() => {});
+    let remoteDown = false;
     const unRemote = onRemoteStatus((s) => {
       if (s.state === "updating" || s.state === "ready") toast(s.detail);
-      else if (s.state === "error") toast(s.detail, true);
+      // Sync retries every two minutes and after each run: say a failure
+      // once, until the remote comes back.
+      else if (s.state === "error") {
+        if (!remoteDown) toast(s.detail, true);
+        remoteDown = true;
+      }
+      if (s.state === "up" || s.state === "synced" || s.state === "ready") remoteDown = false;
       if (s.state === "up" || s.state === "resync" || s.state === "ready") {
         void refreshThreads();
         if (remoteOn) void refreshRemoteBoard().catch(() => {});

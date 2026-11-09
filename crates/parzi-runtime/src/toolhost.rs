@@ -1378,15 +1378,10 @@ impl ToolHost {
             }
             _ => return (false, format!("unknown session tool `{name}`")),
         };
+        // No toast for a spawn or a message to a subagent: the step already
+        // shows in the thread, and a toast per subagent was noise.
         match out {
-            Ok(text) => {
-                if matches!(name, "session.spawn" | "session.send") {
-                    self.p.sink.emit(RunEvent::Notice {
-                        text: text.chars().take(240).collect(),
-                    });
-                }
-                (true, text)
-            }
+            Ok(text) => (true, text),
             Err(e) => (false, e.to_string()),
         }
     }
