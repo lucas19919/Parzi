@@ -409,8 +409,8 @@
         </div>
       </div>
       <div class="row ctl-row">
-        <span class="row-label">Cards on Home</span>
-        <SegControl label="Cards on Home" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
+        <span class="row-label">Cards</span>
+        <SegControl label="Cards" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
       </div>
       {#if theme.background.image}
         <div class="row ctl-row">

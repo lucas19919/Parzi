@@ -897,8 +897,10 @@
     flex-direction: column;
     gap: calc(var(--space) * 3);
     padding: calc(var(--space) * 3);
-    background: none;
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
     box-shadow: none;
   }

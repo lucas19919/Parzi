@@ -49,12 +49,12 @@ fn an_agent_can_switch_the_theme_and_set_the_look() {
     let done = ask(serde_json::json!({"pack": "graphite", "accent": "#5b8def", "cards": "Solid"}))
         .unwrap();
     assert!(
-        done.contains("the graphite theme, accent #5B8DEF, solid cards on Home"),
+        done.contains("the graphite theme, accent #5B8DEF, solid cards"),
         "{done}"
     );
     assert!(
         !done.contains("no wallpaper yet"),
-        "cards apply on Home without a wallpaper: {done}"
+        "cards apply without a wallpaper: {done}"
     );
     let t = Theme::load().unwrap();
     assert_eq!(t.colors.accent, "#5B8DEF");
