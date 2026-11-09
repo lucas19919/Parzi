@@ -39,7 +39,7 @@
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
-  import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
+  import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { freshNotice, notifyLevel, notifySounds } from "./lib/notifyPrefs";
@@ -288,6 +288,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: mode = comp.mode;
   $: model = comp.model;
   $: streaming = !!shown && running.has(shown);
+  // Subagents of the session on screen that are still at work, with the
+  // step each is on, for the activity in its thread.
+  $: needsYou = new Set([...approvals, ...questions, ...requests].map((x) => x.session));
+  $: liveHelpers = shown
+    ? threads
+        .filter((t) => t.parent_id === shown && (running.has(t.id) || needsYou.has(t.id)))
+        .map((t) => ({ id: t.id, title: t.title || "Untitled", need: needsYou.has(t.id), step: $activity.get(t.id)?.label ?? "" }))
+    : [];
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -545,6 +553,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     cancelAnimationFrame(revealing);
     revealing = 0;
     revealAt = 0;
+    thinking = false;
     pending = "";
     live = "";
     liveReasoning = "";
@@ -1542,6 +1551,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   // not frames: at least 600 characters a second, faster when behind so the
   // backlog clears in about a tenth of a second. Same speed at 60 or 120Hz.
   let revealAt = 0;
+  let thinking = false;
   function revealLive(now: number) {
     revealing = 0;
     if (!pending) return;
@@ -1654,15 +1664,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
+      thinking = false;
       pending += e.text;
       if (!revealing) revealing = requestAnimationFrame(revealLive);
     } else if (e.kind === "reasoning") {
+      // A new spell of thinking after a step or after narration starts its
+      // own paragraph instead of running on from the last sentence.
+      if (!thinking && liveReasoning) liveReasoning += "\n\n";
+      thinking = true;
       liveReasoning += e.text;
     } else if (e.kind === "todo") {
       liveTodo = e.todo;
     } else if (e.kind === "artifact") {
       liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
     } else if (e.kind === "tool_call") {
+      thinking = false;
       // What the agent said before a step is narration ("I'll check the
       // plan..."), not its reply: it joins the folded working, and the reply
       // starts again after the step. Cards and reply buttons come after the
@@ -1671,6 +1687,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       const keeps = e.name.startsWith("ui.") || /^todo[._]?write$/i.test(e.name);
       if (said && !keeps) {
         liveReasoning = liveReasoning ? `${liveReasoning}\n\n${said}` : said;
+        thinking = false;
         live = "";
         pending = "";
       } else if (said) {
@@ -2123,6 +2140,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   {liveArtifacts}
                   bind:todo={threadTodo}
                   {liveTools}
+                  {liveHelpers}
                   {approval}
                   question={openQuestion}
                   request={openRequest}

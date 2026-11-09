@@ -70,6 +70,8 @@ const sessions = [
   }),
   session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }) }),
   session("s2", "Lets test something", 3 * MIN, { status: "active", model: "codex/gpt-5" }),
+  session("s1a", "Time autosize on long drafts", 2 * MIN, { parent_id: "s1", model: "codex/gpt-5" }),
+  session("s1b", "Check the other textareas", 5 * MIN, { parent_id: "s1", last_run: outcome({ summary: "Both other textareas measure once per frame already; nothing to change.", ended: now - 4 * MIN }) }),
   session("s6", "Trim the old panel tabs", 4 * MIN, { status: "active", parent_id: "s3", model: "codex/gpt-5" }),
   session("s5", "Badges from gh pr list", 90 * MIN, {
     plan_item: "prs",

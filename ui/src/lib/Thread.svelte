@@ -19,6 +19,7 @@
   import { viewImage } from "./imageViewer";
   import ReplyButtons from "./ReplyButtons.svelte";
   import TaskCard from "./TaskCard.svelte";
+  import LiveActivity from "./LiveActivity.svelte";
   import TodoList from "./TodoList.svelte";
   import { dockedTodos, setTodoDocked } from "./todoDock";
   import QuestionCard from "./QuestionCard.svelte";
@@ -43,6 +44,7 @@
   export let liveText = "";
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
+  export let liveHelpers: { id: string; title: string; need: boolean; step: string }[] = [];
   export let streaming = false;
   export let session = "";
   export let liveTodo: unknown = null;
@@ -265,8 +267,13 @@
                 ? "Working…"
                 : "Starting…";
   $: activeTask = (((todo ?? {}) as { items?: { title: string; state: string }[] }).items ?? []).find((i) => i.state === "active")?.title ?? "";
+  // The step already shows in the activity above, so the line does not
+  // repeat it; it keeps the time, the tokens and what needs the person.
+  $: stepsShown = streaming && !!folds.live && !openFolds.has(folds.live.key) && (liveTools.length > 0 || !!liveSaid);
+  // Subagents still at work show even once this session's own turn is over.
+  $: activityShown = stepsShown || liveHelpers.length > 0;
   $: lineText =
-    status && (approval || question || request || running.length)
+    status && (approval || question || request || (running.length && !stepsShown))
       ? status
       : activeTask
         ? `${activeTask}…`
@@ -275,6 +282,11 @@
           : status || "Working…";
   $: lineTokens = Math.round((liveText.length + liveReasoning.length) / 4);
   $: showLiveSteps = !!liveReasoning || liveTools.length > 0;
+  // The last thing the agent said or thought while working, one short line.
+  $: liveSaid = (() => {
+    const last = liveReasoning.trim().split(/\n\s*\n/).pop()?.replace(/\s+/g, " ").trim() ?? "";
+    return last.length > 220 ? `${last.slice(0, 220)}…` : last;
+  })();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
   $: tailIdx = liveSegs.map((s) => s.kind).lastIndexOf("md");
   // Only the block being written is rendered again each frame; the page
@@ -760,6 +772,12 @@ ${e.text}` : e.text;
     </button>
   {/if}
   
+  {#if activityShown}
+    <div transition:fade|local={spring}>
+      <LiveActivity tools={stepsShown ? liveTools : []} said={stepsShown ? liveSaid : ""} helpers={liveHelpers} on:open={(e) => dispatch("openSession", e.detail)} />
+    </div>
+  {/if}
+
   {#if showLiveSteps && folds.live && openFolds.has(folds.live.key)}
     <div class="in-fold" transition:fade|local={spring}>
       <Steps reasoning={liveReasoning} tools={liveTools} />

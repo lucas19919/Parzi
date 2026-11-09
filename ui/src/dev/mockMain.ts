@@ -164,9 +164,25 @@ if (new URLSearchParams(location.search).get("stream")) {
   (window as unknown as { __stream: Promise<void> }).__stream = (async () => {
     await new Promise((r) => setTimeout(r, 400));
     await burst(first);
-    await emit("parzi://run-event", { kind: "tool_call", session: sid, id: "st1", name: "Read", label: "Reading ui/src/lib/autosize.ts" });
-    await new Promise((r) => setTimeout(r, 300));
-    await emit("parzi://run-event", { kind: "tool_result", session: sid, id: "st1", name: "Read", ok: true, ms: 300 });
+    const step = async (id: string, name: string, label: string, ms: number, ok = true) => {
+      await emit("parzi://run-event", { kind: "tool_call", session: sid, id, name, label });
+      await new Promise((r) => setTimeout(r, ms));
+      await emit("parzi://run-event", { kind: "tool_result", session: sid, id, name, ok, ms });
+    };
+    // A subagent works alongside, so its row shows in the thread and the
+    // Running card with the step it is on.
+    const sub = async (label: string, n: number) => emit("parzi://run-event", { kind: "tool_call", session: "s1a", id: `sa${n}`, name: "Bash", label });
+    await emit("parzi://run-event", { kind: "tool_call", session: sid, id: "st0", name: "session.spawn", label: "Starting a subagent: Time autosize on long drafts" });
+    await emit("parzi://run-event", { kind: "tool_result", session: sid, id: "st0", name: "session.spawn", ok: true, ms: 120 });
+    await sub("Writing a 300-line draft", 1);
+    setTimeout(() => void sub("Running the timing script", 2), 1600);
+    setTimeout(() => void emit("parzi://run-event", { kind: "done", session: "s1a" }), 5200);
+    await step("st1", "Read", "Reading ui/src/lib/autosize.ts", 500);
+    await emit("parzi://run-event", { kind: "reasoning", session: sid, text: "It measures scrollHeight on every input event, so long drafts force a layout per key." });
+    await step("st2", "Grep", "Searching for autosize callers", 700);
+    await step("st3", "Bash", "Running npm test", 1400);
+    await burst("Found it: the measure runs on every key.");
+    await step("st4", "Edit", "Editing ui/src/lib/autosize.ts", 600);
     await burst(reply);
     await new Promise((r) => setTimeout(r, 300));
     (globalThis as { __mockSaved?: unknown[] }).__mockSaved = [

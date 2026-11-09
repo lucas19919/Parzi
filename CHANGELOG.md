@@ -6,6 +6,8 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- You can follow an agent without opening anything: while it works, the thread shows the last thing it said or thought and its latest steps as they run, with a spinner, a tick or a cross and how long each took. It folds into "Worked for…" when the turn ends.
+- Subagents show where you are working: the ones still running appear in the thread with the step each is on (click to open), even after the parent's own turn ends, and the Running card says what each is doing, or what it reported when it finished.
 - Notifications are much quieter. Settings, General, Notifications sets how much Parzi tells you: Everything, When needed (the default: approvals, questions, requests and problems) or Nothing, plus a sound only when an agent needs you. Finished runs go quietly to the Notifications card; subagents no longer announce finishing or every spawn; a stop you asked for is not reported as an error; an approval's toast goes once you answer it; a repeated notice (a retry, a hook warning) shows once in ten minutes; a failing remote sync is said once, not every two minutes; and no toast pops up while the window is in the background.
 - Replies stream smoothly: only the paragraph, list, table or code block being written changes, so earlier text no longer flickers or loses your selection while the agent writes. Text comes in at an even pace, a long code block stays open until it is finished, words after a card start a new paragraph, scrolling up mid-reply lets go of the bottom at once, and the end of a turn no longer shifts or dims the reply.
 - The card style on Home (Clear, Glass or Solid, in Settings, Appearance) works with or without a wallpaper.
