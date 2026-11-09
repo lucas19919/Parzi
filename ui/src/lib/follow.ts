@@ -1,4 +1,3 @@
-
 export interface Follower {
   attach: (node: HTMLElement) => { destroy: () => void };
   toBottom: (smooth?: boolean) => void;
@@ -60,11 +59,18 @@ export function follower(onChange?: (holding: boolean) => void): Follower {
       else if (gap() <= NEAR) set(true);
       lastTop = top;
     };
+    // Reaching back up lets go at once. Waiting for the scroll event is not
+    // enough: a reply growing in between pins the view back to the bottom
+    // and swallows the first notches of the wheel.
+    const UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
     const takeOver = (e: Event) => {
-      if (!glide) return;
-      if (e instanceof WheelEvent && e.deltaY >= 0) return;
-      cancelAnimationFrame(glide);
-      glide = 0;
+      const up = e instanceof WheelEvent ? e.deltaY < 0 : e instanceof KeyboardEvent && UP_KEYS.has(e.key);
+      if (!up) return;
+      if (glide) {
+        cancelAnimationFrame(glide);
+        glide = 0;
+      }
+      if (gap() > 0 || el?.scrollTop) set(false);
     };
     const grew = () => {
       if (hold && !glide) pin();

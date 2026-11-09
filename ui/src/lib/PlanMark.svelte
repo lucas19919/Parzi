@@ -60,11 +60,6 @@
   .mark.dropped {
     border-color: var(--line);
   }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
   @media (prefers-reduced-motion: reduce) {
     .mark.working {
       animation: none;

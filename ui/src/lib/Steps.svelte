@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { SLIDE } from "./motion";
+  import { duration } from "./format";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
@@ -9,7 +10,6 @@
   export let reasoning = "";
   export let tools: Step[] = [];
   export let title = "";
-  export let status = "";
 
   let open = false;
   let shown = new Set<string>();
@@ -18,36 +18,6 @@
   $: total = tools.reduce((sum, t) => sum + (t.ms ?? 0), 0);
   $: summary = title || describe(reasoning, tools, total);
   $: expandable = !!reasoning || tools.length > 0;
-
-  function duration(ms: number) {
-    if (ms >= 60_000) return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
-    if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${Math.round(ms)}ms`;
-  }
-
-  let elapsed = 0;
-  let timer: number | null = null;
-  $: live = !!status;
-  $: {
-    if (live && timer === null) {
-      const t0 = Date.now();
-      elapsed = 0;
-      timer = window.setInterval(() => {
-        elapsed = Date.now() - t0;
-      }, 1000);
-    } else if (!live && timer !== null) {
-      window.clearInterval(timer);
-      timer = null;
-      elapsed = 0;
-    }
-  }
-  onDestroy(() => {
-    if (timer !== null) window.clearInterval(timer);
-  });
-  function clock(ms: number): string {
-    const s = Math.floor(ms / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  }
 
   function describe(reasoning: string, tools: Step[], total: number) {
     if (!reasoning && tools.length === 1) return tools[0].label.trim() || "Working";
@@ -66,14 +36,14 @@
 </script>
 
 <div class="steps">
-  <button class="head" class:live={!!status} disabled={!expandable} aria-expanded={open} on:click={() => (open = !open)}>
-    <span class="text">{status || summary}{#if live && elapsed >= 10_000} · {clock(elapsed)}{/if}</span>
-    {#if failed && !status}<span class="failed">{failed} failed</span>{/if}
+  <button class="head" disabled={!expandable} aria-expanded={open} on:click={() => (open = !open)}>
+    <span class="text">{summary}</span>
+    {#if failed}<span class="failed">{failed} failed</span>{/if}
     {#if expandable}<span class="chev" class:open><Icon name="chevDown" size={12} /></span>{/if}
   </button>
 
   {#if open}
-    <div class="body" data-ui-list transition:slide={{ duration: 160, easing: cubicOut }}>
+    <div class="body" data-ui-list transition:slide={{ duration: SLIDE, easing: cubicOut }}>
       {#if reasoning}
         <div class="reasoning">{reasoning}</div>
       {/if}
@@ -122,9 +92,6 @@
   }
   .head:disabled {
     cursor: default;
-  }
-  .head.live .text {
-    animation: breathe 1.6s ease-in-out infinite;
   }
   .text {
     overflow: hidden;
@@ -204,10 +171,5 @@
   }
   .output :global(.codeblock) {
     margin: var(--space) 0 calc(var(--space) * 2);
-  }
-  @keyframes breathe {
-    50% {
-      opacity: 0.45;
-    }
   }
 </style>

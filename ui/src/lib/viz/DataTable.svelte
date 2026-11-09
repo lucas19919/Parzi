@@ -4,7 +4,6 @@
   export let rows: string[][] = [];
 </script>
 
-
 <div class="viz-data">
   <table>
     {#if caption}<caption>{caption}</caption>{/if}

@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { SLIDE } from "./motion";
   import { createEventDispatcher } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { handleLinkClick } from "./links";
-  import { codeBlockClick, mdHtml, richReady, splitSegments, LiveMarkdown } from "./md";
+  import { codeBlockClick, htmlBlocks, liveHtml, mdHtml, richReady, splitSegments } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Viz from "./viz/Viz.svelte";
@@ -19,6 +20,7 @@
   import { viewImage } from "./imageViewer";
   import ReplyButtons from "./ReplyButtons.svelte";
   import TaskCard from "./TaskCard.svelte";
+  import LiveActivity from "./LiveActivity.svelte";
   import TodoList from "./TodoList.svelte";
   import { dockedTodos, setTodoDocked } from "./todoDock";
   import QuestionCard from "./QuestionCard.svelte";
@@ -43,6 +45,7 @@
   export let liveText = "";
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
+  export let liveHelpers: { id: string; title: string; need: boolean; step: string }[] = [];
   export let streaming = false;
   export let session = "";
   export let liveTodo: unknown = null;
@@ -123,7 +126,7 @@
     return { lead: nl === end ? text.slice(0, end) : `${text.slice(0, end).trimEnd()}…`, more: text };
   }
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  const spring = { duration: 160, easing: cubicOut };
+  const spring = { duration: SLIDE, easing: cubicOut };
 
   type Item =
     | { key: string; kind: "user" | "assistant" | "system"; text: string; at?: number }
@@ -136,7 +139,6 @@
 
   let copied = "";
   let saved = "";
-  const liveMd = new LiveMarkdown();
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
@@ -266,8 +268,13 @@
                 ? "Working…"
                 : "Starting…";
   $: activeTask = (((todo ?? {}) as { items?: { title: string; state: string }[] }).items ?? []).find((i) => i.state === "active")?.title ?? "";
+  // The step already shows in the activity above, so the line does not
+  // repeat it; it keeps the time, the tokens and what needs the person.
+  $: stepsShown = streaming && !!folds.live && !openFolds.has(folds.live.key) && (liveTools.length > 0 || !!liveSaid);
+  // Subagents still at work show even once this session's own turn is over.
+  $: activityShown = stepsShown || liveHelpers.length > 0;
   $: lineText =
-    status && (approval || question || request || running.length)
+    status && (approval || question || request || (running.length && !stepsShown))
       ? status
       : activeTask
         ? `${activeTask}…`
@@ -276,10 +283,27 @@
           : status || "Working…";
   $: lineTokens = Math.round((liveText.length + liveReasoning.length) / 4);
   $: showLiveSteps = !!liveReasoning || liveTools.length > 0;
-  $: if (!liveText) liveMd.reset();
+  // The last thing the agent said or thought while working, one short line.
+  $: liveSaid = (() => {
+    const last = liveReasoning.trim().split(/\n\s*\n/).pop()?.replace(/\s+/g, " ").trim() ?? "";
+    return last.length > 220 ? `${last.slice(0, 220)}…` : last;
+  })();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
   $: tailIdx = liveSegs.map((s) => s.kind).lastIndexOf("md");
-  $: livePart = tailIdx >= 0 ? liveMd.render(String(liveSegs[tailIdx].body)) : { head: "", tail: "" };
+  // Only the block being written is rendered again each frame; the page
+  // patches just the blocks that changed (htmlBlocks).
+  $: liveBlockHtml = tailIdx >= 0 ? liveHtml(String(liveSegs[tailIdx].body), $richReady) : [];
+
+  /** Folds a block away, closing the gap above it too (a plain slide
+   *  leaves the parent's gap and then jumps it shut). */
+  function foldAway(node: HTMLElement) {
+    const h = node.offsetHeight;
+    const gap = parseFloat(getComputedStyle(node.parentElement ?? node).rowGap) || 0;
+    return {
+      duration: 200,
+      css: (t: number) => `overflow: hidden; height: ${t * h}px; margin-top: ${(t - 1) * gap}px; opacity: ${t};`,
+    };
+  }
 
   function arg(args: unknown, ...keys: string[]): string {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -667,7 +691,7 @@ ${e.text}` : e.text;
         </div>
       {:else if item.kind === "steps"}
         {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
-      
+
         <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
         {@const tests = lastTestRun(item.tools)}
         {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
@@ -748,29 +772,40 @@ ${e.text}` : e.text;
       <span class="chev" class:open={openFolds.has(folds.tail.key)}><Icon name="chevDown" size={12} /></span>
     </button>
   {/if}
-  
+
+  {#if activityShown}
+    <div transition:fade|local={spring}>
+      <LiveActivity shown={2} tools={stepsShown ? liveTools : []} said={stepsShown ? liveSaid : ""} helpers={liveHelpers} on:open={(e) => dispatch("openSession", e.detail)} />
+    </div>
+  {/if}
+
   {#if showLiveSteps && folds.live && openFolds.has(folds.live.key)}
     <div class="in-fold" transition:fade|local={spring}>
       <Steps reasoning={liveReasoning} tools={liveTools} />
     </div>
   {/if}
 
-  {#each liveSegs as seg, i}
-    {#if seg.kind === "md" && i === tailIdx}
-      <div class="msg">
-        {#if livePart.head}<div class="live-head">{@html livePart.head}</div>{/if}
-        <div class="live-tail">{@html livePart.tail}</div>
+  <!-- Laid out exactly as the saved message that replaces it at the end of
+       the turn, so the swap moves nothing. -->
+  {#if liveSegs.length}
+    <div class="row">
+      <div class="body">
+        {#each liveSegs as seg, i}
+          {#if seg.kind === "md" && i === tailIdx}
+            <div class="msg" use:htmlBlocks={liveBlockHtml}></div>
+          {:else if seg.kind === "md"}
+            <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
+          {:else if seg.kind === "widget"}
+            <Widget data={seg.body} />
+          {:else if seg.kind === "artifact"}
+            <ArtifactCard data={seg.body} inline />
+          {:else if seg.kind === "viz"}
+            <Viz spec={seg.body} />
+          {/if}
+        {/each}
       </div>
-    {:else if seg.kind === "md"}
-      <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
-    {:else if seg.kind === "widget"}
-      <Widget data={seg.body} />
-    {:else if seg.kind === "artifact"}
-      <ArtifactCard data={seg.body} inline />
-    {:else if seg.kind === "viz"}
-      <Viz spec={seg.body} />
-    {/if}
-  {/each}
+    </div>
+  {/if}
 
     {#each liveArtifacts.filter((a) => a.version > (newest.get(a.id) ?? 0)) as a (a.id)}
     {#key a.version}
@@ -779,7 +814,9 @@ ${e.text}` : e.text;
   {/each}
 
   {#if todo && !$dockedTodos.has(session)}<TodoList {todo} working={streaming} on:dock={() => setTodoDocked(session, true)} />{/if}
-  {#if streaming}<LiveLine text={lineText} tokens={lineTokens} />{/if}
+  <!-- Folds away rather than vanishing, so the reply above glides the last
+       few pixels as the saved message's actions take its place. -->
+  {#if streaming}<div class="live-slot" out:foldAway|local><LiveLine text={lineText} tokens={lineTokens} /></div>{/if}
   {#if !streaming && replyAt >= 0}
     {@const offer = items[replyAt]}
     {#if offer.kind === "widget"}
@@ -839,10 +876,12 @@ ${e.text}` : e.text;
 </div>
 
 <style>
+  /* Room to read: blocks in a turn sit 16px apart, and each of the
+     person's messages opens a new turn with a clear break above it. */
   .thread-col {
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 3);
+    gap: calc(var(--space) * 4);
     width: 100%;
     max-width: calc(var(--read) + 48px);
     margin: 0 auto;
@@ -856,14 +895,14 @@ ${e.text}` : e.text;
     align-items: flex-end;
   }
   .row.user:not(:first-child) {
-    margin-top: calc(var(--space) * 4);
+    margin-top: calc(var(--space) * 8);
   }
   .fold {
     align-self: flex-start;
     display: inline-flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: 24px;
+    min-height: var(--h-sm);
     padding: 0;
     background: none;
     border: none;
@@ -885,11 +924,6 @@ ${e.text}` : e.text;
   }
   .fold .chev.open {
     transform: none;
-  }
-  @keyframes breathe {
-    50% {
-      opacity: 0.45;
-    }
   }
   .in-fold {
     margin-left: var(--space);
@@ -995,7 +1029,7 @@ ${e.text}` : e.text;
     color: color-mix(in srgb, var(--text) 92%, transparent);
   }
   .actions {
-    height: 24px;
+    height: var(--h-sm);
     margin-left: calc(var(--space) * -1);
     display: flex;
     align-items: center;
@@ -1003,7 +1037,7 @@ ${e.text}` : e.text;
   }
   .copy {
     width: 24px;
-    height: 24px;
+    height: var(--h-sm);
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -1036,15 +1070,6 @@ ${e.text}` : e.text;
   }
   .copy:hover {
     background: var(--line);
-    color: var(--text);
-  }
-  .live-head {
-    opacity: 0.72;
-  }
-  .live-head :global(p:last-child) {
-    margin-bottom: 0.55em;
-  }
-  .live-tail {
     color: var(--text);
   }
   .system {
@@ -1224,9 +1249,8 @@ ${e.text}` : e.text;
     border-color: transparent;
     color: var(--text);
   }
-  @media (prefers-reduced-motion: reduce) {
-    .live-head {
-      opacity: 1;
-    }
+  .live-slot {
+    display: flex;
+    flex-direction: column;
   }
 </style>

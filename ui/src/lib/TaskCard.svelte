@@ -57,8 +57,10 @@
     gap: calc(var(--space) * 2);
     margin: var(--space) 0;
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
   }
   .kind {
@@ -109,7 +111,7 @@
     gap: calc(var(--space) * 2);
   }
   button {
-    height: 28px;
+    height: var(--h);
     padding: 0 calc(var(--space) * 3);
     font-size: var(--fs-sm);
   }

@@ -1,6 +1,7 @@
 import type { ComposerMode, PlanQuote } from "./api";
+import { readJSON, readStrings, writeJSON } from "./storage.ts";
 
-type TabKind = "session" | "page" | "settings" | "preview" | "artifact";
+type TabKind = "session" | "page" | "artifact";
 
 export interface TabComposerState {
   input: string;
@@ -22,28 +23,19 @@ const LAST_MODEL = "parzi.lastModel.v1";
 const RECENT_MODELS = "parzi.recentModels.v1";
 
 function lastModel(): { model: string; effort: string } {
-  try {
-    const v = JSON.parse(localStorage.getItem(LAST_MODEL) ?? "null");
-    if (v && typeof v.model === "string") return { model: v.model, effort: typeof v.effort === "string" ? v.effort : "" };
-  } catch {}
+  const v = readJSON<{ model?: unknown; effort?: unknown } | null>(LAST_MODEL, null);
+  if (v && typeof v.model === "string") return { model: v.model, effort: typeof v.effort === "string" ? v.effort : "" };
   return { model: "", effort: "" };
 }
 
 export function recentModels(): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(RECENT_MODELS) ?? "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+  return readStrings(RECENT_MODELS);
 }
 
 export function rememberModel(model: string, effort: string) {
   if (!model) return;
-  try {
-    localStorage.setItem(LAST_MODEL, JSON.stringify({ model, effort }));
-    localStorage.setItem(RECENT_MODELS, JSON.stringify([model, ...recentModels().filter((m) => m !== model)].slice(0, 3)));
-  } catch {}
+  writeJSON(LAST_MODEL, { model, effort });
+  writeJSON(RECENT_MODELS, [model, ...recentModels().filter((m) => m !== model)].slice(0, 3));
 }
 
 export function ensureComposer(c?: Partial<TabComposerState> | null): TabComposerState {
@@ -121,14 +113,6 @@ export function restoreTab<T extends { kind?: unknown; title?: unknown }>(t: T):
   return typeof t.kind === "string" && RESTORED.has(t.kind) ? t : null;
 }
 
-export function settingsTab(): Tab {
-  return { id: tabId(), kind: "settings", title: "Settings", composer: defaultComposer() };
-}
-
-export function previewTab(which = "omnibar"): Tab {
-  return { id: tabId(), kind: "preview", title: `Preview ${which}`, url: which, composer: defaultComposer() };
-}
-
 export function artifactTab(doc: ArtifactDoc, group: string | null): Tab {
   return { id: tabId(), kind: "artifact", title: doc.title, group, doc, composer: defaultComposer() };
 }
@@ -179,10 +163,6 @@ export function isExplicitUrl(raw: string): boolean {
 export function folderName(path: string): string {
   const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
   return parts[parts.length - 1] || path;
-}
-
-export function isSystemTab(t: Tab): boolean {
-  return t.kind !== "session" && t.kind !== "page";
 }
 
 /** The list with `t` added where it belongs: after the last tab of `group`

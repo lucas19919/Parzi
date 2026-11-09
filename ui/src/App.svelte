@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR } from "./lib/motion";
   import { onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -24,7 +25,6 @@
   import Thread from "./lib/Thread.svelte";
   import PageView from "./lib/PageView.svelte";
   import ManagerView from "./lib/ManagerView.svelte";
-  import PreviewView from "./lib/PreviewView.svelte";
   import ArtifactCard from "./lib/widgets/ArtifactCard.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -39,9 +39,10 @@
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
-  import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
+  import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
+  import { freshNotice, notifyLevel, notifySounds } from "./lib/notifyPrefs";
   import { effortsFor, nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
@@ -219,7 +220,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return n;
   })();
 
-
   let infoOpen = true;
   try {
     infoOpen = localStorage.getItem("parzi.info.open") !== "0";
@@ -287,6 +287,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: mode = comp.mode;
   $: model = comp.model;
   $: streaming = !!shown && running.has(shown);
+  // Subagents of the session on screen that are still at work, with the
+  // step each is on, for the activity in its thread.
+  $: needsYou = new Set([...approvals, ...questions, ...requests].map((x) => x.session));
+  $: liveHelpers = shown
+    ? threads
+        .filter((t) => t.parent_id === shown && (running.has(t.id) || needsYou.has(t.id)))
+        .map((t) => ({ id: t.id, title: t.title || "Untitled", need: needsYou.has(t.id), step: $activity.get(t.id)?.label ?? "" }))
+    : [];
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -361,9 +369,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: overArt = showWallpaper && !!bg;
   // Popups live on <body>, outside .shell: this lets them match the glass.
   $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-over-art", overArt);
-  // Home, picture or not: where the card style (clear, glass, solid) applies.
   $: onHome = showWallpaper;
-  $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-on-home", onHome);
 
   /* For a moment after the window comes to or leaves Home (or Home goes
      onto or off the wallpaper), the glass, the outlines and the colours
@@ -444,12 +450,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } catch {}
   }
 
-  function toggleFiles(open = !fileOpen) {
+  function toggleFiles(open = !fileOpen, byHand = true) {
     fileOpen = open;
     try {
       localStorage.setItem("parzi.file.open", open ? "1" : "0");
     } catch {}
-    if (open && innerWidth < 900) toast("Widen the window to see the file");
+    if (open && byHand && innerWidth < 900) toast("Widen the window to see the file");
   }
 
   function resizeFile(e: { detail: { width: number } }) {
@@ -502,13 +508,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     comp = comp;
   }
 
-  function useExample(text: string) {
-    comp.input = text;
-    if (comp.mode === "search") comp.mode = "build";
-    comp = comp;
-    omnibar?.focus();
-  }
-
   async function renamed(id: string) {
     await refreshThreads();
     const t = threads.find((x) => x.id === id);
@@ -543,6 +542,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function clearLive() {
     cancelAnimationFrame(revealing);
     revealing = 0;
+    revealAt = 0;
+    thinking = false;
     pending = "";
     live = "";
     liveReasoning = "";
@@ -705,16 +706,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     selectTab(kept[Math.max(0, Math.min(idx, kept.length - 1))].id);
   }
 
-  function useFolder(path: string) {
-    if (remoteOn) {
-      comp.remoteCwd = path;
-      comp = comp;
-    } else {
-      patchTab(tab.id, { cwd: path });
-    }
-    omnibar?.focus();
-  }
-
   /** The folder of the session last worked on, leaving out throwaway scratch folders. */
   function recentFolder(): string | undefined {
     if (remoteOn) return undefined;
@@ -778,7 +769,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const next = { ...doc, version };
     if (at) sessionDocs = { ...sessionDocs, [at]: next };
     else looseDoc = next;
-    toggleFiles(true);
+    toggleFiles(true, false);
   }
 
   async function pinNote(path: string) {
@@ -964,7 +955,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-
   function openSettings(section = "general") {
     settingsSection = section === "system" || section === "remote" || section === "skills" ? "general" : section;
     showCover("settings");
@@ -972,8 +962,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   // The top-left buttons act as Back when their own page is already open.
   function toggleSettings() {
-    if (tab.kind === "settings") closeTab(activeId);
-    else if (coverOn && cover === "settings") clearCover();
+    if (coverOn && cover === "settings") clearCover();
     else openSettings();
   }
 
@@ -1019,7 +1008,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (sendingTabs.has(target.id)) return;
-    if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
+    if (target.sessionId && otherAgent && freshNotice("app", "agent-switch")) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sendingTabs = new Set(sendingTabs).add(target.id);
     if (!fresh && target.sessionId) {
@@ -1536,51 +1525,85 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (name === "settings") openSettings();
   }
 
-  function revealLive() {
+  // Text arrives in bursts; it is shown at an even pace measured in time,
+  // not frames: at least 600 characters a second, faster when behind so the
+  // backlog clears in about a tenth of a second. Same speed at 60 or 120Hz.
+  let revealAt = 0;
+  let thinking = false;
+  function revealLive(now: number) {
     revealing = 0;
     if (!pending) return;
-    let cut = Math.min(pending.length, Math.max(3, Math.ceil(pending.length / 6)));
+    const dt = Math.min(64, revealAt ? now - revealAt : 16);
+    revealAt = now;
+    let cut = Math.min(pending.length, Math.max(1, Math.ceil(dt * 0.6), Math.ceil((pending.length * dt) / 100)));
     if (cut < pending.length && /[\uD800-\uDBFF]/.test(pending[cut - 1])) cut++;
     live += pending.slice(0, cut);
     pending = pending.slice(cut);
     if (pending) revealing = requestAnimationFrame(revealLive);
+    else revealAt = 0;
   }
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
 
-  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; chime?: boolean } = {}) {
-    if (session === shown && tab.kind === "session" && document.hasFocus()) return;
+  /** Tells the person about an agent they are not looking at, as much as
+   *  Settings, General, Notifications allows:
+   *  - "needs": an approval, question or request. A card line, a toast that
+   *    goes once it is answered, and a short tone if they are elsewhere.
+   *  - "done": a run finished. A quiet card line; a toast and tone only on
+   *    "all", and the tone only while the window is in the background.
+   *  - "problem": an error or a spending pause. A card line and a toast.
+   *  A subagent's finish or error is news for the agent that started it,
+   *  not the person, unless they asked for everything. A toast never shows
+   *  while the window is in the background: it would be gone before they
+   *  look, and the card keeps it. */
+  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; news: "needs" | "done" | "problem" }) {
+    const focused = document.hasFocus();
+    if (session === shown && tab.kind === "session" && focused) return;
+    const level = $notifyLevel;
+    const child = threads.some((t) => t.id === session && t.parent_id);
+    if (child && opts.news !== "needs" && level !== "all") return;
     const title = titleOf(session);
+    const key = opts.key ?? newsKey(session);
+    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key });
+    if (level === "off") return;
+    const toastIt = level === "all" || opts.news !== "done";
     // The card shows it when the column is open; a toast would say it twice.
-    if (!infoShown) notify(`${title} ${what}`, session);
-    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key: opts.key ?? newsKey(session) });
-    if (opts.chime !== undefined) chime(opts.chime);
+    if (toastIt && focused && !infoShown) keyedToast(key, `${title} ${what}`, { session, ms: opts.news === "needs" ? 10000 : 6000 });
+    if (!$notifySounds) return;
+    if (opts.news === "needs") chime(false);
+    else if (level === "all" && !focused) chime(opts.news === "done");
   }
 
   function settle(key: string) {
+    keyedToast(key, null);
     approvals = approvals.filter((a) => a.key !== key);
     questions = questions.filter((q) => q.key !== key);
     requests = requests.filter((r) => r.key !== key);
     dropNotification(key);
   }
 
+  const stopped = (error: string) => {
+    const t = (error ?? "").trim().toLowerCase();
+    return !!t && t.length <= 100 && (t.includes("cancelled") || t.includes("canceled"));
+  };
+
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
       const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
-      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, chime: false });
+      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options, details: e.details, multi: e.multi }];
-      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, chime: false });
+      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "request") {
       const fresh = !requests.some((r) => r.key === e.key);
       requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
-      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, chime: false });
+      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "expired") {
@@ -1591,19 +1614,25 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (e.kind === "error" && /exited before/i.test(e.error) && (held[e.session]?.length ?? 0) > 0) {
         queuePaused = new Set(queuePaused).add(e.session);
       }
-      release(e.session);
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
       const next = e.kind === "done" && !inflight.has(e.session) && !queuePaused.has(e.session) && !!held[e.session]?.length;
-      if (e.session === shown) {
-        if (next) clearLive();
-        else void reload(clearLive);
+      // The turn on screen ends once its saved message is in place: ending it
+      // first drops the working line and the live fold while the reply still
+      // shows, then the saved message pops in.
+      if (e.session === shown && !next) {
+        const id = e.session;
+        void reload(clearLive).finally(() => release(id));
+      } else {
+        release(e.session);
+        if (e.session === shown) clearLive();
       }
       if (next) void sendHeld(e.session);
       const isChild = threads.some((t) => t.id === e.session && t.parent_id);
-      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { chime: false });
-      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { chime: true });
-      else announce(e.session, "stopped with an error", "error", { chime: false });
+      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { news: "problem" });
+      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { news: "done" });
+      // A stop someone asked for (the person, or a parent agent) is not an error.
+      else if (!stopped(e.error)) announce(e.session, "stopped with an error", "error", { news: "problem" });
       return;
     }
     if (!running.has(e.session) && e.kind !== "context") {
@@ -1613,24 +1642,37 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
+      thinking = false;
       pending += e.text;
       if (!revealing) revealing = requestAnimationFrame(revealLive);
     } else if (e.kind === "reasoning") {
+      // A new spell of thinking after a step or after narration starts its
+      // own paragraph instead of running on from the last sentence.
+      if (!thinking && liveReasoning) liveReasoning += "\n\n";
+      thinking = true;
       liveReasoning += e.text;
     } else if (e.kind === "todo") {
       liveTodo = e.todo;
     } else if (e.kind === "artifact") {
       liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
     } else if (e.kind === "tool_call") {
+      thinking = false;
       // What the agent said before a step is narration ("I'll check the
       // plan..."), not its reply: it joins the folded working, and the reply
       // starts again after the step. Cards and reply buttons come after the
       // final text, so they leave it be.
       const said = (live + pending).trim();
-      if (said && !e.name.startsWith("ui.") && e.name !== "todo.write") {
+      const keeps = e.name.startsWith("ui.") || /^todo[._]?write$/i.test(e.name);
+      if (said && !keeps) {
         liveReasoning = liveReasoning ? `${liveReasoning}\n\n${said}` : said;
+        thinking = false;
         live = "";
         pending = "";
+      } else if (said) {
+        // The reply goes on after the card; the next words start a new
+        // paragraph instead of running on from the last one.
+        pending += "\n\n";
+        if (!revealing) revealing = requestAnimationFrame(revealLive);
       }
       if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
@@ -1640,7 +1682,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (e.kind === "context") {
       context = { used: e.used, limit: e.limit };
     } else if (e.kind === "notice") {
-      toast(e.text);
+      if ($notifyLevel !== "off" && freshNotice(e.session, e.text)) toast(e.text);
     }
   }
 
@@ -1697,7 +1739,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
       if (immersive) void setImmersive(false);
       else if (coverOn) clearCover();
-      else if (tab.kind === "settings") closeTab(activeId);
     }
   }
 
@@ -1718,8 +1759,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         .catch((e) => toast(`Couldn't load the new theme: ${e}`, true));
     }
     else if (cmd.op === "notify" && cmd.text) {
-      notify(cmd.text, cmd.session ?? "");
-      chime(true);
+      // An agent's own heads-up: at most one a minute per session, quiet on
+      // "off", and no tone while the person is looking at that session.
+      const sid = cmd.session ?? "";
+      if ($notifyLevel !== "off" && freshNotice(`notify:${sid}`, "", Date.now(), 60_000)) {
+        notify(cmd.text, sid);
+        const watching = document.hasFocus() && sid === shown && tab.kind === "session";
+        if ($notifySounds && !watching) chime(true);
+      }
     } else if (cmd.op === "approval" && cmd.key) {
       approvals = approvals.filter((a) => a.key !== cmd.key);
       if (cmd.label) toast(`${cmd.allow ? "Allowed" : "Denied"} from the command line: ${cmd.label}`);
@@ -1820,7 +1867,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       { id: "composer.draft", title: "Write text into the composer for the person to send", args: [{ name: "text", type: "string", required: true }], run: (a) => { comp.input = String(a.text); comp = comp; return "The text is in the composer; the person sends it."; } },
       { id: "appearance.theme", title: "Apply a theme pack", args: [{ name: "pack", type: "string", required: true }], run: async (a) => { const packs = await api.listPackInfos(); const p = packs.find((x) => x.name.toLowerCase() === String(a.pack).toLowerCase()); if (!p) throw new Error(`No theme "${a.pack}"; the themes are ${packs.map((x) => x.name).join(", ")}.`); applyThemeCss(await api.applyPack(p.name)); await refreshBackground(); document.dispatchEvent(new CustomEvent("parzi:theme")); return `Applied the ${p.name} theme.`; } },
       { id: "appearance.wallpaper", title: "Show the Home wallpaper as a band or the full window", args: [{ name: "show", type: "string", required: true, choices: ["band", "full"] }], run: async (a) => { await theme((t) => (t.background.fill = a.show === "full" ? "full" : "band")); return `The wallpaper shows as ${a.show === "full" ? "the full window" : "a band"}.`; } },
-      { id: "appearance.cards", title: "Set how cards look on Home", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards on Home are ${a.look}.`; } },
+      { id: "appearance.cards", title: "Set how cards look", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards are ${a.look}.`; } },
     ];
   }
 
@@ -1909,9 +1956,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       })
       .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
     void loadRemoteInfo().catch(() => {});
+    let remoteDown = false;
     const unRemote = onRemoteStatus((s) => {
       if (s.state === "updating" || s.state === "ready") toast(s.detail);
-      else if (s.state === "error") toast(s.detail, true);
+      // Sync retries every two minutes and after each run: say a failure
+      // once, until the remote comes back.
+      else if (s.state === "error") {
+        if (!remoteDown) toast(s.detail, true);
+        remoteDown = true;
+      }
+      if (s.state === "up" || s.state === "synced" || s.state === "ready") remoteDown = false;
       if (s.state === "up" || s.state === "resync" || s.state === "ready") {
         void refreshThreads();
         if (remoteOn) void refreshRemoteBoard().catch(() => {});
@@ -1958,7 +2012,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   });
 </script>
 
-
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
 <div class="shell" class:on-home={onHome} class:over-art={overArt} class:art-shift={artShift}>
@@ -1987,17 +2040,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   <div class="content">
     <main>
-    {#if tab.kind === "settings"}
-      <div class="fill col" in:fly={{ y: 8, ...motion }}>
-        <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
-        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
-      </div>
-    {:else if tab.kind === "preview"}
-      <div class="fill col" in:fade={{ duration: 150 }}>
-        <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
-        <PreviewView which={tab.url ?? "omnibar"} />
-      </div>
-    {:else if tab.kind === "artifact" && tab.doc}
+    {#if tab.kind === "artifact" && tab.doc}
       <div class="fill col ghost" in:fade={{ duration: 150 }}>
         <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
         {#key `${tab.id}:${tab.doc.version}`}
@@ -2063,6 +2106,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   {liveArtifacts}
                   bind:todo={threadTodo}
                   {liveTools}
+                  {liveHelpers}
                   {approval}
                   question={openQuestion}
                   request={openRequest}
@@ -2226,24 +2270,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} />
   {/if}
 
-
-  
   <div class="toasts" class:chrome={toastsUp} aria-live="polite">
     {#each toastsUp ? $toasts.slice(-1) : $toasts as t (t.id)}
-      {#if t.run}
+      {#if t.session}
         <button
           class="toast go"
-          class:err={t.err}
-          transition:fade={{ duration: 140 }}
-          on:click={() => {
-            dismissToast(t.id);
-            t.run?.();
-          }}>{t.text}</button
-        >
-      {:else if t.session}
-        <button
-          class="toast go"
-          transition:fade={{ duration: 140 }}
+          transition:fade={{ duration: DUR }}
           on:click={() => {
             dismissToast(t.id);
             if (immersive) void setImmersive(false);
@@ -2251,7 +2283,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           }}>{t.text}</button
         >
       {:else}
-        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: 140 }}>
+        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: DUR }}>
           <span class="toast-text">{t.text}</span>
           {#if t.progress !== undefined}
             <span class="toast-bar" aria-hidden="true"><span style:width="{Math.round(t.progress * 100)}%" /></span>
@@ -2286,24 +2318,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* Cards on Home, over the wallpaper or not (the side column, the File
-     card and the composer): clear (outlined, the default), glass (frosted,
-     no outline: the frost is the edge) or solid (the panel colour), as set
-     in Appearance. Only here: everywhere else surfaces stay solid. */
+  /* The card look (clear, glass or solid) is one set of values for all of
+     Parzi (theme.css, --card-fill, --card-edge, --card-blur); on Home it
+     eases as it changes. */
   .on-home :global(:is(.info .card, .files .card, .ob .box)) {
     transition:
       background var(--dur) ease,
       border-color var(--dur) ease,
       backdrop-filter var(--dur) ease;
-  }
-  :global(html[data-art-cards="glass"]) .on-home :global(:is(.info .card, .files .card, .ob .box)) {
-    background: color-mix(in srgb, var(--panel) 52%, transparent);
-    border-color: transparent;
-    -webkit-backdrop-filter: blur(18px) saturate(1.2);
-    backdrop-filter: blur(18px) saturate(1.2);
-  }
-  :global(html[data-art-cards="solid"]) .on-home :global(:is(.info .card, .files .card, .ob .box)) {
-    background: var(--panel);
   }
   /* Onto or off the wallpaper: the change eases over about the picture's
      fade, so glass turns solid and outlines come in rather than snap. */
@@ -2318,13 +2340,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Buttons on glass are one surface with it: a faint wash of the text
      colour that lets the picture through, no grey fill and no outline. */
-  :global(html[data-art-cards="glass"]) .on-home :global(.info .card .btn:not(.primary)),
-  :global(html[data-art-cards="glass"]) .on-home :global(.files .card .btn:not(.primary)) {
+  :global(html[data-art-cards="glass"]) :global(.info .card .btn:not(.primary)),
+  :global(html[data-art-cards="glass"]) :global(.files .card .btn:not(.primary)) {
     background: color-mix(in srgb, var(--text) 8%, transparent);
     border-color: transparent;
   }
-  :global(html[data-art-cards="glass"]) .on-home :global(.info .card .btn:not(.primary):hover:not(:disabled)),
-  :global(html[data-art-cards="glass"]) .on-home :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
+  :global(html[data-art-cards="glass"]) :global(.info .card .btn:not(.primary):hover:not(:disabled)),
+  :global(html[data-art-cards="glass"]) :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
     background: color-mix(in srgb, var(--text) 14%, transparent);
     border-color: transparent;
   }
@@ -2434,8 +2456,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     display: flex;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
   }
@@ -2462,8 +2484,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex-direction: column;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: none;
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
@@ -2623,7 +2645,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   .toast-act {
     flex: none;
-    min-height: 24px;
+    min-height: var(--h-sm);
     padding: var(--space) calc(var(--space) * 3);
     background: var(--hover);
     border: 1px solid var(--line);
@@ -2645,7 +2667,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     display: flex;
     align-items: center;
     max-width: min(440px, 45vw);
-    min-height: 28px;
+    min-height: var(--h);
     padding: var(--space) calc(var(--space) * 2) var(--space) calc(var(--space) * 3);
     white-space: nowrap;
   }

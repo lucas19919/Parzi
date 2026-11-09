@@ -36,7 +36,7 @@
   }
   th,
   td {
-    height: 32px;
+    height: var(--h-field);
     padding: 0 calc(var(--space) * 3) 0 0;
     border-bottom: 1px solid var(--line);
     text-align: left;
@@ -50,7 +50,7 @@
     border-bottom: none;
   }
   th {
-    height: 28px;
+    height: var(--h);
     font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--muted);

@@ -8,7 +8,6 @@ interface Toast {
   key?: string;
   progress?: number;
   action?: { label: string; run: () => void };
-  run?: () => void;
 }
 
 export const toasts = writable<Toast[]>([]);
@@ -34,13 +33,10 @@ export function dismissToast(id: number) {
   toasts.update((all) => all.filter((t) => t.id !== id));
 }
 
-
-
-
 export function keyedToast(
   key: string,
   text: string | null,
-  opts: { err?: boolean; progress?: number; action?: Toast["action"]; ms?: number } = {},
+  opts: { err?: boolean; progress?: number; action?: Toast["action"]; ms?: number; session?: string } = {},
 ) {
   let id = 0;
   toasts.update((all) => {
@@ -49,7 +45,7 @@ export function keyedToast(
       if (prev) id = prev.id;
       return all.filter((t) => t.key !== key);
     }
-    const next: Toast = { id: prev?.id ?? ++seq, key, text, err: !!opts.err, progress: opts.progress, action: opts.action };
+    const next: Toast = { id: prev?.id ?? ++seq, key, text, err: !!opts.err, progress: opts.progress, action: opts.action, session: opts.session };
     id = next.id;
     return prev ? all.map((t) => (t.key === key ? next : t)) : [...all, next];
   });

@@ -690,10 +690,10 @@ pub fn describe() -> Result<String> {
         })
         .collect();
     let wall = if t.background.image.is_empty() {
-        format!("no wallpaper, {} cards on Home", t.background.cards)
+        format!("no wallpaper, {} cards", t.background.cards)
     } else {
         format!(
-            "wallpaper shown as a {}, {} cards on Home, dither {:.0}% at {}px",
+            "wallpaper shown as a {}, {} cards, dither {:.0}% at {}px",
             if t.background.fill == "full" {
                 "full window"
             } else {
@@ -825,7 +825,7 @@ pub fn change(c: &ThemeChange) -> Result<String> {
                 "cards `{v}` is clear, glass or solid"
             )));
         }
-        said.push(format!("{v} cards on Home"));
+        said.push(format!("{v} cards"));
         t.background.cards = v;
     }
     if let Some(v) = given(&c.dither) {
@@ -843,8 +843,7 @@ pub fn change(c: &ThemeChange) -> Result<String> {
     }
     t.save()?;
     let mut out = format!("Parzi now has {}.", said.join(", "));
-    // Cards apply on Home with or without a picture; only the fill waits
-    // for one.
+    // Cards apply everywhere, picture or not; only the fill waits for one.
     if !t.background.image.is_empty() || c.wallpaper.is_none() {
         return Ok(out);
     }

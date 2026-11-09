@@ -29,7 +29,6 @@
   import { lerpNumbers, numbersOf, shapeOf, withNumbers } from "./tween";
 
   export let spec: unknown;
-  export let bare = false;
 
   $: parsed = parseViz(spec);
   $: real = parsed.ok ? parsed.spec : null;
@@ -83,21 +82,21 @@
 </script>
 
 {#if s}
-  <figure bind:this={figure} class="viz" class:bare class:waiting class:rising data-viz={s.type} aria-label={bare || !title ? title || undefined : undefined}>
-    {#if title && !bare}<figcaption class="t-section">{title}</figcaption>{/if}
+  <figure bind:this={figure} class="viz" class:waiting class:rising data-viz={s.type} aria-label={!title ? title || undefined : undefined}>
+    {#if title}<figcaption class="t-section">{title}</figcaption>{/if}
     {#if s.type === "stat"}
       <div class="stats">
         {#each s.stats as st}<Stat stat={st} unit={s.unit} draw={$grow} />{/each}
       </div>
     {:else if s.type === "bars"}
-      <Bars items={s.items} orient={s.orient} unit={s.unit} label={title} height={bare ? 112 : 168} grow={$grow} />
+      <Bars items={s.items} orient={s.orient} unit={s.unit} label={title} height={168} grow={$grow} />
     {:else if s.type === "hist"}
-      <Hist bins={s.bins} total={s.total} mean={s.mean} unit={s.unit} label={title} height={bare ? 112 : 168} grow={$grow} />
+      <Hist bins={s.bins} total={s.total} mean={s.mean} unit={s.unit} label={title} height={168} grow={$grow} />
     {:else if s.type === "line"}
-      <Line labels={s.labels} series={s.series} area={s.area} points={s.points} unit={s.unit} label={title} height={bare ? 112 : 180} draw={$grow} />
+      <Line labels={s.labels} series={s.series} area={s.area} points={s.points} unit={s.unit} label={title} height={180} draw={$grow} />
     {:else if s.type === "spark"}
       <div class="spark-row">
-        <Spark values={s.values} area={s.area} unit={s.unit} label={title} height={bare ? 40 : 32} draw={$grow} />
+        <Spark values={s.values} area={s.area} unit={s.unit} label={title} height={32} draw={$grow} />
         <span class="last">{fmt(s.values[s.values.length - 1], s.unit)}</span>
       </div>
     {:else if s.type === "progress"}
@@ -114,7 +113,7 @@
     {/if}
   </figure>
 {:else if !parsed.ok}
-  <div class="viz bad" class:bare data-viz="error" role="note">
+  <div class="viz bad" data-viz="error" role="note">
     <p class="why"><Icon name="alert" size={12} /><span>{parsed.error}</span></p>
     <details>
       <summary>Source</summary>
@@ -140,13 +139,6 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--panel);
-  }
-  .viz.bare {
-    margin: 0;
-    padding: 0;
-    border: none;
-    border-radius: 0;
-    background: none;
   }
   /* Rows of lists, tables and timelines rise in turn the first time the
      chart is in view. Reduced motion skips it (theme.css). */
@@ -200,7 +192,7 @@
   summary {
     display: inline-flex;
     align-items: center;
-    height: 24px;
+    height: var(--h-sm);
     font-size: var(--fs-sm);
     color: var(--muted);
     cursor: pointer;

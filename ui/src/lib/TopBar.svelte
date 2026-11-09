@@ -171,8 +171,8 @@
     color: var(--text);
   }
   .panel-btn.active {
-    background: transparent;
-    border-color: var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border-color: color-mix(in srgb, var(--line) var(--card-edge), transparent);
     color: var(--text);
   }
 </style>

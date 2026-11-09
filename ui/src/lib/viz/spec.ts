@@ -1,4 +1,3 @@
-
 export const VIZ_TYPES = ["bars", "line", "hist", "spark", "stat", "progress", "table", "list", "timeline"] as const;
 export type VizType = (typeof VIZ_TYPES)[number];
 

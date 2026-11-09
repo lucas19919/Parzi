@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR, SLIDE } from "./motion";
   import { createEventDispatcher, tick } from "svelte";
   import { fade, fly, scale, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -527,7 +528,7 @@
 
 <div class="ob" class:hero data-pop-frame>
   {#if queue.length}
-    
+
     <div class="queue-bar" role="list" aria-label="Queued messages">
       {#if queuePaused}
         <div class="queue-head">
@@ -540,7 +541,7 @@
           class:open={expanded === item.id}
           class:dragover={dragOver === i}
           role="listitem"
-          transition:slide={{ duration: 160, easing: cubicOut }}
+          transition:slide={{ duration: SLIDE, easing: cubicOut }}
           on:dragover|preventDefault={() => (dragOver = i)}
           on:dragleave={() => (dragOver = -1)}
           on:drop|preventDefault={() => queueDrop(i)}
@@ -575,10 +576,9 @@
     </div>
   {/if}
 
-  
   {#if !web && !started}
       {#if remote}
-      <div class="where" transition:slide={{ duration: 160, easing: cubicOut }}>
+      <div class="where" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
         <span>Let's build {remoteProject ? "in" : "on"}</span>
         <button
           bind:this={projBtn}
@@ -592,7 +592,7 @@
         {#if remoteProject && remoteHost}<span>on {remoteHost}</span>{/if}
       </div>
     {:else}
-      <div class="where" transition:slide={{ duration: 160, easing: cubicOut }}>
+      <div class="where" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
         <span>Let's build in</span>
         <button
           bind:this={projBtn}
@@ -638,7 +638,7 @@
     {/if}
 
     {#if blind}
-      <div class="held blind" transition:slide={{ duration: 160, easing: cubicOut }}>
+      <div class="held blind" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
         <Icon name="image" size={12} />
         <span class="held-text">{shownOf(model, board).name} can't see images</span>
         <button class="held-side" on:click={() => picker?.show()}>Change model</button>
@@ -646,9 +646,9 @@
     {/if}
 
     {#if (attachments?.length ?? 0) || (quotes?.length ?? 0)}
-      <div class="attachments" transition:slide={{ duration: 160, easing: cubicOut }}>
+      <div class="attachments" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
         {#each quotes ?? [] as q (`${q.project}/${q.id}`)}
-          <span class="chip quote" transition:scale={{ duration: 140, start: 0.9 }}>
+          <span class="chip quote" transition:scale={{ duration: DUR, start: 0.9 }}>
             <Icon name="plan" size={12} />
             <span class="chip-name">{q.title}</span>
             <button use:tooltip={`Remove ${q.title}`} on:click={() => (quotes = quotes.filter((x) => x !== q))}>
@@ -657,7 +657,7 @@
           </span>
         {/each}
         {#each attachments ?? [] as a (a)}
-          <span class="chip" transition:scale={{ duration: 140, start: 0.9 }}>
+          <span class="chip" transition:scale={{ duration: DUR, start: 0.9 }}>
             {#if thumbs[a]}
               <button class="thumb" aria-label="View {shortName(a)}" use:tooltip={"View"} on:click={() => viewImage(thumbs[a] ?? "", shortName(a))}>
                 <img src={thumbs[a]} alt="" draggable="false" />
@@ -684,7 +684,7 @@
       on:blur={() => (focused = false)}
       on:paste={onPaste}
     />
-    
+
     <div class="tools">
       {#if !web}
         <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
@@ -733,7 +733,7 @@
             on:click={() => setWeb(!web)}
           ><Icon name="globe" /></button>
         {/if}
-        
+
         {#if streaming && !canSubmit}
           <button class="go stop" use:tooltip={"Stop"} on:click={() => dispatch("stop")}><span class="square" /></button>
         {:else}
@@ -748,7 +748,7 @@
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
-    <div class="menu-pop" data-ui-list style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
       {#each projects as p (p.slug)}
         <div class="opt-row" class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug}>
           <button class="opt grow" on:click={() => chooseProject(p)}>
@@ -787,7 +787,7 @@
   {/if}
 
   {#if branchOpen}
-    <div class="menu-pop" data-ui-list style={branchStyle} use:popover={{ anchor: branchBtn, close: () => (branchOpen = false) }} transition:fly={{ y: branchStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={branchStyle} use:popover={{ anchor: branchBtn, close: () => (branchOpen = false) }} transition:fly={{ y: branchStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
       <button class="opt" class:on={!worktree} on:click={() => pickBranch("")}>
         <Icon name="folder" />
         <span class="name">This folder</span>
@@ -807,7 +807,7 @@
   {/if}
 
   {#if effortOpen}
-    <div class="menu-pop" data-ui-list style={effortStyle} use:popover={{ anchor: effortBtn, close: () => (effortOpen = false) }} transition:fly={{ y: effortStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={effortStyle} use:popover={{ anchor: effortBtn, close: () => (effortOpen = false) }} transition:fly={{ y: effortStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
       {#each efforts as level (level)}
         <button
           class="opt"
@@ -825,7 +825,7 @@
   {/if}
 
   {#if permOpen}
-    <div class="menu-pop" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
         {@const off = permissionBlocked(p.id, policy)}
         <button
@@ -897,8 +897,10 @@
     flex-direction: column;
     gap: calc(var(--space) * 3);
     padding: calc(var(--space) * 3);
-    background: none;
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
     box-shadow: none;
   }
@@ -1030,8 +1032,6 @@
     min-width: 0;
   }
 
-
-
   .queue-bar {
     display: flex;
     flex-direction: column;
@@ -1044,7 +1044,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    min-height: 28px;
+    min-height: var(--h);
     padding: 0 var(--space);
   }
   .queue-resume {
@@ -1061,7 +1061,7 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: 36px;
+    min-height: var(--h-row);
     padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: 1px solid var(--line);
@@ -1360,7 +1360,7 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     width: 100%;
-    height: 32px;
+    height: var(--h-field);
     padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;

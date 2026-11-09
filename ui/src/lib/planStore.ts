@@ -24,8 +24,7 @@ const loadPlan = coalesce(async () => {
   try {
     const view = await planApi.view(slug);
     if (slug === project) planState.update((s) => ({ ...s, plan: view.plan, error: view.error ?? "" }));
-  } catch {
-  }
+  } catch {}
 }, 150);
 
 const loadPrs = coalesce(async () => {

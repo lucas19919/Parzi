@@ -1,4 +1,3 @@
-
 export interface TipRow {
   value: string;
   label: string;

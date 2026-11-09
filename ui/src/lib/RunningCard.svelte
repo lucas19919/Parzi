@@ -4,6 +4,7 @@
   import InfoCard from "./InfoCard.svelte";
   import ThinkingFace from "./ThinkingFace.svelte";
   import { api, onRunEvent, type SessionMeta, type ShellJob } from "./api";
+  import { activity } from "./activity";
   import { sessionTone, TONE_WORDS } from "./planModel";
   import { tooltip } from "./tooltip";
 
@@ -44,6 +45,13 @@
     return `${Math.floor(m / 60)}h ${m % 60}m`;
   }
 
+  /** What a subagent is on (its current step), or what it reported. */
+  function detail(h: SessionMeta, tone: string, act: Map<string, { label: string }>): string {
+    if (tone === "need") return "Needs you";
+    if (tone === "live") return act.get(h.id)?.label ?? "";
+    return (h.last_run?.summary ?? "").split("\n")[0].trim();
+  }
+
   async function stop(j: ShellJob) {
     if (await api.shellKill(session, j.id).catch(() => false)) void load();
   }
@@ -78,7 +86,10 @@
       {:else}
         <i class="info-dot t-{tone}" />
       {/if}
-      <span class="info-v">{h.title || "Untitled"}</span>
+      <span class="helper">
+        <span class="info-v">{h.title || "Untitled"}</span>
+        {#if detail(h, tone, $activity)}<span class="detail">{detail(h, tone, $activity)}</span>{/if}
+      </span>
     </button>
   {/each}
   {#each activeJobs as j (j.id)}
@@ -110,6 +121,21 @@
 </InfoCard>
 
 <style>
+  .helper {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+  }
+  .detail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
   .stop {
     width: 20px;
     height: 20px;

@@ -1,4 +1,3 @@
-
 export function safeDecode(s: string): string {
   try {
     return decodeURIComponent(s);

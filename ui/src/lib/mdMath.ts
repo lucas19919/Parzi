@@ -1,4 +1,3 @@
-
 export interface MathSpan {
   display: boolean;
   tex: string;

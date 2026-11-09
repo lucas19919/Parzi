@@ -240,7 +240,7 @@ impl Vault {
             };
             let edits = [
                 ("folder", None),
-                (key.as_str(), Some(format!("{key}: {}", quote(plain)))),
+                (key.as_str(), Some(format!("{key}: {}", yaml_quote(plain)))),
             ];
             if let Ok(text) = rewrite_raw(&raw, &edits) {
                 if atomic_write(&full, &text).is_ok() {
@@ -354,9 +354,9 @@ impl Vault {
         let text = rewrite_raw(
             &raw,
             &[
-                ("title", Some(format!("title: {}", quote(&title)))),
+                ("title", Some(format!("title: {}", yaml_quote(&title)))),
                 ("folder", None),
-                (key.as_str(), Some(format!("{key}: {}", quote(folder)))),
+                (key.as_str(), Some(format!("{key}: {}", yaml_quote(folder)))),
             ],
         )?;
         atomic_write(&full, &text)?;
@@ -792,7 +792,7 @@ impl Block {
     }
 
     fn scalar(&self) -> Option<String> {
-        Some(unquote(self.value())).filter(|v| !v.is_empty())
+        Some(yaml_unquote(self.value())).filter(|v| !v.is_empty())
     }
 
     fn text(&self) -> Option<String> {
@@ -800,7 +800,7 @@ impl Block {
         let mut out = if head.starts_with(['>', '|']) {
             String::new()
         } else {
-            unquote(head)
+            yaml_unquote(head)
         };
         for line in self.lines[1..]
             .iter()
@@ -824,10 +824,10 @@ impl Block {
             self.lines[1..]
                 .iter()
                 .filter_map(|l| l.trim().strip_prefix('-'))
-                .map(unquote)
+                .map(yaml_unquote)
                 .collect()
         } else {
-            vec![unquote(v)]
+            vec![yaml_unquote(v)]
         };
         items.into_iter().filter(|i| !i.is_empty()).collect()
     }
@@ -1221,7 +1221,7 @@ fn list_line(key: &str, items: &[String], block: bool) -> Option<String> {
     if items.is_empty() {
         return None;
     }
-    let quoted = items.iter().map(|i| quote(i));
+    let quoted = items.iter().map(|i| yaml_quote(i));
     Some(if block {
         std::iter::once(format!("{key}:"))
             .chain(quoted.map(|i| format!("  - {i}")))
@@ -1232,7 +1232,9 @@ fn list_line(key: &str, items: &[String], block: bool) -> Option<String> {
     })
 }
 
-fn quote(v: &str) -> String {
+/// A front-matter value, quoted when YAML would read it as something else
+/// (a bool, a list, a comment), on one line.
+pub fn yaml_quote(v: &str) -> String {
     let v = v.replace(['\r', '\n'], " ");
     let v = v.trim();
     let plain = !v.is_empty()
@@ -1252,7 +1254,8 @@ fn quote(v: &str) -> String {
     }
 }
 
-fn unquote(v: &str) -> String {
+/// A front-matter value as written, quotes and escapes undone.
+pub fn yaml_unquote(v: &str) -> String {
     let v = v.trim();
     if let Some(inner) = v.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
         let mut out = String::with_capacity(inner.len());
@@ -1288,11 +1291,11 @@ fn split_inline(s: &str) -> Vec<String> {
                 open = None;
                 cur.push(c);
             }
-            (None, ',') => out.push(unquote(&std::mem::take(&mut cur))),
+            (None, ',') => out.push(yaml_unquote(&std::mem::take(&mut cur))),
             _ => cur.push(c),
         }
     }
-    out.push(unquote(&cur));
+    out.push(yaml_unquote(&cur));
     out
 }
 
@@ -1638,8 +1641,8 @@ mod tests {
             "---\r\nkeep: me\r\npinned: true\r\n---\r\nbody\r\n"
         );
         let tricky = "say \"hi\": C:\\x, [y]";
-        assert_eq!(unquote(&quote(tricky)), tricky);
-        assert_eq!(quote("C:\\code\\parzi"), "C:\\code\\parzi");
+        assert_eq!(yaml_unquote(&yaml_quote(tricky)), tricky);
+        assert_eq!(yaml_quote("C:\\code\\parzi"), "C:\\code\\parzi");
         assert_eq!(split("no front\n---\nx"), (None, "no front\n---\nx"));
         assert_eq!(split("\u{feff}bom body"), (None, "bom body"));
         assert_eq!(

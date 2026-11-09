@@ -26,7 +26,7 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
-    min-height: 28px;
+    min-height: var(--h);
     font-size: var(--fs-md);
   }
   .what {

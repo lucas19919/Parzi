@@ -85,8 +85,7 @@
     try {
       const d = await api.connectorDetails(id);
       details = { ...details, [id]: d };
-    } catch {
-    }
+    } catch {}
   }
 
   $: policyAuto = (cfg?.lanes.default_mode ?? "ask") === "auto";

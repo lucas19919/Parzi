@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR } from "../motion";
   import { onMount, tick } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -21,7 +22,6 @@
   export let fallbackTitle = "";
   export let fallbackKind = "text";
   export let reader = false;
-  export let bare = false;
   /**
    * Inline thread rendering: textual artifacts dissolve into the thread as
    * plain markdown/code, while visual ones (images, showcases, demos) render
@@ -180,7 +180,7 @@
   {/if}
 {:else}
 <div class="art" class:bad class:reader class:outline={inline}>
-  {#if !bare && !inline}
+  {#if !inline}
   <div class="head">
     <button class="name" disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
@@ -192,7 +192,7 @@
   </div>
   {/if}
   {#if menuOpen}
-    <div class="menu-pop" data-ui-list style={menuStyle} use:popover={{ anchor: menuBtn, close: () => (menuOpen = false) }} transition:fly={{ y: 6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={menuStyle} use:popover={{ anchor: menuBtn, close: () => (menuOpen = false) }} transition:fly={{ y: 6, duration: DUR, easing: cubicOut }}>
       {#if canRender}
         <button class="opt" on:click={() => act(() => (showCode = !showCode))}><Icon name="file" size={12} /><span class="name">{showCode ? "Preview" : "Source"}</span></button>
       {/if}
@@ -292,8 +292,10 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
   }
 
@@ -412,7 +414,7 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     width: 100%;
-    height: 32px;
+    height: var(--h-field);
     padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;

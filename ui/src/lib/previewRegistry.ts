@@ -1,9 +1,8 @@
 import Omnibar from "./Omnibar.svelte";
 import type { ComponentType } from "svelte";
-import { parsePreview, PREVIEW_META, previewNames, previewProblem, type PreviewMeta } from "./previewSpec";
+import { parsePreview, PREVIEW_META, previewProblem, type PreviewMeta } from "./previewSpec";
 
-export type { PreviewMeta };
-export { previewNames, previewProblem };
+export { previewProblem };
 
 export interface PreviewEntry extends PreviewMeta {
   component: ComponentType;

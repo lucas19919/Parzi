@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 use crate::provision::{self, Spec, SpecNote, Step, SPEC_VERSION};
 
 pub const REMOTE_BIN: &str = "~/.local/bin/parzi";
-pub const RELEASES: &str = "lucas19919/Parzi";
+const RELEASES: &str = "lucas19919/Parzi";
 const CONNECT: Duration = Duration::from_secs(30);
 const STEP: Duration = Duration::from_secs(120);
 const SETUP_WAIT: Duration = Duration::from_secs(300);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SLIDE } from "./motion";
   import { createEventDispatcher } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -69,7 +70,7 @@
       {:else if !plan}
         <p class="empty">No plan yet. Ask the agent for one when the work spans sessions.</p>
       {:else}
-        <div class="groups" transition:slide={{ duration: 160, easing: cubicOut }}>
+        <div class="groups" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
         {#if plan.goal}<p class="goal t-hint">{plan.goal}</p>{/if}
         {#each groups.open as g (g.phase)}
           {#if phased && g.phase}<div class="phase t-group">{g.phase}</div>{/if}
@@ -122,7 +123,10 @@
   .plan {
     margin: var(--space) 0 0;
     padding: var(--space);
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
   }
   .head-row {
@@ -152,7 +156,7 @@
     align-items: center;
     justify-content: center;
     width: 24px;
-    height: 24px;
+    height: var(--h-sm);
     margin-bottom: var(--space);
     padding: 0;
     background: none;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addressKind, ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, placeTab, sessionTab, pageTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
+import { addressKind, ensureComposer, folderName, hostOf, isExplicitUrl, placeTab, sessionTab, pageTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
 
 test("hostOf strips protocol and path", () => {
   assert.equal(hostOf("https://github.com/lucas/parzi"), "github.com");
@@ -31,12 +31,6 @@ test("isExplicitUrl is strict", () => {
 test("folderName takes the leaf", () => {
   assert.equal(folderName("C:\\src\\parzi"), "parzi");
   assert.equal(folderName("/home/u/app/"), "app");
-});
-
-test("system tabs split from working tabs", () => {
-  assert.equal(isSystemTab(sessionTab()), false);
-  assert.equal(isSystemTab(pageTab("https://example.com")), false);
-  assert.equal(isSystemTab(settingsTab()), true);
 });
 
 test("a composer always has quote and attachment lists", () => {

@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+  import { SLIDE } from "./motion";
   import { createEventDispatcher } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -54,7 +55,7 @@
         </button>
       </div>
       {#if shown}
-        <ul transition:slide={{ duration: 160, easing: cubicOut }}>
+        <ul transition:slide={{ duration: SLIDE, easing: cubicOut }}>
           {#each items as it, i (i)}
             <li class="item {it.state}">
               <span class="mark {it.state}" class:spin={working && it.state === "active"} aria-hidden="true" />
@@ -70,7 +71,10 @@
 <style>
   .todo {
     margin: var(--space) 0 0;
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
   }
   .bar {
@@ -185,11 +189,6 @@
     border: solid var(--bg);
     border-width: 0 1.5px 1.5px 0;
     transform: rotate(45deg);
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   @media (prefers-reduced-motion: reduce) {
     .mark.active.spin {

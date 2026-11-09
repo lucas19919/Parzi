@@ -18,8 +18,7 @@ export function picturesIn(outputs: string[]): string[] {
         add(path);
         continue;
       }
-    } catch {
-    }
+    } catch {}
     for (const m of text.matchAll(FULL)) add(m[0]);
   }
   return out.slice(0, 12);

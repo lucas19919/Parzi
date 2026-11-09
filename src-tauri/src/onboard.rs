@@ -10,6 +10,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::AppState;
+use parzi_core::brain::{yaml_quote, yaml_unquote};
 
 const NOTE_CAP: u64 = 256 * 1024;
 const JSON_CAP: u64 = 8 * 1024 * 1024;
@@ -491,48 +492,6 @@ fn one_line(s: &str) -> String {
     s.replace(['\r', '\n'], " ")
 }
 
-fn yaml(v: &str) -> String {
-    let v = one_line(v);
-    let v = v.trim();
-    let plain = !v.is_empty()
-        && !v.starts_with(|c: char| "[]{}&*!|>'\"%@`#,?:-".contains(c))
-        && !v.contains(": ")
-        && !v.contains(" #")
-        && !v.ends_with(':')
-        && !v.contains([',', '[', ']', '{', '}'])
-        && !matches!(
-            v.to_ascii_lowercase().as_str(),
-            "true" | "false" | "null" | "yes" | "no" | "~"
-        );
-    if plain {
-        v.to_string()
-    } else {
-        format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
-    }
-}
-
-fn unyaml(v: &str) -> String {
-    let v = v.trim();
-    if let Some(inner) = v.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
-        let mut out = String::with_capacity(inner.len());
-        let mut chars = inner.chars().peekable();
-        while let Some(c) = chars.next() {
-            match (c, chars.peek()) {
-                ('\\', Some(&n @ ('\\' | '"'))) => {
-                    out.push(n);
-                    chars.next();
-                }
-                _ => out.push(c),
-            }
-        }
-        return out;
-    }
-    if let Some(inner) = v.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
-        return inner.replace("''", "'");
-    }
-    v.split(" #").next().unwrap_or_default().trim().to_string()
-}
-
 fn claude_encode(path: &str) -> String {
     path.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -598,7 +557,7 @@ fn front_field(s: &str, field: &str) -> Option<String> {
             break;
         }
         if let Some(v) = line.strip_prefix(field).and_then(|r| r.strip_prefix(':')) {
-            return Some(unyaml(v));
+            return Some(yaml_unquote(v));
         }
     }
     None
@@ -1044,8 +1003,8 @@ fn ensure_project(
         &vault.join("projects").join(format!("{slug}.md")),
         &format!(
             "---\ntitle: {}\nfolder: {}\n---\n\n# {}\n",
-            yaml(&name),
-            yaml(&path),
+            yaml_quote(&name),
+            yaml_quote(&path),
             one_line(&name)
         ),
     )?;
@@ -1082,12 +1041,12 @@ fn write_note(
     let description = front_field(&text, "description")
         .map(|d| one_line(&d))
         .filter(|d| !d.is_empty())
-        .map(|d| format!("description: {}\n", yaml(&d)))
+        .map(|d| format!("description: {}\n", yaml_quote(&d)))
         .unwrap_or_default();
     let mut out = format!(
         "---\ntitle: {}\nsource: {}\n{description}{projects}---\n\n{}",
-        yaml(&c.note.title),
-        yaml(&format!("{}:{}", c.tool, tilde(src, &env.home))),
+        yaml_quote(&c.note.title),
+        yaml_quote(&format!("{}:{}", c.tool, tilde(src, &env.home))),
         strip_frontmatter(&text)
     );
     if !out.ends_with('\n') {
@@ -1622,11 +1581,11 @@ mod tests {
         let doc = "---\ntitle: A\nfolder: \"C:\\a\"\n---\n";
         assert_eq!(front_field(doc, "folder").as_deref(), Some("C:\\a"));
         assert_eq!(front_field(doc, "missing"), None);
-        assert_eq!(yaml("alpha memory"), "alpha memory");
-        assert_eq!(yaml(r"C:\work\alpha"), r"C:\work\alpha");
+        assert_eq!(yaml_quote("alpha memory"), "alpha memory");
+        assert_eq!(yaml_quote(r"C:\work\alpha"), r"C:\work\alpha");
         let odd = r#"a #1, "b" \c"#;
-        assert_eq!(unyaml(&yaml(odd)), odd);
-        assert_eq!(unyaml("plain # note"), "plain");
+        assert_eq!(yaml_unquote(&yaml_quote(odd)), odd);
+        assert_eq!(yaml_unquote("plain # note"), "plain");
     }
 
     #[test]

@@ -1,4 +1,3 @@
-
 export interface PreviewMeta {
   name: string;
   title: string;

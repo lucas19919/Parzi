@@ -82,15 +82,3 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
     },
   };
 }
-
-export function portal(node: HTMLElement) {
-  const key = `portal-${++seq}`;
-  document.body.appendChild(node);
-  setOverlay(key, true);
-  return {
-    destroy() {
-      setOverlay(key, false);
-      node.remove();
-    },
-  };
-}

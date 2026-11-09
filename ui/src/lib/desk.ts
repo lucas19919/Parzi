@@ -2,7 +2,7 @@ import type { Tab } from "./tabs";
 
 export interface DeskTab {
   id: string;
-  kind: "browser" | "session" | "settings" | "preview" | "artifact";
+  kind: "browser" | "session" | "artifact";
   title: string;
   url: string;
   session_id: string;
@@ -27,10 +27,6 @@ export interface DeskCmd {
   allow?: boolean;
   label?: string;
 }
-
-
-
-
 
 export function deskRows(tabs: Tab[]): DeskTab[] {
   return tabs.map((t) => ({

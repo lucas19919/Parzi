@@ -25,8 +25,6 @@
   let packName = "";
   let fileInputEl: HTMLInputElement | null = null;
 
-
-
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
   const MONO_FONTS = ["JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "SF Mono", "ui-monospace"];
   const SIZES_UI = [12, 13, 14, 15, 16].map((n) => ({ value: String(n), label: String(n) }));
@@ -409,8 +407,8 @@
         </div>
       </div>
       <div class="row ctl-row">
-        <span class="row-label">Cards on Home</span>
-        <SegControl label="Cards on Home" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
+        <span class="row-label">Cards</span>
+        <SegControl label="Cards" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
       </div>
       {#if theme.background.image}
         <div class="row ctl-row">

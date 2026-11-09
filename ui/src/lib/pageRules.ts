@@ -1,4 +1,3 @@
-
 const PERMISSION_TEXT: Record<string, string> = {
   camera: "use your camera",
   microphone: "use your microphone",
@@ -105,9 +104,6 @@ export function iconFor(icons: Record<string, string>, url: string): string {
   return icons[origin] ?? `${origin}/favicon.ico`;
 }
 
-
-
-
 export function rememberIcon(icons: Record<string, string>, pageUrl: string, icon: string, max = 300): Record<string, string> | null {
   const origin = originOf(pageUrl);
   const usable = (/^https:\/\//i.test(icon) && icon.length <= 1024) || (/^data:image\/png;base64,/i.test(icon) && icon.length <= 8192);
@@ -137,9 +133,6 @@ export interface Box {
 function overlaps(a: Box, b: Box): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
-
-
-
 
 export function tipSpot(
   anchor: Box,
