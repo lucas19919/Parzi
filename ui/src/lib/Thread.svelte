@@ -774,7 +774,7 @@ ${e.text}` : e.text;
   
   {#if activityShown}
     <div transition:fade|local={spring}>
-      <LiveActivity tools={stepsShown ? liveTools : []} said={stepsShown ? liveSaid : ""} helpers={liveHelpers} on:open={(e) => dispatch("openSession", e.detail)} />
+      <LiveActivity shown={2} tools={stepsShown ? liveTools : []} said={stepsShown ? liveSaid : ""} helpers={liveHelpers} on:open={(e) => dispatch("openSession", e.detail)} />
     </div>
   {/if}
 
@@ -875,10 +875,12 @@ ${e.text}` : e.text;
 </div>
 
 <style>
+  /* Room to read: blocks in a turn sit 16px apart, and each of the
+     person's messages opens a new turn with a clear break above it. */
   .thread-col {
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 3);
+    gap: calc(var(--space) * 4);
     width: 100%;
     max-width: calc(var(--read) + 48px);
     margin: 0 auto;
@@ -892,7 +894,7 @@ ${e.text}` : e.text;
     align-items: flex-end;
   }
   .row.user:not(:first-child) {
-    margin-top: calc(var(--space) * 4);
+    margin-top: calc(var(--space) * 8);
   }
   .fold {
     align-self: flex-start;

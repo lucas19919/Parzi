@@ -7,7 +7,8 @@
   import type { LiveTool } from "./live";
 
   /** What a running agent is doing, in the thread, without opening a fold:
-   *  its last few steps as they run, and the last thing it said or thought.
+   *  its latest steps as they run, and the last thing it said or thought,
+   *  kept light: two steps, one line, a time only for a slow step.
    *  At the end of the turn it folds into "Worked for…" with the rest. */
   export let tools: LiveTool[] = [];
   export let said = "";
@@ -30,7 +31,7 @@
         {#if t.running}<span class="spin" aria-label="Running" />{:else if t.ok}<Icon name="check" size={12} />{:else}<Icon name="close" size={12} />{/if}
       </span>
       <span class="label">{t.label}</span>
-      {#if !t.running && t.ms >= 1000}<span class="ms">{secs(t.ms)}</span>{/if}
+      {#if !t.running && t.ms >= 5000}<span class="ms">{secs(t.ms)}</span>{/if}
     </div>
   {/each}
   {#if helpers.length}
@@ -62,8 +63,8 @@
     font-size: var(--fs-md);
     line-height: 20px;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
