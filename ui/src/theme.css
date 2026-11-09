@@ -61,6 +61,8 @@
   --mono-size: 13px;
   --read: 772px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Even in and out: for a cross-fade that should be seen whole. */
+  --ease-even: cubic-bezier(0.4, 0, 0.2, 1);
   --dur: 140ms;
   --dur-fast: 60ms;
   --disabled: 0.5;
