@@ -34,7 +34,7 @@
     </div>
   {/each}
   {#if helpers.length}
-    <div class="helpers" class:gap={!!recent.length || !!said}>
+    <div class="helpers">
       {#each helpers as h (h.id)}
         <button class="helper" on:click={() => dispatch("open", { id: h.id })} in:fly|local={{ y: 4, duration: 160, easing: cubicOut }}>
           <span class="mark">{#if h.need}<i class="need" />{:else}<ThinkingFace size={14} />{/if}</span>
@@ -48,31 +48,34 @@
 </div>
 
 <style>
+  /* The same two columns as the working line below: a 22px mark (the
+     face's width) at the thread's edge, then the text. Every row 24px. */
   .activity {
+    --mark: 22px;
+    --col: calc(var(--space) * 3);
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    padding-left: calc(var(--space) * 3);
-    border-left: 1px solid var(--line);
   }
   .said {
-    margin: 0 0 var(--space);
+    margin: 0 0 var(--space) calc(var(--mark) + var(--col));
     color: var(--muted);
     font-size: var(--fs-md);
-    line-height: 1.5;
+    line-height: 20px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .step {
+  .step,
+  .helper {
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
+    gap: var(--col);
     min-width: 0;
-    height: 20px;
+    height: 24px;
     font-size: var(--fs-md);
+    line-height: 20px;
     color: var(--text);
   }
   .step.done {
@@ -83,15 +86,17 @@
   }
   .mark {
     flex: none;
-    width: 14px;
+    width: var(--mark);
+    height: 20px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: var(--muted);
   }
   .spin {
-    width: 10px;
-    height: 10px;
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     border: 1.5px solid color-mix(in srgb, var(--text) 25%, transparent);
     border-top-color: var(--text);
@@ -110,28 +115,18 @@
     color: var(--faint);
     font-variant-numeric: tabular-nums;
   }
-  .helpers {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-  }
-  .helpers.gap {
-    margin-top: var(--space);
-  }
+  /* A subagent row is a button whose hover reaches a little past the
+     columns; its content stays on them. */
   .helper {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    min-width: 0;
-    height: 24px;
-    margin-left: calc(var(--space) * -2);
+    width: calc(100% + var(--space) * 4);
+    margin: 0 calc(var(--space) * -2);
     padding: 0 calc(var(--space) * 2);
     border: none;
     border-radius: var(--radius-sm);
     background: none;
-    color: var(--text);
     font: inherit;
     font-size: var(--fs-md);
+    line-height: 20px;
     text-align: left;
     cursor: pointer;
   }
