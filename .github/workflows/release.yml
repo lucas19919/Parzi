@@ -228,23 +228,9 @@ jobs:
           fi
           gh release upload updater-dev out/latest.json --clobber
 
-  # Old dev builds are clutter on the releases page once a newer build is
-  # out: each release removes the dev pre-releases before it (a full
-  # release removes them all). Their tags stay, so any one can be rebuilt.
-  # The rolling updater-dev release is not a dev build and stays.
+  # Old dev builds and stale drafts off the releases page (prune.yml).
   prune:
     needs: [prepare, channel]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Remove older dev pre-releases
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          gh release list --limit 200 --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease) | .tagName' \
-            | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$' || true; } \
-            | { grep -vxF "$TAG" || true; } \
-            | while read -r t; do
-                echo "Removing the $t release (the tag stays)"
-                gh release delete "$t" --yes
-              done
+    uses: ./.github/workflows/prune.yml
+    with:
+      keep: ${{ needs.prepare.outputs.tag }}
