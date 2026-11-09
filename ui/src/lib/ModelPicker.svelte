@@ -85,7 +85,7 @@
     query = "";
     open = true;
     if (trigger) {
-      style = placeAbove(trigger, 280, true);
+      style = placeAbove(trigger, 280);
       above = style.includes("bottom:");
     }
     index = 0;

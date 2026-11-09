@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- The composer's menus (model, effort, permissions, project, branch) open the same way every time: just above the composer, on one line, each lined up with its button, and below it only when the window is too short. The model menu no longer spills out past the composer's left edge.
 - On Home over the wallpaper with glass cards, the composer's menus (model, effort, project, branch) are glass too, instead of solid panels with an outline.
 - Going from Home to a session and back eases instead of cutting: the wallpaper dissolves over half a second, and the glass cards and tabs turn solid, with their outlines fading in, over the same time.
 - Light themes with the wallpaper filling the window show Home over a dimmed picture with white title bar text, and the cards and composer as light frosted glass with dark text, the same over any image. With the wallpaper as a band, light themes show it in its own colours, with no white veil.
