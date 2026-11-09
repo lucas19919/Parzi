@@ -359,6 +359,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
+  // Popups live on <body>, outside .shell: this lets them match the glass.
+  $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-over-art", overArt);
 
   /* For a moment after Home goes onto or off the wallpaper, the glass, the
      outlines and the colours ease to their new look (.art-shift) instead of
