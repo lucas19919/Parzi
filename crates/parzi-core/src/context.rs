@@ -79,7 +79,7 @@ pub fn encode_image(path: &str, bytes: &[u8]) -> Option<ImageData> {
     })
 }
 
-pub const IMAGE_FILE_CAP: u64 = 20 * 1024 * 1024;
+const IMAGE_FILE_CAP: u64 = 20 * 1024 * 1024;
 const TEXT_READ_CAP: u64 = 48 * 1024;
 const TEXT_CHARS: usize = 12_000;
 

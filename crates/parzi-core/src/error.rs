@@ -57,8 +57,7 @@ fn unquoted(s: &str) -> String {
     out
 }
 
-#[allow(clippy::needless_pass_by_value)]
-pub(crate) fn io_at(path: &Path, e: std::io::Error) -> ParziError {
+pub(crate) fn io_at(path: &Path, e: &std::io::Error) -> ParziError {
     ParziError::Io(std::io::Error::new(
         e.kind(),
         format!("{}: {e}", path.display()),
@@ -78,7 +77,7 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent).map_err(|e| io_at(parent, e))?;
+    std::fs::create_dir_all(parent).map_err(|e| io_at(parent, &e))?;
     let name = path
         .file_name()
         .map_or("file".into(), |n| n.to_string_lossy());
@@ -95,11 +94,11 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
     })();
     if let Err(e) = write {
         let _ = std::fs::remove_file(&tmp);
-        return Err(io_at(path, e));
+        return Err(io_at(path, &e));
     }
     if let Err(e) = patiently(|| std::fs::rename(&tmp, path)) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(io_at(path, e));
+        return Err(io_at(path, &e));
     }
     Ok(())
 }

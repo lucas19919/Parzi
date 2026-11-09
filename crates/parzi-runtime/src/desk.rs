@@ -10,7 +10,7 @@ use tokio::time::Instant;
 
 const CONNECT_WAIT: Duration = Duration::from_millis(600);
 const HELLO_WAIT: Duration = Duration::from_millis(1500);
-pub const CONFIRM_WAIT: Duration = Duration::from_secs(600);
+const CONFIRM_WAIT: Duration = Duration::from_secs(600);
 pub const PAGE_STEP: Duration = Duration::from_secs(25);
 const PAGE_DEADLINE: Duration = Duration::from_secs(45);
 pub const WAIT_DEFAULT_MS: u64 = 10_000;

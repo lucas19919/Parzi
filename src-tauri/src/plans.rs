@@ -14,7 +14,7 @@ use crate::AppState;
 
 const PRS_FRESH: Duration = Duration::from_secs(60);
 const GH_BUDGET: Duration = Duration::from_secs(20);
-pub(crate) const MAX_QUOTES: usize = 4;
+const MAX_QUOTES: usize = 4;
 
 pub(crate) fn watch(app: &AppHandle) {
     let app = app.clone();

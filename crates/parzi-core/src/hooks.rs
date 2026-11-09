@@ -63,7 +63,7 @@ fn read_file(path: &Path) -> Result<HookSet> {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HookSet::default()),
-        Err(e) => return Err(io_at(path, e)),
+        Err(e) => return Err(io_at(path, &e)),
     };
     if raw.trim().is_empty() {
         return Ok(HookSet::default());

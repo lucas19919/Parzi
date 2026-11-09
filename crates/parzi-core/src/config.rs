@@ -323,7 +323,7 @@ impl ParziConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| io_at(&path, e))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| io_at(&path, &e))?;
         let mut cfg: Self = toml::from_str(&text)?;
         cfg.check_version()?;
         cfg.migrate();

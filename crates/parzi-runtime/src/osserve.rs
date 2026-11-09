@@ -618,7 +618,7 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         }
         "doctor" => json!({
             "ok": true,
-            "checks": crate::doctor::Doctor::new(state.orch.config()).run_quick().await,
+            "checks": crate::doctor::Doctor::new(state.orch.config()).run_quick(),
         }),
         _ => json!({ "ok": false, "error": format!("unknown op `{op}`") }),
     }
@@ -720,7 +720,8 @@ async fn session_send(state: &State, req: &Value) -> Value {
     } else {
         state.approver.clone()
     };
-    let project = parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
+    // Off the async thread, and never a network path (which can hang).
+    let project = crate::rpc::project_for(&cwd).await;
     let cause = parzi_core::store::RunCause::parse(&str_arg(req, "cause"))
         .filter(|c| c.from_person())
         .unwrap_or_default();

@@ -34,45 +34,50 @@ impl Doctor {
         Self { cfg }
     }
 
+    /// Every check, providers included (they take a moment to ask).
     pub async fn run(&self) -> Vec<Check> {
-        let mut out = vec![
-            self.check_dirs(),
-            self.check_config(),
-            self.check_theme(),
-            Self::check_hooks(),
-        ];
+        let mut out = Self::local();
         out.extend(self.check_providers().await);
-        out.push(Self::check_routing());
-        out.push(self.check_webview());
+        out.extend(Self::platform());
         out
     }
 
-    pub async fn run_quick(&self) -> Vec<Check> {
+    /// The checks that need nothing beyond this machine's files.
+    #[must_use]
+    pub fn run_quick(&self) -> Vec<Check> {
+        let mut out = Self::local();
+        out.extend(Self::platform());
+        out
+    }
+
+    fn local() -> Vec<Check> {
         vec![
-            self.check_dirs(),
-            self.check_config(),
-            self.check_theme(),
+            Self::check_dirs(),
+            Self::check_config(),
+            Self::check_theme(),
             Self::check_hooks(),
-            Self::check_routing(),
-            self.check_webview(),
         ]
     }
 
-    fn check_dirs(&self) -> Check {
+    fn platform() -> [Check; 2] {
+        [Self::check_routing(), Self::check_webview()]
+    }
+
+    fn check_dirs() -> Check {
         match paths::ensure_dirs() {
             Ok(p) => Check::ok("dirs", format!("ok at {}", p.display())),
             Err(e) => Check::fail("dirs", e.to_string()),
         }
     }
 
-    fn check_config(&self) -> Check {
+    fn check_config() -> Check {
         match ParziConfig::load() {
             Ok(c) => Check::ok("config", format!("version {} ok", c.version)),
             Err(e) => Check::fail("config", e.to_string()),
         }
     }
 
-    fn check_theme(&self) -> Check {
+    fn check_theme() -> Check {
         match parzi_core::theme::Theme::load() {
             Ok(_) => Check::ok("theme", "theme.toml parses"),
             Err(e) => Check::fail("theme", e.to_string()),
@@ -127,7 +132,7 @@ impl Doctor {
     }
 
     #[cfg(windows)]
-    fn check_webview(&self) -> Check {
+    fn check_webview() -> Check {
         let key = reg_key_version();
         match key {
             Some(v) => Check::ok("webview2", format!("Edge/WebView2 {v}")),
@@ -136,12 +141,12 @@ impl Doctor {
     }
 
     #[cfg(target_os = "macos")]
-    fn check_webview(&self) -> Check {
+    fn check_webview() -> Check {
         Check::ok("webview", "system WKWebView")
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
-    fn check_webview(&self) -> Check {
+    fn check_webview() -> Check {
         Check::ok("webview", "check runs on Windows and macOS targets")
     }
 }

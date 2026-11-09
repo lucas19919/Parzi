@@ -30,7 +30,7 @@ pub fn io_counts() -> (u64, u64, u64) {
     )
 }
 
-pub(crate) const MAX_SESSIONS: usize = 16;
+const MAX_SESSIONS: usize = 16;
 
 #[derive(Debug, Default)]
 pub(crate) struct SessionCache {
@@ -104,7 +104,6 @@ impl StoreCache {
 
 #[derive(Debug, serde::Deserialize)]
 struct Stamped {
-    #[allow(dead_code)]
     at: Option<i64>,
     ev: Event,
 }

@@ -12,13 +12,13 @@ use parzi_providers::process::CREATE_NO_WINDOW;
 
 pub const FOREGROUND_DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 pub const FOREGROUND_MAX_TIMEOUT: Duration = Duration::from_secs(600);
-pub const OUTPUT_CAP: usize = 12 * 1024;
+const OUTPUT_CAP: usize = 12 * 1024;
 const RING_KEEP: usize = 64 * 1024;
 const SPILL_CAP: u64 = 8 * 1024 * 1024;
 const STDERR_KEEP: usize = 16 * 1024;
 const DRAIN_FOR: Duration = Duration::from_secs(2);
 pub const MAX_BACKGROUND_PER_SESSION: usize = 8;
-pub const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
+const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
 fn ingest_output(
     ring: &mut Vec<u8>,

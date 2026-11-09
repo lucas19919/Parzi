@@ -173,7 +173,7 @@ pub struct RunOutcome {
 impl RunOutcome {
     pub const SUMMARY_CAP: usize = 600;
     pub const FILES_CAP: usize = 20;
-    pub const CHECKS_CAP: usize = 10;
+    const CHECKS_CAP: usize = 10;
 
     #[must_use]
     pub fn bare(end: RunEndKind, ended: u64) -> Self {
