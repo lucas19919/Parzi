@@ -525,7 +525,7 @@
   }
 </script>
 
-<div class="ob" class:hero>
+<div class="ob" class:hero data-pop-frame>
   {#if queue.length}
     
     <div class="queue-bar" role="list" aria-label="Queued messages">

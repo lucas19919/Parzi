@@ -22,16 +22,48 @@
 </script>
 
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { fade } from "svelte/transition";
 
   export let bg = "";
   const noise = noiseTile();
+
+  /* Leaving Home, the picture fades out by a CSS transition rather than a
+     Svelte one. Opening a session can hold the page for a moment while the
+     thread renders; a Svelte fade is timed from the click and would be all
+     but over by the first frame, so the picture would vanish. A CSS
+     transition starts from the first frame that shows the change. */
+  let shown = bg;
+  let leaving = false;
+  let fallback: ReturnType<typeof setTimeout> | undefined;
+  $: follow(bg);
+  function follow(next: string) {
+    clearTimeout(fallback);
+    if (next) {
+      shown = next;
+      leaving = false;
+    } else if (shown) {
+      leaving = true;
+      fallback = setTimeout(gone, 1500);
+    }
+  }
+  function gone() {
+    if (!leaving) return;
+    shown = "";
+    leaving = false;
+  }
+  onDestroy(() => clearTimeout(fallback));
 </script>
 
 <div class="backdrop">
-  {#if bg}
-    <div class="art" transition:fade={{ duration: 200 }}>
-      <img src={bg} alt="" />
+  {#if shown}
+    <div
+      class="art"
+      class:leaving
+      in:fade={{ duration: 220 }}
+      on:transitionend={(e) => e.target === e.currentTarget && gone()}
+    >
+      <img src={shown} alt="" />
       <div class="shade" />
       <div class="grain" aria-hidden="true" style:background-image={noise ? `url(${noise})` : undefined} />
     </div>
@@ -57,6 +89,17 @@
 
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 28%, black 55%, transparent 100%);
     mask-image: linear-gradient(to bottom, transparent 0, black 28%, black 55%, transparent 100%);
+    /* An even curve: the app's sharp ease-out would clear the picture in
+       the first few frames, which reads as a cut. */
+    transition: opacity 520ms var(--ease-even);
+  }
+  .art.leaving {
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .art {
+      transition-duration: 1ms;
+    }
   }
   img {
     position: absolute;

@@ -358,6 +358,30 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
+  $: overArt = showWallpaper && !!bg;
+  // Popups live on <body>, outside .shell: this lets them match the glass.
+  $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-over-art", overArt);
+
+  /* For a moment after Home goes onto or off the wallpaper, the glass, the
+     outlines and the colours ease to their new look (.art-shift) instead of
+     switching at once, alongside the picture's fade (DefaultArt). */
+  let artShift = false;
+  let wasOverArt = false;
+  let artShiftTimer: ReturnType<typeof setTimeout> | undefined;
+  $: shiftArt(overArt);
+  function shiftArt(on: boolean) {
+    if (on === wasOverArt) return;
+    wasOverArt = on;
+    if (reduced) return;
+    artShift = true;
+    clearTimeout(artShiftTimer);
+    // Counted from the first frame that shows the change: opening a session
+    // can hold the page a moment, and the ease must not be cut short.
+    requestAnimationFrame(() => {
+      clearTimeout(artShiftTimer);
+      artShiftTimer = setTimeout(() => (artShift = false), 620);
+    });
+  }
 
   function clearCover() {
     cover = null;
@@ -1933,7 +1957,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
-<div class="shell" class:over-art={showWallpaper && !!bg}>
+<div class="shell" class:over-art={overArt} class:art-shift={artShift}>
   <DefaultArt bg={showWallpaper ? bg : ""} />
 
   {#if !immersive}
@@ -2276,6 +2300,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
+  }
+  /* Onto or off the wallpaper: the change eases over about the picture's
+     fade, so glass turns solid and outlines come in rather than snap. */
+  .art-shift :global(:is(.info .card, .files .card, .ob .box, .tabs .tab, .panel-btn, .info .card .btn)) {
+    transition:
+      background 480ms var(--ease-even),
+      border-color 480ms var(--ease-even),
+      color 480ms var(--ease-even),
+      backdrop-filter 480ms var(--ease-even),
+      -webkit-backdrop-filter 480ms var(--ease-even),
+      transform 160ms ease;
   }
   /* Buttons on glass are one surface with it: a faint wash of the text
      colour that lets the picture through, no grey fill and no outline. */
