@@ -4,7 +4,7 @@
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { handleLinkClick } from "./links";
-  import { codeBlockClick, mdHtml, richReady, splitSegments, LiveMarkdown } from "./md";
+  import { codeBlockClick, htmlBlocks, liveHtml, mdHtml, richReady, splitSegments } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Viz from "./viz/Viz.svelte";
@@ -136,7 +136,6 @@
 
   let copied = "";
   let saved = "";
-  const liveMd = new LiveMarkdown();
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
@@ -276,10 +275,22 @@
           : status || "Working…";
   $: lineTokens = Math.round((liveText.length + liveReasoning.length) / 4);
   $: showLiveSteps = !!liveReasoning || liveTools.length > 0;
-  $: if (!liveText) liveMd.reset();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
   $: tailIdx = liveSegs.map((s) => s.kind).lastIndexOf("md");
-  $: livePart = tailIdx >= 0 ? liveMd.render(String(liveSegs[tailIdx].body)) : { head: "", tail: "" };
+  // Only the block being written is rendered again each frame; the page
+  // patches just the blocks that changed (htmlBlocks).
+  $: liveBlockHtml = tailIdx >= 0 ? liveHtml(String(liveSegs[tailIdx].body), $richReady) : [];
+
+  /** Folds a block away, closing the gap above it too (a plain slide
+   *  leaves the parent's gap and then jumps it shut). */
+  function foldAway(node: HTMLElement) {
+    const h = node.offsetHeight;
+    const gap = parseFloat(getComputedStyle(node.parentElement ?? node).rowGap) || 0;
+    return {
+      duration: 200,
+      css: (t: number) => `overflow: hidden; height: ${t * h}px; margin-top: ${(t - 1) * gap}px; opacity: ${t};`,
+    };
+  }
 
   function arg(args: unknown, ...keys: string[]): string {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -755,22 +766,27 @@ ${e.text}` : e.text;
     </div>
   {/if}
 
-  {#each liveSegs as seg, i}
-    {#if seg.kind === "md" && i === tailIdx}
-      <div class="msg">
-        {#if livePart.head}<div class="live-head">{@html livePart.head}</div>{/if}
-        <div class="live-tail">{@html livePart.tail}</div>
+  <!-- Laid out exactly as the saved message that replaces it at the end of
+       the turn, so the swap moves nothing. -->
+  {#if liveSegs.length}
+    <div class="row">
+      <div class="body">
+        {#each liveSegs as seg, i}
+          {#if seg.kind === "md" && i === tailIdx}
+            <div class="msg" use:htmlBlocks={liveBlockHtml}></div>
+          {:else if seg.kind === "md"}
+            <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
+          {:else if seg.kind === "widget"}
+            <Widget data={seg.body} />
+          {:else if seg.kind === "artifact"}
+            <ArtifactCard data={seg.body} inline />
+          {:else if seg.kind === "viz"}
+            <Viz spec={seg.body} />
+          {/if}
+        {/each}
       </div>
-    {:else if seg.kind === "md"}
-      <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
-    {:else if seg.kind === "widget"}
-      <Widget data={seg.body} />
-    {:else if seg.kind === "artifact"}
-      <ArtifactCard data={seg.body} inline />
-    {:else if seg.kind === "viz"}
-      <Viz spec={seg.body} />
-    {/if}
-  {/each}
+    </div>
+  {/if}
 
     {#each liveArtifacts.filter((a) => a.version > (newest.get(a.id) ?? 0)) as a (a.id)}
     {#key a.version}
@@ -779,7 +795,9 @@ ${e.text}` : e.text;
   {/each}
 
   {#if todo && !$dockedTodos.has(session)}<TodoList {todo} working={streaming} on:dock={() => setTodoDocked(session, true)} />{/if}
-  {#if streaming}<LiveLine text={lineText} tokens={lineTokens} />{/if}
+  <!-- Folds away rather than vanishing, so the reply above glides the last
+       few pixels as the saved message's actions take its place. -->
+  {#if streaming}<div class="live-slot" out:foldAway|local><LiveLine text={lineText} tokens={lineTokens} /></div>{/if}
   {#if !streaming && replyAt >= 0}
     {@const offer = items[replyAt]}
     {#if offer.kind === "widget"}
@@ -1038,15 +1056,6 @@ ${e.text}` : e.text;
     background: var(--line);
     color: var(--text);
   }
-  .live-head {
-    opacity: 0.72;
-  }
-  .live-head :global(p:last-child) {
-    margin-bottom: 0.55em;
-  }
-  .live-tail {
-    color: var(--text);
-  }
   .system {
     font-family: var(--mono);
     font-size: var(--fs-sm);
@@ -1224,9 +1233,8 @@ ${e.text}` : e.text;
     border-color: transparent;
     color: var(--text);
   }
-  @media (prefers-reduced-motion: reduce) {
-    .live-head {
-      opacity: 1;
-    }
+  .live-slot {
+    display: flex;
+    flex-direction: column;
   }
 </style>

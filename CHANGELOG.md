@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Replies stream smoothly: only the paragraph, list, table or code block being written changes, so earlier text no longer flickers or loses your selection while the agent writes. Text comes in at an even pace, a long code block stays open until it is finished, words after a card start a new paragraph, scrolling up mid-reply lets go of the bottom at once, and the end of a turn no longer shifts or dims the reply.
 - The card style on Home (Clear, Glass or Solid, in Settings, Appearance) works with or without a wallpaper.
 - The releases page keeps itself tidy: each release removes the older dev builds and drafts left by a release that never finished. Actions, Prune releases runs it by hand.
 - The composer's menus (model, effort, permissions, project, branch) open the same way every time: just above the button, lined up with it, and below only when the window is too short. The model menu no longer spills out past the composer's left edge.

@@ -331,6 +331,8 @@ function transcript() {
       }
     }
   }
+  // ?stream=1 saves what it streamed, as the engine would at turn end.
+  for (const e of (globalThis as { __mockSaved?: unknown[] }).__mockSaved ?? []) out.push(e);
   return out;
 }
 

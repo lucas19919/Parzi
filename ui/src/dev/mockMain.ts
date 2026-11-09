@@ -125,6 +125,60 @@ if (mockLive) {
   tick();
   setInterval(tick, 4000);
 }
+// ?stream=1 streams a reply into the open session (view=session), in the
+// uneven bursts real agents send: prose, a list, a long code block, a table,
+// a step in between, then the end of the turn.
+if (new URLSearchParams(location.search).get("stream")) {
+  const code = Array.from({ length: 40 }, (_, i) => `  const step${i} = measure(el, ${i}); // line ${i + 1}`).join("\n");
+  const first = "I'll check how the composer measures itself.";
+  const reply = [
+    "The freeze comes from **autosize** measuring the whole textarea on every key. Here is what changes:",
+    "",
+    "1. Measure once per frame, not per key.",
+    "2. Cache the line height, which never changes while typing.",
+    "3. Skip the measure entirely when the text did not wrap.",
+    "",
+    "```ts",
+    "export function autosize(el: HTMLTextAreaElement) {",
+    code,
+    "}",
+    "```",
+    "",
+    "| Case | Before | After |",
+    "| --- | ---: | ---: |",
+    "| 1 line | 4 ms | 0.2 ms |",
+    "| 300 lines | 61 ms | 0.4 ms |",
+    "",
+    "That keeps typing smooth even in very long drafts. I also added a test that types 300 lines and checks no frame takes longer than 8 ms.",
+  ].join("\n");
+  const sid = "s1";
+  const burst = async (text: string) => {
+    let i = 0;
+    while (i < text.length) {
+      const n = 4 + Math.floor(Math.random() * 40);
+      await emit("parzi://run-event", { kind: "text", session: sid, text: text.slice(i, i + n) });
+      i += n;
+      await new Promise((r) => setTimeout(r, 20 + Math.random() * 40));
+    }
+  };
+  (window as unknown as { __stream: Promise<void> }).__stream = (async () => {
+    await new Promise((r) => setTimeout(r, 400));
+    await burst(first);
+    await emit("parzi://run-event", { kind: "tool_call", session: sid, id: "st1", name: "Read", label: "Reading ui/src/lib/autosize.ts" });
+    await new Promise((r) => setTimeout(r, 300));
+    await emit("parzi://run-event", { kind: "tool_result", session: sid, id: "st1", name: "Read", ok: true, ms: 300 });
+    await burst(reply);
+    await new Promise((r) => setTimeout(r, 300));
+    (globalThis as { __mockSaved?: unknown[] }).__mockSaved = [
+      { kind: "user", text: "Why does typing stall?" },
+      { kind: "assistant", text: first, done: true },
+      { kind: "tool_call", id: "st1", name: "Read", label: "Reading ui/src/lib/autosize.ts", args: {} },
+      { kind: "tool_result", id: "st1", name: "Read", ok: true, ms: 300, output: "" },
+      { kind: "assistant", text: reply, done: true },
+    ];
+    await emit("parzi://run-event", { kind: "done", session: sid });
+  })();
+}
 document.documentElement.setAttribute("data-app-ready", "");
 
 export {};

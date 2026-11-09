@@ -543,6 +543,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function clearLive() {
     cancelAnimationFrame(revealing);
     revealing = 0;
+    revealAt = 0;
     pending = "";
     live = "";
     liveReasoning = "";
@@ -1536,14 +1537,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (name === "settings") openSettings();
   }
 
-  function revealLive() {
+  // Text arrives in bursts; it is shown at an even pace measured in time,
+  // not frames: at least 600 characters a second, faster when behind so the
+  // backlog clears in about a tenth of a second. Same speed at 60 or 120Hz.
+  let revealAt = 0;
+  function revealLive(now: number) {
     revealing = 0;
     if (!pending) return;
-    let cut = Math.min(pending.length, Math.max(3, Math.ceil(pending.length / 6)));
+    const dt = Math.min(64, revealAt ? now - revealAt : 16);
+    revealAt = now;
+    let cut = Math.min(pending.length, Math.max(1, Math.ceil(dt * 0.6), Math.ceil((pending.length * dt) / 100)));
     if (cut < pending.length && /[\uD800-\uDBFF]/.test(pending[cut - 1])) cut++;
     live += pending.slice(0, cut);
     pending = pending.slice(cut);
     if (pending) revealing = requestAnimationFrame(revealLive);
+    else revealAt = 0;
   }
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
@@ -1591,13 +1599,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (e.kind === "error" && /exited before/i.test(e.error) && (held[e.session]?.length ?? 0) > 0) {
         queuePaused = new Set(queuePaused).add(e.session);
       }
-      release(e.session);
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
       const next = e.kind === "done" && !inflight.has(e.session) && !queuePaused.has(e.session) && !!held[e.session]?.length;
-      if (e.session === shown) {
-        if (next) clearLive();
-        else void reload(clearLive);
+      // The turn on screen ends once its saved message is in place: ending it
+      // first drops the working line and the live fold while the reply still
+      // shows, then the saved message pops in.
+      if (e.session === shown && !next) {
+        const id = e.session;
+        void reload(clearLive).finally(() => release(id));
+      } else {
+        release(e.session);
+        if (e.session === shown) clearLive();
       }
       if (next) void sendHeld(e.session);
       const isChild = threads.some((t) => t.id === e.session && t.parent_id);
@@ -1627,10 +1640,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       // starts again after the step. Cards and reply buttons come after the
       // final text, so they leave it be.
       const said = (live + pending).trim();
-      if (said && !e.name.startsWith("ui.") && e.name !== "todo.write") {
+      const keeps = e.name.startsWith("ui.") || /^todo[._]?write$/i.test(e.name);
+      if (said && !keeps) {
         liveReasoning = liveReasoning ? `${liveReasoning}\n\n${said}` : said;
         live = "";
         pending = "";
+      } else if (said) {
+        // The reply goes on after the card; the next words start a new
+        // paragraph instead of running on from the last one.
+        pending += "\n\n";
+        if (!revealing) revealing = requestAnimationFrame(revealLive);
       }
       if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];

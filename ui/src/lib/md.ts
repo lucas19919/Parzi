@@ -5,6 +5,7 @@ import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
+import { splitBlocks } from "./liveBlocks";
 import { chipLabel, gitRefs, vaultRefs, wholeRef } from "./linkRules";
 
 export const richReady = writable(false);
@@ -234,7 +235,7 @@ md.renderer.rules.fence = (tokens, idx) => {
   }
   const label = PLAIN_FENCES.has(lang.toLowerCase()) ? "" : `<span class="code-lang">${safeLang}</span>`;
   const cols = isDiagram(lang, body) ? Math.max(...lines.map((l) => [...l].length)) : 0;
-  const long = !cols && lines.length > 30;
+  const long = !cols && !streamingFence && lines.length > 30;
   const expand = long ? `<button class="code-expand" data-expand data-label="Show all ${lines.length} lines">Show all ${lines.length} lines</button>` : "";
   const cls = cols ? " diagram" : long ? " clamped" : "";
   const style = cols ? ` style="--cols:${cols}"` : "";
@@ -438,38 +439,8 @@ export function mdHtml(src: string, _rev: unknown, cache = true): string {
 
 export { splitSegments, type Segment } from "./segments";
 
-function continues(line: string): boolean {
-  return /^(\s*([-*+]|\d+[.)])\s|\s{4,}|>|\||\s*\[[^\]]+\]:)/.test(line);
-}
-
-function stableCut(text: string): number {
-  const lines = text.split("\n");
-  let inFence = false;
-  let mark = "";
-  let cut = 0;
-  let pos = 0;
-  let lastNonBlank = "";
-  for (let i = 0; i < lines.length - 1; i++) {
-    const line = lines[i];
-    const end = pos + line.length + 1;
-    const t = line.trim();
-    const f = /^(`{3,}|~{3,})/.exec(t);
-    if (f) {
-      if (!inFence) {
-        inFence = true;
-        mark = f[1][0];
-      } else if (f[1][0] === mark) {
-        inFence = false;
-      }
-    } else if (!inFence && t === "" && lastNonBlank && !continues(lastNonBlank)) {
-      cut = end;
-    }
-    if (t !== "") lastNonBlank = line;
-    pos = end;
-  }
-  return cut;
-}
-
+/** True while the fence being rendered is still open: it stays plain and
+ *  unclamped until it closes, so it neither recolours nor collapses mid-way. */
 function fenceOpen(text: string): boolean {
   let mark = "";
   for (const line of text.split("\n")) {
@@ -481,32 +452,51 @@ function fenceOpen(text: string): boolean {
   return !!mark;
 }
 
-export class LiveMarkdown {
-  private src = "";
-  private headHtml = "";
+/** The streaming reply's top-level blocks, as this renderer parses it. */
+export function liveBlocks(text: string): string[] {
+  return splitBlocks(text, md.parse(text, {}));
+}
 
-  render(text: string): { head: string; tail: string } {
-    if (!text.startsWith(this.src)) this.reset();
-    const cut = stableCut(text);
-    if (cut > this.src.length) {
-      const chunk = text.slice(this.src.length, cut);
-      if (chunk.trim()) {
-        this.headHtml += renderMarkdown(chunk, false);
-      }
-      this.src = text.slice(0, cut);
-    }
-    const tail = text.slice(this.src.length);
-    if (!tail.trim()) return { head: this.headHtml, tail: "" };
-    streamingFence = fenceOpen(tail);
+/** The live reply as HTML, one string per block. Every block but the last
+ *  is finished and comes from the cache, so only the block being written is
+ *  rendered again; the page patches just the blocks that changed. */
+export function liveHtml(text: string, _rev: unknown): string[] {
+  const blocks = liveBlocks(text);
+  return blocks.map((b, i) => {
+    if (i < blocks.length - 1) return renderMarkdown(b);
+    streamingFence = fenceOpen(b);
     try {
-      return { head: this.headHtml, tail: renderMarkdown(tail, false) };
+      return renderMarkdown(b, false);
     } finally {
       streamingFence = false;
     }
-  }
+  });
+}
 
-  reset(): void {
-    this.src = "";
-    this.headHtml = "";
+/** Keeps a container's children in step with a list of HTML blocks,
+ *  replacing only the blocks whose HTML changed. Finished blocks keep their
+ *  nodes, so selection, images and Copy state survive while the reply
+ *  streams, and the children stay direct children (`p:last-child` holds). */
+export function htmlBlocks(node: HTMLElement, blocks: string[]) {
+  let shown: { html: string; nodes: Node[] }[] = [];
+  const parse = (html: string): Node[] => {
+    const t = document.createElement("template");
+    t.innerHTML = html;
+    return Array.from(t.content.childNodes);
+  };
+  function update(next: string[]) {
+    for (let i = 0; i < next.length; i++) {
+      if (shown[i]?.html === next[i]) continue;
+      const nodes = parse(next[i]);
+      const old = shown[i]?.nodes ?? [];
+      const before = old[0] ?? shown[i + 1]?.nodes[0] ?? null;
+      for (const n of nodes) node.insertBefore(n, before && before.parentNode === node ? before : null);
+      for (const n of old) n.parentNode?.removeChild(n);
+      shown[i] = { html: next[i], nodes };
+    }
+    for (const gone of shown.slice(next.length)) for (const n of gone.nodes) n.parentNode?.removeChild(n);
+    shown = shown.slice(0, next.length);
   }
+  update(blocks);
+  return { update };
 }
