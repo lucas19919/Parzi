@@ -361,17 +361,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: overArt = showWallpaper && !!bg;
   // Popups live on <body>, outside .shell: this lets them match the glass.
   $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-over-art", overArt);
+  // Home, picture or not: where the card style (clear, glass, solid) applies.
+  $: onHome = showWallpaper;
+  $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-on-home", onHome);
 
-  /* For a moment after Home goes onto or off the wallpaper, the glass, the
-     outlines and the colours ease to their new look (.art-shift) instead of
-     switching at once, alongside the picture's fade (DefaultArt). */
+  /* For a moment after the window comes to or leaves Home (or Home goes
+     onto or off the wallpaper), the glass, the outlines and the colours
+     ease to their new look (.art-shift) instead of switching at once,
+     alongside the picture's fade (DefaultArt). */
   let artShift = false;
-  let wasOverArt = false;
+  let wasHome = "false:false";
   let artShiftTimer: ReturnType<typeof setTimeout> | undefined;
-  $: shiftArt(overArt);
-  function shiftArt(on: boolean) {
-    if (on === wasOverArt) return;
-    wasOverArt = on;
+  $: shiftArt(`${onHome}:${overArt}`);
+  function shiftArt(on: string) {
+    if (on === wasHome) return;
+    wasHome = on;
     if (reduced) return;
     artShift = true;
     clearTimeout(artShiftTimer);
@@ -1816,7 +1820,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       { id: "composer.draft", title: "Write text into the composer for the person to send", args: [{ name: "text", type: "string", required: true }], run: (a) => { comp.input = String(a.text); comp = comp; return "The text is in the composer; the person sends it."; } },
       { id: "appearance.theme", title: "Apply a theme pack", args: [{ name: "pack", type: "string", required: true }], run: async (a) => { const packs = await api.listPackInfos(); const p = packs.find((x) => x.name.toLowerCase() === String(a.pack).toLowerCase()); if (!p) throw new Error(`No theme "${a.pack}"; the themes are ${packs.map((x) => x.name).join(", ")}.`); applyThemeCss(await api.applyPack(p.name)); await refreshBackground(); document.dispatchEvent(new CustomEvent("parzi:theme")); return `Applied the ${p.name} theme.`; } },
       { id: "appearance.wallpaper", title: "Show the Home wallpaper as a band or the full window", args: [{ name: "show", type: "string", required: true, choices: ["band", "full"] }], run: async (a) => { await theme((t) => (t.background.fill = a.show === "full" ? "full" : "band")); return `The wallpaper shows as ${a.show === "full" ? "the full window" : "a band"}.`; } },
-      { id: "appearance.cards", title: "Set how cards look over the wallpaper", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards over the wallpaper are ${a.look}.`; } },
+      { id: "appearance.cards", title: "Set how cards look on Home", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards on Home are ${a.look}.`; } },
     ];
   }
 
@@ -1957,7 +1961,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
-<div class="shell" class:over-art={overArt} class:art-shift={artShift}>
+<div class="shell" class:on-home={onHome} class:over-art={overArt} class:art-shift={artShift}>
   <DefaultArt bg={showWallpaper ? bg : ""} />
 
   {#if !immersive}
@@ -2282,23 +2286,23 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* Cards over the wallpaper on Home (the side column, the File card and the
-     composer): clear (outlined, the default), glass (frosted, no outline:
-     the frost is the edge) or solid (the panel colour), as set in
-     Appearance. Only here: everywhere else surfaces stay solid. */
-  .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+  /* Cards on Home, over the wallpaper or not (the side column, the File
+     card and the composer): clear (outlined, the default), glass (frosted,
+     no outline: the frost is the edge) or solid (the panel colour), as set
+     in Appearance. Only here: everywhere else surfaces stay solid. */
+  .on-home :global(:is(.info .card, .files .card, .ob .box)) {
     transition:
       background var(--dur) ease,
       border-color var(--dur) ease,
       backdrop-filter var(--dur) ease;
   }
-  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+  :global(html[data-art-cards="glass"]) .on-home :global(:is(.info .card, .files .card, .ob .box)) {
     background: color-mix(in srgb, var(--panel) 52%, transparent);
     border-color: transparent;
     -webkit-backdrop-filter: blur(18px) saturate(1.2);
     backdrop-filter: blur(18px) saturate(1.2);
   }
-  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .files .card, .ob .box)) {
+  :global(html[data-art-cards="solid"]) .on-home :global(:is(.info .card, .files .card, .ob .box)) {
     background: var(--panel);
   }
   /* Onto or off the wallpaper: the change eases over about the picture's
@@ -2314,13 +2318,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Buttons on glass are one surface with it: a faint wash of the text
      colour that lets the picture through, no grey fill and no outline. */
-  :global(html[data-art-cards="glass"]) .over-art :global(.info .card .btn:not(.primary)),
-  :global(html[data-art-cards="glass"]) .over-art :global(.files .card .btn:not(.primary)) {
+  :global(html[data-art-cards="glass"]) .on-home :global(.info .card .btn:not(.primary)),
+  :global(html[data-art-cards="glass"]) .on-home :global(.files .card .btn:not(.primary)) {
     background: color-mix(in srgb, var(--text) 8%, transparent);
     border-color: transparent;
   }
-  :global(html[data-art-cards="glass"]) .over-art :global(.info .card .btn:not(.primary):hover:not(:disabled)),
-  :global(html[data-art-cards="glass"]) .over-art :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
+  :global(html[data-art-cards="glass"]) .on-home :global(.info .card .btn:not(.primary):hover:not(:disabled)),
+  :global(html[data-art-cards="glass"]) .on-home :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
     background: color-mix(in srgb, var(--text) 14%, transparent);
     border-color: transparent;
   }

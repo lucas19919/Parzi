@@ -1,0 +1,46 @@
+name: Prune releases
+
+# Keeps the releases page to what people should download: removes the dev
+# pre-releases older than the one to keep, and drafts left behind (over an
+# hour old, so a release being made is never touched). Tags stay, so any
+# build can be made again; the rolling updater-dev release is not a dev
+# build and stays. Runs after every release (release.yml), or by hand:
+# Actions, Prune releases, Run workflow.
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      keep:
+        description: The release just published; a full release keeps no dev builds
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      KEEP: ${{ inputs.keep }}
+    steps:
+      - name: Remove older dev pre-releases and stale drafts
+        run: |
+          list=$(gh release list --limit 200 --json tagName,isPrerelease,isDraft,createdAt)
+          dev='^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$'
+          # Run by hand, keep the newest dev build.
+          if [ -z "$KEEP" ]; then
+            KEEP=$(jq -r --arg dev "$dev" '[.[] | select(.isPrerelease and (.tagName | test($dev)))] | sort_by(.createdAt) | last | .tagName // ""' <<<"$list")
+          fi
+          cutoff=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
+          jq -r --arg dev "$dev" --arg keep "$KEEP" --arg cutoff "$cutoff" '.[]
+            | select((.isDraft and .createdAt < $cutoff)
+                  or (.isPrerelease and (.isDraft | not) and (.tagName | test($dev)) and .tagName != $keep))
+            | .tagName' <<<"$list" \
+            | while read -r t; do
+                echo "Removing the $t release (the tag stays)"
+                gh release delete "$t" --yes
+              done

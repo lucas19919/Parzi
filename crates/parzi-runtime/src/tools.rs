@@ -706,7 +706,7 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "desk.theme".into(),
-            description: "Change how Parzi looks, right away: a theme by name (pack, such as graphite, light or dark), single colours as #hex (accent, background, text, panel; panel \"auto\" mixes it from text and background), how the Home wallpaper shows (wallpaper: band or full), the cards over it (cards: clear, glass or solid) and the dither over it (dither: strength 0 to 100 percent, or off; dither_size: dot size 1 to 6 pixels). Leave out what should stay. With nothing given it lists the themes and the current look. Do this yourself when the person asks; do not send them to Settings.".into(),
+            description: "Change how Parzi looks, right away: a theme by name (pack, such as graphite, light or dark), single colours as #hex (accent, background, text, panel; panel \"auto\" mixes it from text and background), how the Home wallpaper shows (wallpaper: band or full), how the cards on Home look, with a wallpaper or not (cards: clear, glass or solid) and the dither over it (dither: strength 0 to 100 percent, or off; dither_size: dot size 1 to 6 pixels). Leave out what should stay. With nothing given it lists the themes and the current look. Do this yourself when the person asks; do not send them to Settings.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {

@@ -408,14 +408,14 @@
           <button class="thumb add" on:click={pickFile} use:tooltip={"Add image"} aria-label="Add image"><Icon name="plus" size={12} /></button>
         </div>
       </div>
+      <div class="row ctl-row">
+        <span class="row-label">Cards on Home</span>
+        <SegControl label="Cards on Home" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
+      </div>
       {#if theme.background.image}
         <div class="row ctl-row">
           <span class="row-label">Show it as</span>
           <SegControl label="Wallpaper on Home" options={FILLS} value={theme.background.fill ?? "band"} on:pick={(e) => setFill(e.detail)} />
-        </div>
-        <div class="row ctl-row">
-          <span class="row-label">Cards over it</span>
-          <SegControl label="Cards over the wallpaper" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
         </div>
       {/if}
       {#if theme.background.image && (theme.background.fill ?? "band") === "band"}

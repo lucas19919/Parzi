@@ -41,7 +41,8 @@ files. `node scripts/release.mjs` lists the other commands.
 | Workflow | When | What |
 | --- | --- | --- |
 | `ci.yml` | Every push, and pull requests from forks | Formatting, one version everywhere, clippy and tests on Linux, Windows and macOS, the UI checks |
-| `release.yml` | Run workflow, or a `v*` tag | Bumps (when run by hand), builds and publishes; points the dev channel at the new build; removes the older dev pre-releases (their tags stay) |
+| `release.yml` | Run workflow, or a `v*` tag | Bumps (when run by hand), builds and publishes; points the dev channel at the new build; then runs `prune.yml` |
+| `prune.yml` | After every release, or Run workflow | Removes the older dev pre-releases and drafts over an hour old (their tags stay) |
 | `cache.yml` | Dependency changes on main, and weekly | Keeps the release build cache warm so releases build in minutes |
 | `pages.yml` | Changes to `site/` on main | The website |
 

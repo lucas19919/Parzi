@@ -6,6 +6,8 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- The card style on Home (Clear, Glass or Solid, in Settings, Appearance) works with or without a wallpaper.
+- The releases page keeps itself tidy: each release removes the older dev builds and drafts left by a release that never finished. Actions, Prune releases runs it by hand.
 - The composer's menus (model, effort, permissions, project, branch) open the same way every time: just above the button, lined up with it, and below only when the window is too short. The model menu no longer spills out past the composer's left edge.
 - On Home over the wallpaper with glass cards, the composer's menus (model, effort, project, branch) are glass too, instead of solid panels with an outline.
 - Going from Home to a session and back eases instead of cutting: the wallpaper dissolves over half a second, and the glass cards and tabs turn solid, with their outlines fading in, over the same time.
