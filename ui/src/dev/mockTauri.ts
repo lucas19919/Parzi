@@ -28,7 +28,7 @@ const session = (id: string, title: string, ago: number, over: Record<string, un
   title,
   pinned: false,
   project: "parzi",
- 
+
   model: "claude/claude-opus-5-5",
   status: "idle",
   tokens_in: 12000,
@@ -207,7 +207,7 @@ const VIZ_ANSWER = [
     data: [
       { Component: "Thread", Renders: 1240, "Avg ms": 3.1 },
       { Component: "Omnibar", Renders: 860, "Avg ms": 1.4 },
-      { Component: "SidePanel", Renders: 210, "Avg ms": 0.9 },
+      { Component: "SessionInfo", Renders: 210, "Avg ms": 0.9 },
     ],
   }),
   ...viz({
@@ -382,15 +382,6 @@ const theme = {
 };
 
 const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.conflict-laptop-macos.md", "notes/release.md"] };
-const notes = [
-  { path: "notes/style.md", title: "Writing style", projects: ["all"], tags: [], pinned: true, links: [], modified: now / 1000, bytes: 1200, summary: "Short sentences. No em dashes." },
-  { path: "notes/release.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 900, summary: "Bump versions, tag, attach installers." },
-  { path: "notes/release.conflict-laptop-macos.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 950, summary: "Bump versions, tag, sign, attach installers.", conflict_of: "notes/release.md" },
-  { path: "projects/parzi.md", title: "Parzi", projects: [], tags: [], folder: "D:\\Repos\\Parzi", pinned: false, links: [], modified: now / 1000, bytes: 300, summary: "The harness itself." },
-  { path: "widgets/open-prs.md", title: "Open pull requests", projects: [], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 280, summary: "Open pull requests by repository." },
-  { path: "widgets/release.md", title: "release", projects: [], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 320, summary: "Where the release stands." },
-];
-
 const widgetNotes: Record<string, string> = {
   "widgets/open-prs.md": [
     "---",
@@ -638,7 +629,6 @@ try {
     : [];
   const title = (id: string) => sessions.find((x) => x.id === id)?.title ?? "Session";
   const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1", { quotes }), tab("t-s2", "session", title("s2"), "s2")];
-  tabs.push(tab("t-work", "work", "Work"));
   const saved: unknown[] = [...tabs];
   if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
   const active = { home: "t-home", session: "t-s1", page: "t-page" }[view] ?? "t-s1";

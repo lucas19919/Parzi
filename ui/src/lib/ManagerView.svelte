@@ -270,7 +270,7 @@
     height: 12px;
     border: 1.6px solid var(--line);
     border-top-color: var(--accent);
-    animation: mgr-spin 0.8s linear infinite;
+    animation: spin 0.8s linear infinite;
   }
   .mark.waiting {
     width: 9px;
@@ -281,11 +281,6 @@
     width: 9px;
     height: 9px;
     border: 1.6px solid var(--muted);
-  }
-  @keyframes mgr-spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   @media (prefers-reduced-motion: reduce) {
     .mark.running {

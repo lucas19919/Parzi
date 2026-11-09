@@ -45,14 +45,3 @@ export function nameFromProgram(line: string): string {
   return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(id) ? id : "app";
 }
 
-export function parseEnv(text: string): Record<string, string> | string {
-  const env: Record<string, string> = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const at = line.indexOf("=");
-    if (at <= 0) return `"${line}" is not NAME=value`;
-    env[line.slice(0, at).trim()] = line.slice(at + 1);
-  }
-  return env;
-}

@@ -1,4 +1,3 @@
-
 export type Segment =
   | { kind: "md"; body: string }
   | { kind: "widget"; body: unknown }

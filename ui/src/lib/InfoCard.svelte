@@ -1,44 +1,10 @@
 <script lang="ts" context="module">
   import { writable } from "svelte/store";
+  import { readStrings, writeJSON } from "./storage";
 
   const KEY = "parzi.info.folded";
-  function load(): string[] {
-    try {
-      const v = JSON.parse(localStorage.getItem(KEY) ?? "[]");
-      return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
-    } catch {
-      return [];
-    }
-  }
-  const folded = writable<Set<string>>(new Set(load()));
-  folded.subscribe((s) => {
-    try {
-      localStorage.setItem(KEY, JSON.stringify([...s]));
-    } catch {
-    }
-  });
-
-  // Cards that start shut are shut the first time only; after that the person's choice stands.
-  const SEEN = "parzi.info.seen";
-  const seen = new Set<string>(
-    (() => {
-      try {
-        const v = JSON.parse(localStorage.getItem(SEEN) ?? "[]");
-        return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
-      } catch {
-        return [];
-      }
-    })(),
-  );
-  function startShutOnce(id: string) {
-    if (seen.has(id)) return;
-    seen.add(id);
-    try {
-      localStorage.setItem(SEEN, JSON.stringify([...seen]));
-    } catch {
-    }
-    folded.update((s) => new Set(s).add(id));
-  }
+  const folded = writable<Set<string>>(new Set(readStrings(KEY)));
+  folded.subscribe((s) => writeJSON(KEY, [...s]));
 
   /** Opening something in the sidebar always expands its card. */
   export function unfold(id: string) {
@@ -57,9 +23,6 @@
   export let id: string;
   export let title: string;
   export let foldedAside = false;
-  /** Closed until the person opens it once. */
-  export let startShut = false;
-  if (startShut) startShutOnce(id);
 
   $: open = !$folded.has(id);
   function toggle() {

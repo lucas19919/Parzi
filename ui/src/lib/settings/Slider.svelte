@@ -6,13 +6,12 @@
   export let value = 0;
   export let min = 0;
   export let max = 100;
-  export let step = 1;
   export let unit = "";
 
   const dispatch = createEventDispatcher<{ input: number }>();
 
   $: pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
-  $: shown = Number.isInteger(step) ? String(Math.round(value)) : String(value);
+  $: shown = String(Math.round(value));
 
   function onRange(e: Event) {
     value = +(e.currentTarget as HTMLInputElement).value;
@@ -27,7 +26,7 @@
     </div>
   {/if}
   <div class="sctl">
-    <input type="range" {min} {max} {step} value={value} style="--p:{pct}%" aria-label={label} on:input={onRange} />
+    <input type="range" {min} {max} value={value} style="--p:{pct}%" aria-label={label} on:input={onRange} />
     <span class="val">{shown}{unit}</span>
   </div>
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR, SLIDE } from "./motion";
   import { createEventDispatcher, onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -365,7 +366,7 @@
           autocomplete="off"
         />
         {#if tab.zoom}
-          
+
           <button type="button" class="zoom" use:tooltip={"Reset zoom (Ctrl+0)"} on:click={() => nav("zoom-reset")}>
             {Math.round(tab.zoom * 100)}%
           </button>
@@ -419,7 +420,7 @@
   {/if}
   {#if prompt}
     {@const p = prompt}
-    
+
     <div class="infobar" role="status">
       {#if p.kind === "permission"}
         <Icon name="shield" />
@@ -447,7 +448,7 @@
     </div>
   {/if}
   {#if choices.length}
-    <div class="logins" style={choiceStyle} data-ui-list use:popover={{ anchor: keyBtn, close: () => (choices = []) }} transition:fly={{ y: choiceStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="logins" style={choiceStyle} data-ui-list use:popover={{ anchor: keyBtn, close: () => (choices = []) }} transition:fly={{ y: choiceStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
       {#each choices as login (login.id)}
         <button class="login" on:click={() => fillWith(login)}>
           <span class="login-name">{login.name}</span>
@@ -482,7 +483,7 @@
     {:else if ($covered || open) && snapshot}
       <img class="snap" src={snapshot} alt="" draggable="false" />
     {:else if veiled}
-      <div class="loading" transition:fade={{ duration: 160 }}>
+      <div class="loading" transition:fade={{ duration: SLIDE }}>
         {#if snapshot}<img class="snap blur" src={snapshot} alt="" draggable="false" />{/if}
       </div>
     {/if}
@@ -648,14 +649,6 @@
     width: 30%;
     background: var(--accent);
     animation: sweep 1.1s ease-in-out infinite;
-  }
-  @keyframes sweep {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(340%);
-    }
   }
   .infobar {
     flex: none;

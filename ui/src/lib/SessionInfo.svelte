@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tokenCount } from "./format";
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import InfoCard, { unfold } from "./InfoCard.svelte";
@@ -89,7 +90,6 @@
   $: plan = $planState.project === project ? $planState.plan : null;
   $: planError = $planState.project === project ? $planState.error : "";
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
-  const kTok = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${+(n / 1_000).toFixed(1)}k` : String(n));
   $: planViews = plan ? deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity }) : [];
   $: planCount = plan ? progress(planViews) : null;
   $: planAside = planError ? "Unreadable" : planCount ? `${planCount.done} of ${planCount.total}` : "";
@@ -161,7 +161,7 @@
     <InfoCard id="usage" title="Usage">
       <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
       {#if !contextLimit && (tokensIn || tokensOut)}
-        <div class="info-line"><span class="info-v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
+        <div class="info-line"><span class="info-v">{tokenCount(tokensIn)} in · {tokenCount(tokensOut)} out</span></div>
       {/if}
       {#each limits as w (w.label)}
         <div class="info-line quiet">

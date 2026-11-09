@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SLIDE } from "./motion";
   import { createEventDispatcher } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { fade } from "svelte/transition";
@@ -125,7 +126,7 @@
     return { lead: nl === end ? text.slice(0, end) : `${text.slice(0, end).trimEnd()}…`, more: text };
   }
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  const spring = { duration: 160, easing: cubicOut };
+  const spring = { duration: SLIDE, easing: cubicOut };
 
   type Item =
     | { key: string; kind: "user" | "assistant" | "system"; text: string; at?: number }
@@ -690,7 +691,7 @@ ${e.text}` : e.text;
         </div>
       {:else if item.kind === "steps"}
         {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
-      
+
         <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
         {@const tests = lastTestRun(item.tools)}
         {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
@@ -771,7 +772,7 @@ ${e.text}` : e.text;
       <span class="chev" class:open={openFolds.has(folds.tail.key)}><Icon name="chevDown" size={12} /></span>
     </button>
   {/if}
-  
+
   {#if activityShown}
     <div transition:fade|local={spring}>
       <LiveActivity shown={2} tools={stepsShown ? liveTools : []} said={stepsShown ? liveSaid : ""} helpers={liveHelpers} on:open={(e) => dispatch("openSession", e.detail)} />
@@ -901,7 +902,7 @@ ${e.text}` : e.text;
     display: inline-flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: 24px;
+    min-height: var(--h-sm);
     padding: 0;
     background: none;
     border: none;
@@ -923,11 +924,6 @@ ${e.text}` : e.text;
   }
   .fold .chev.open {
     transform: none;
-  }
-  @keyframes breathe {
-    50% {
-      opacity: 0.45;
-    }
   }
   .in-fold {
     margin-left: var(--space);
@@ -1033,7 +1029,7 @@ ${e.text}` : e.text;
     color: color-mix(in srgb, var(--text) 92%, transparent);
   }
   .actions {
-    height: 24px;
+    height: var(--h-sm);
     margin-left: calc(var(--space) * -1);
     display: flex;
     align-items: center;
@@ -1041,7 +1037,7 @@ ${e.text}` : e.text;
   }
   .copy {
     width: 24px;
-    height: 24px;
+    height: var(--h-sm);
     flex: none;
     display: inline-flex;
     align-items: center;

@@ -1,4 +1,5 @@
 import { writable } from "svelte/store";
+import { readStore, writeStore } from "./storage.ts";
 
 /** How much Parzi tells you about agents you are not looking at.
  *  - all: finished runs, problems and anything that needs you
@@ -10,26 +11,13 @@ export type NotifyLevel = "all" | "needed" | "off";
 const LEVEL_KEY = "parzi.notify.level";
 const SOUND_KEY = "parzi.notify.sounds";
 
-function read(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-function write(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {}
-}
-
-const savedLevel = read(LEVEL_KEY);
+const savedLevel = readStore(LEVEL_KEY);
 export const notifyLevel = writable<NotifyLevel>(savedLevel === "all" || savedLevel === "off" ? savedLevel : "needed");
-notifyLevel.subscribe((v) => write(LEVEL_KEY, v));
+notifyLevel.subscribe((v) => writeStore(LEVEL_KEY, v));
 
 /** A short tone when an agent needs you and you are elsewhere. */
-export const notifySounds = writable<boolean>(read(SOUND_KEY) !== "0");
-notifySounds.subscribe((v) => write(SOUND_KEY, v ? "1" : "0"));
+export const notifySounds = writable<boolean>(readStore(SOUND_KEY) !== "0");
+notifySounds.subscribe((v) => writeStore(SOUND_KEY, v ? "1" : "0"));
 
 /** The same notice (digits aside: "attempt 2 of 5") from the same session
  *  shows once in ten minutes (or `within`), however often it repeats. */

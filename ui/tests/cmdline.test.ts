@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyPaste, nameFromProgram, parseEnv, splitLine } from "../src/lib/cmdline.ts";
+import { classifyPaste, nameFromProgram, splitLine } from "../src/lib/cmdline.ts";
 import { mergeProgress, stepName } from "../src/lib/remote.ts";
 
 test("command lines split like a shell, without expansion", () => {
@@ -19,12 +19,6 @@ test("a paste is a link, a copied app, or a program", () => {
   assert.equal(nameFromProgram("npx -y @scope/server"), "server");
   assert.equal(nameFromProgram(".hidden"), "hidden");
   assert.equal(nameFromProgram("..."), "app");
-});
-
-test("env lines need NAME=value", () => {
-  assert.deepEqual(parseEnv("A=1\n\nB = two=2\r\n"), { A: "1", B: " two=2" });
-  assert.equal(typeof parseEnv("oops"), "string");
-  assert.equal(typeof parseEnv("=x"), "string");
 });
 
 test("setup progress keeps one row per step, in arrival order", () => {

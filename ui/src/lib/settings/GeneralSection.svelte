@@ -313,7 +313,7 @@
     align-items: center;
     justify-content: center;
     width: 24px;
-    height: 24px;
+    height: var(--h-sm);
     padding: 0;
     background: none;
     border: none;

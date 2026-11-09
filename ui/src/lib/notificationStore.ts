@@ -1,3 +1,4 @@
+import { readJSON, writeJSON } from "./storage.ts";
 import { writable } from "svelte/store";
 
 export interface NotificationItem {
@@ -31,20 +32,11 @@ function oneForEachKey(list: NotificationItem[]): NotificationItem[] {
 }
 
 function loadInitial(): NotificationItem[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return oneForEachKey(parsed);
-    }
-  } catch {}
-  return [];
+  return oneForEachKey(readJSON<NotificationItem[]>(STORAGE_KEY, [], Array.isArray));
 }
 
 function persist(items: NotificationItem[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, MAX_NOTIFICATIONS)));
-  } catch {}
+  writeJSON(STORAGE_KEY, items.slice(0, MAX_NOTIFICATIONS));
 }
 
 export const notifications = writable<NotificationItem[]>(loadInitial());

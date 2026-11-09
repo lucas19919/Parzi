@@ -76,8 +76,7 @@ export function reportMarkdown(md: MarkdownIt): void {
         kids[k].attrJoin("class", "cite");
         try {
           kids[k].attrSet("title", new URL(kids[k].attrGet("href") ?? "").hostname.replace(/^www\./, ""));
-        } catch {
-        }
+        } catch {}
       }
     }
   });

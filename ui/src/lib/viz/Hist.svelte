@@ -15,7 +15,6 @@
 
   const TOP = 18;
   const BOTTOM = 22;
-  const CH = 6.4;
 
   let w = 0;
   let hover = -1;

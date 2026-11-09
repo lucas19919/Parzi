@@ -1,5 +1,3 @@
-
-
 function splitWords(text: string): string[] {
   const out: string[] = [];
   let cur = "";

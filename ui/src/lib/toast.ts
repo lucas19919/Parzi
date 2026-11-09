@@ -8,7 +8,6 @@ interface Toast {
   key?: string;
   progress?: number;
   action?: { label: string; run: () => void };
-  run?: () => void;
 }
 
 export const toasts = writable<Toast[]>([]);
@@ -33,9 +32,6 @@ export function dismissToast(id: number) {
   timers.delete(id);
   toasts.update((all) => all.filter((t) => t.id !== id));
 }
-
-
-
 
 export function keyedToast(
   key: string,

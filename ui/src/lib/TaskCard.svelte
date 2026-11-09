@@ -111,7 +111,7 @@
     gap: calc(var(--space) * 2);
   }
   button {
-    height: 28px;
+    height: var(--h);
     padding: 0 calc(var(--space) * 3);
     font-size: var(--fs-sm);
   }

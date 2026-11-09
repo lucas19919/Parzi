@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR } from "./lib/motion";
   import { onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -24,7 +25,6 @@
   import Thread from "./lib/Thread.svelte";
   import PageView from "./lib/PageView.svelte";
   import ManagerView from "./lib/ManagerView.svelte";
-  import PreviewView from "./lib/PreviewView.svelte";
   import ArtifactCard from "./lib/widgets/ArtifactCard.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -219,7 +219,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     return n;
   })();
-
 
   let infoOpen = true;
   try {
@@ -509,13 +508,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     comp = comp;
   }
 
-  function useExample(text: string) {
-    comp.input = text;
-    if (comp.mode === "search") comp.mode = "build";
-    comp = comp;
-    omnibar?.focus();
-  }
-
   async function renamed(id: string) {
     await refreshThreads();
     const t = threads.find((x) => x.id === id);
@@ -712,16 +704,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
     }
     selectTab(kept[Math.max(0, Math.min(idx, kept.length - 1))].id);
-  }
-
-  function useFolder(path: string) {
-    if (remoteOn) {
-      comp.remoteCwd = path;
-      comp = comp;
-    } else {
-      patchTab(tab.id, { cwd: path });
-    }
-    omnibar?.focus();
   }
 
   /** The folder of the session last worked on, leaving out throwaway scratch folders. */
@@ -973,7 +955,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-
   function openSettings(section = "general") {
     settingsSection = section === "system" || section === "remote" || section === "skills" ? "general" : section;
     showCover("settings");
@@ -981,8 +962,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   // The top-left buttons act as Back when their own page is already open.
   function toggleSettings() {
-    if (tab.kind === "settings") closeTab(activeId);
-    else if (coverOn && cover === "settings") clearCover();
+    if (coverOn && cover === "settings") clearCover();
     else openSettings();
   }
 
@@ -1759,7 +1739,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
       if (immersive) void setImmersive(false);
       else if (coverOn) clearCover();
-      else if (tab.kind === "settings") closeTab(activeId);
     }
   }
 
@@ -2033,7 +2012,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   });
 </script>
 
-
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
 <div class="shell" class:on-home={onHome} class:over-art={overArt} class:art-shift={artShift}>
@@ -2062,17 +2040,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   <div class="content">
     <main>
-    {#if tab.kind === "settings"}
-      <div class="fill col" in:fly={{ y: 8, ...motion }}>
-        <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
-        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
-      </div>
-    {:else if tab.kind === "preview"}
-      <div class="fill col" in:fade={{ duration: 150 }}>
-        <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
-        <PreviewView which={tab.url ?? "omnibar"} />
-      </div>
-    {:else if tab.kind === "artifact" && tab.doc}
+    {#if tab.kind === "artifact" && tab.doc}
       <div class="fill col ghost" in:fade={{ duration: 150 }}>
         <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
         {#key `${tab.id}:${tab.doc.version}`}
@@ -2302,24 +2270,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} />
   {/if}
 
-
-  
   <div class="toasts" class:chrome={toastsUp} aria-live="polite">
     {#each toastsUp ? $toasts.slice(-1) : $toasts as t (t.id)}
-      {#if t.run}
+      {#if t.session}
         <button
           class="toast go"
-          class:err={t.err}
-          transition:fade={{ duration: 140 }}
-          on:click={() => {
-            dismissToast(t.id);
-            t.run?.();
-          }}>{t.text}</button
-        >
-      {:else if t.session}
-        <button
-          class="toast go"
-          transition:fade={{ duration: 140 }}
+          transition:fade={{ duration: DUR }}
           on:click={() => {
             dismissToast(t.id);
             if (immersive) void setImmersive(false);
@@ -2327,7 +2283,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           }}>{t.text}</button
         >
       {:else}
-        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: 140 }}>
+        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: DUR }}>
           <span class="toast-text">{t.text}</span>
           {#if t.progress !== undefined}
             <span class="toast-bar" aria-hidden="true"><span style:width="{Math.round(t.progress * 100)}%" /></span>
@@ -2689,7 +2645,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   .toast-act {
     flex: none;
-    min-height: 24px;
+    min-height: var(--h-sm);
     padding: var(--space) calc(var(--space) * 3);
     background: var(--hover);
     border: 1px solid var(--line);
@@ -2711,7 +2667,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     display: flex;
     align-items: center;
     max-width: min(440px, 45vw);
-    min-height: 28px;
+    min-height: var(--h);
     padding: var(--space) calc(var(--space) * 2) var(--space) calc(var(--space) * 3);
     white-space: nowrap;
   }

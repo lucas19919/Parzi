@@ -1,6 +1,5 @@
 import { writable, type Writable } from "svelte/store";
 import { iconFor, rememberIcon, type Closed } from "./pageRules";
-export { completeAddress } from "./suggest";
 import { restoreTab, type Tab } from "./tabs";
 import { toast } from "./toast";
 

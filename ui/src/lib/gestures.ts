@@ -1,4 +1,3 @@
-
 export const DRAG_START = 4;
 export const PRESS_SLOP = 5;
 
@@ -35,21 +34,14 @@ export function distance(x0: number, y0: number, x1: number, y1: number): number
   return Math.hypot(x1 - x0, y1 - y0);
 }
 
-export function dragPast(distancePx: number, start = DRAG_START): boolean {
-  return distancePx >= start;
-}
-
-export function commitWindowDrag(buttonDown: boolean): boolean {
-  return buttonDown;
-}
-
 export function buttonHeld(buttons: number): boolean {
   return (buttons & 1) !== 0;
 }
 
-export function tabDragStarted(x0: number, y0: number, x1: number, y1: number, vertical: boolean): boolean {
-  const delta = vertical ? y1 - y0 : x1 - x0;
-  return Math.abs(delta) >= PRESS_SLOP;
+/** A tab drag starts once the pointer has moved sideways past the slop;
+ *  up-and-down jitter while clicking does not count. */
+export function tabDragStarted(x0: number, _y0: number, x1: number, _y1: number): boolean {
+  return Math.abs(x1 - x0) >= PRESS_SLOP;
 }
 
 export interface TabGesture {
@@ -74,26 +66,6 @@ export function tabRelease(g: TabGesture): TabRelease {
   }
   if (g.pressId) return { kind: "pending" };
   return { kind: "none" };
-}
-
-export function noteMoveStarts(movedPx: number, overPath: string | null, pressPath: string): boolean {
-  return movedPx >= PRESS_SLOP && overPath !== pressPath;
-}
-
-export interface NotePress {
-  path: string;
-  from: string;
-}
-
-export type NoteRelease =
-  | { kind: "open"; path: string }
-  | { kind: "move"; path: string; from: string; to: string; copy: boolean }
-  | { kind: "cancel" };
-
-export function noteRelease(press: NotePress, dragging: boolean, dropOn: string, upPath: string | null, copy: boolean): NoteRelease {
-  if (dragging && dropOn && dropOn !== press.from) return { kind: "move", path: press.path, from: press.from, to: dropOn, copy };
-  if (upPath === press.path) return { kind: "open", path: press.path };
-  return { kind: "cancel" };
 }
 
 export interface PressDrag<P> {

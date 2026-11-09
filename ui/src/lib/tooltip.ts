@@ -1,4 +1,3 @@
-
 import { pageArea } from "./overlay";
 import { tipSpot } from "./pageRules";
 

@@ -11,7 +11,6 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  export let vertical = false;
   export let threads: { id: string; model: string }[] = [];
   export let liveModel = "";
 
@@ -119,14 +118,14 @@
       const el = els[id];
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return { id, x: e.clientX, y: e.clientY, grab: vertical ? e.clientY - r.top : e.clientX - r.left };
+      return { id, x: e.clientX, y: e.clientY, grab: e.clientX - r.left };
     },
-    starts: (p, e) => tabDragStarted(p.x, p.y, e.clientX, e.clientY, vertical),
+    starts: (p, e) => tabDragStarted(p.x, p.y, e.clientX, e.clientY),
     start(p) {
       dragId = p.id;
       order = tabs.map((t) => t.id);
     },
-    drag: (p, e) => void follow(p, vertical ? e.clientY : e.clientX),
+    drag: (p, e) => void follow(p, e.clientX),
     release(p) {
       const result = tabRelease({ pressId: p.id, dragId, order, ids: tabs.map((t) => t.id) });
       reset();
@@ -149,11 +148,11 @@
     const el = els[dragId];
     if (!el || !order) return;
     const box = strip.getBoundingClientRect();
-    const size = (id: string) => (els[id] ? (vertical ? els[id].offsetHeight : els[id].offsetWidth) : 0);
-    const start = (id: string) => (els[id] ? (vertical ? els[id].offsetTop : els[id].offsetLeft) : 0);
+    const size = (id: string) => (els[id] ? els[id].offsetWidth : 0);
+    const start = (id: string) => (els[id] ? els[id].offsetLeft : 0);
     const end = Math.max(...order.map((id) => (els[id] ? start(id) + size(id) : 0)));
-    const scroll = vertical ? strip.scrollTop : strip.scrollLeft;
-    const origin = vertical ? box.top : box.left;
+    const scroll = strip.scrollLeft;
+    const origin = box.left;
     const pos = Math.max(0, Math.min(client - origin + scroll - press.grab, end - size(dragId)));
     const far = pos + size(dragId);
     const mine = order.indexOf(dragId);
@@ -178,8 +177,7 @@
   }
 </script>
 
-
-<div class="tabs" class:vertical class:none={!shown.length} role="tablist" bind:this={strip}>
+<div class="tabs" class:none={!shown.length} role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
@@ -192,7 +190,7 @@
           class="tab"
           class:active={tab.id === activeTabId}
           class:dragging={tab.id === dragId}
-          style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
+          style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
           use:pressDrag={drag(tab.id)}
           on:auxclick={(e) => onAux(e, tab.id)}
         >
@@ -284,7 +282,7 @@
       class="tab"
       class:active={tab.id === activeTabId}
       class:dragging={tab.id === dragId}
-      style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
+      style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
       use:pressDrag={drag(tab.id)}
       on:auxclick={(e) => onAux(e, tab.id)}
     >
@@ -307,7 +305,7 @@
               {:else if tab.kind === "session" && !tab.sessionId}
                 <Icon name="home" />
               {:else}
-                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
+                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
               {/if}
             </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
@@ -337,11 +335,9 @@
     {/if}
   {/each}
 </div>
-{#if !vertical}
-  <button class="new" use:tooltip={"New session (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-    <Icon name="plus" />
-  </button>
-{/if}
+<button class="new" use:tooltip={"New session (Ctrl+T)"} on:click={() => dispatch("newTab")}>
+  <Icon name="plus" />
+</button>
 
 <style>
   .tabs {
@@ -354,25 +350,6 @@
   }
   .tabs.none {
     display: none;
-  }
-  .tabs.vertical {
-    flex-direction: column;
-    align-items: stretch;
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-  .tabs.vertical .tab {
-    max-width: none;
-    width: 100%;
-    flex: none;
-  }
-  .tabs.vertical .group {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .tabs.vertical .tab.sub {
-    max-width: none;
   }
   .tab {
     display: inline-flex;
@@ -449,11 +426,6 @@
     border: 1.6px solid var(--line);
     border-top-color: var(--accent);
     animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   .tab.active .kind {
     color: var(--text);
@@ -532,8 +504,8 @@
     color: var(--text);
   }
   .new {
-    width: 28px;
-    height: 28px;
+    width: var(--h);
+    height: var(--h);
     flex: none;
     display: inline-flex;
     align-items: center;

@@ -48,7 +48,7 @@
     flex: none;
   }
   .win-btn {
-    width: 28px;
+    width: var(--h);
     height: var(--h-sm);
     display: inline-flex;
     align-items: center;

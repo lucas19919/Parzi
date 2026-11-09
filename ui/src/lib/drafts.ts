@@ -1,4 +1,3 @@
-
 import type { PlanQuote } from "./api";
 
 export interface Draft {
@@ -76,7 +75,6 @@ export function flushDrafts(): void {
   if (!latest) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(latest));
-  } catch {
-  }
+  } catch {}
   latest = null;
 }

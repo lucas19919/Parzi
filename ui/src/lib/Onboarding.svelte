@@ -564,7 +564,7 @@
     display: inline-flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: 24px;
+    min-height: var(--h-sm);
     padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
@@ -663,12 +663,7 @@
     border: 2px solid var(--line);
     border-top-color: var(--accent);
     border-radius: 50%;
-    animation: turn 0.8s linear infinite;
-  }
-  @keyframes turn {
-    to {
-      transform: rotate(360deg);
-    }
+    animation: spin 0.8s linear infinite;
   }
   @media (prefers-reduced-motion: reduce) {
     .spin {
@@ -702,22 +697,6 @@
     inset: 0 auto 0 0;
     width: 30%;
     animation: sweep 1.3s ease-in-out infinite;
-  }
-  @keyframes fill {
-    from {
-      transform: scaleX(0);
-    }
-    to {
-      transform: scaleX(1);
-    }
-  }
-  @keyframes sweep {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(340%);
-    }
   }
   .checks {
     display: flex;

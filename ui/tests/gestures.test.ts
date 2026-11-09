@@ -3,10 +3,6 @@ import assert from "node:assert/strict";
 import {
   WINDOW_DRAG_SKIP,
   buttonHeld,
-  commitWindowDrag,
-  dragPast,
-  noteMoveStarts,
-  noteRelease,
   pressDrag,
   tabDragStarted,
   tabRelease,
@@ -34,8 +30,6 @@ test("the window drags from empty chrome only", () => {
 });
 
 test("a released button never starts a window drag", () => {
-  assert.equal(commitWindowDrag(false), false);
-  assert.equal(commitWindowDrag(true), true);
   assert.equal(windowMove(0, 40), "drop");
   assert.equal(windowMove(2, 40), "drop");
   assert.equal(windowMove(1, 3), "wait");
@@ -43,21 +37,15 @@ test("a released button never starts a window drag", () => {
   assert.equal(windowMove(3, 4), "drag");
 });
 
-test("a card drag starts after a few pixels", () => {
-  assert.equal(dragPast(0), false);
-  assert.equal(dragPast(3), false);
-  assert.equal(dragPast(4), true);
+test("only the main button holds a drag", () => {
   assert.equal(buttonHeld(0), false);
   assert.equal(buttonHeld(2), false);
   assert.equal(buttonHeld(1), true);
 });
 
 test("tabs ignore jitter, then select when a drag does not reorder", () => {
-  assert.equal(tabDragStarted(0, 0, 4, 30, false), false);
-  assert.equal(tabDragStarted(0, 0, 5, 0, false), true);
-  assert.equal(tabDragStarted(10, 10, 10, 14, true), false);
-  assert.equal(tabDragStarted(10, 10, 10, 15, true), true);
-  assert.equal(tabDragStarted(0, 0, 20, 0, true), false);
+  assert.equal(tabDragStarted(0, 0, 4, 30), false);
+  assert.equal(tabDragStarted(0, 0, 5, 0), true);
 
   const ids = ["a", "b", "c"];
   assert.deepEqual(tabRelease({ pressId: "b", dragId: "", order: null, ids }), { kind: "pending" });
@@ -65,35 +53,6 @@ test("tabs ignore jitter, then select when a drag does not reorder", () => {
   assert.deepEqual(tabRelease({ pressId: "b", dragId: "b", order: ["b", "a", "c"], ids }), { kind: "move", id: "b", to: 0 });
   assert.deepEqual(tabRelease({ pressId: "a", dragId: "a", order: ["b", "c", "a"], ids }), { kind: "move", id: "a", to: 2 });
   assert.deepEqual(tabRelease({ pressId: "", dragId: "", order: null, ids }), { kind: "none" });
-});
-
-test("a shaky click on a note still opens it", () => {
-  const path = "notes/a.md";
-  assert.equal(noteMoveStarts(6, path, path), false);
-  assert.equal(noteMoveStarts(4, null, path), false);
-  assert.equal(noteMoveStarts(5, "notes/b.md", path), true);
-  assert.equal(noteMoveStarts(8, null, path), true);
-
-  const press = { path, from: "parzi" };
-  assert.deepEqual(noteRelease(press, false, "", path, false), { kind: "open", path });
-  assert.deepEqual(noteRelease(press, true, "parzi", path, false), { kind: "open", path });
-  assert.deepEqual(noteRelease(press, true, "other", "notes/b.md", false), {
-    kind: "move",
-    path,
-    from: "parzi",
-    to: "other",
-    copy: false,
-  });
-  assert.deepEqual(noteRelease(press, true, "other", "notes/b.md", true), {
-    kind: "move",
-    path,
-    from: "parzi",
-    to: "other",
-    copy: true,
-  });
-  assert.deepEqual(noteRelease(press, true, "parzi", "notes/b.md", false), { kind: "cancel" });
-  assert.deepEqual(noteRelease(press, true, "", null, false), { kind: "cancel" });
-  assert.deepEqual(noteRelease(press, false, "", null, false), { kind: "cancel" });
 });
 
 function pointer(type: string, over: Record<string, number> = {}) {

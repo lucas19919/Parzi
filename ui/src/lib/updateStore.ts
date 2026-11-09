@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { readStore, writeStore } from "./storage";
 import { api } from "./api";
 import { toast } from "./toast";
 
@@ -12,21 +13,10 @@ export const dlDone = writable(0);
 
 /** Dev builds: pre-releases as well as releases. Opt-in, on this computer. */
 const DEV_KEY = "parzi.updates.dev";
-function readDev(): boolean {
-  try {
-    return localStorage.getItem(DEV_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-export const devChannel = writable(readDev());
+export const devChannel = writable(readStore(DEV_KEY) === "1");
 export function setDevChannel(on: boolean) {
   devChannel.set(on);
-  try {
-    localStorage.setItem(DEV_KEY, on ? "1" : "0");
-  } catch {
-    /* kept for this run only */
-  }
+  writeStore(DEV_KEY, on ? "1" : "0");
   readyVersion = "";
   void check(true);
 }

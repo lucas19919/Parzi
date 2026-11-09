@@ -381,12 +381,12 @@
     height: var(--h);
     margin-bottom: var(--space);
     padding: 0 calc(var(--space) * 2);
-    background: color-mix(in srgb, var(--text) 6%, transparent);
+    background: var(--hover);
     border-radius: var(--radius);
     color: var(--muted);
   }
   .find:focus-within {
-    background: color-mix(in srgb, var(--text) 10%, transparent);
+    background: var(--selected);
     color: var(--text);
   }
   .find input {

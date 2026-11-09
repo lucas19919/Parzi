@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR } from "./motion";
   import { onDestroy } from "svelte";
   import { fade, scale } from "svelte/transition";
   import Icon from "./Icon.svelte";
@@ -20,9 +21,9 @@
 <svelte:window on:keydown|capture={onKey} />
 
 {#if $viewed}
-  
+
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
-  <div class="viewer" role="dialog" aria-modal="true" aria-label={$viewed.alt || "Image"} on:click|self={closeImage} transition:fade={{ duration: 140 }}>
+  <div class="viewer" role="dialog" aria-modal="true" aria-label={$viewed.alt || "Image"} on:click|self={closeImage} transition:fade={{ duration: DUR }}>
     <img src={$viewed.src} alt={$viewed.alt} draggable="false" transition:scale={{ duration: 180, start: 0.96 }} />
     <button class="x" aria-label="Close" use:tooltip={"Close (Esc)"} on:click={closeImage}><Icon name="close" /></button>
     {#if $viewed.alt}<div class="cap">{$viewed.alt}</div>{/if}

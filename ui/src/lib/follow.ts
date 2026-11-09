@@ -1,4 +1,3 @@
-
 export interface Follower {
   attach: (node: HTMLElement) => { destroy: () => void };
   toBottom: (smooth?: boolean) => void;

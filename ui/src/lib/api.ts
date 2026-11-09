@@ -122,12 +122,6 @@ export type UiEvent =
   | { kind: "paused"; session: string; reason: string }
   | { kind: "error"; session: string; error: string };
 
-export interface Check {
-  name: string;
-  ok: boolean;
-  detail: string;
-}
-
 export interface ProviderEntry {
   enabled: boolean;
   billing?: "subscription" | "api_key";
@@ -374,7 +368,6 @@ interface BrainContext {
   chars: number;
   tokens: number;
 }
-
 
 interface BrowserSource {
   id: string;

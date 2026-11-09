@@ -35,7 +35,7 @@
     align-items: center;
     gap: calc(var(--space) * 3);
     min-width: 0;
-    height: 32px;
+    height: var(--h-field);
   }
   .dot {
     width: 6px;

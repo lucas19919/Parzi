@@ -1,4 +1,3 @@
-
 export interface CatalogConnector {
   id: string;
   name: string;

@@ -2,7 +2,6 @@ import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { writable } from "svelte/store";
 import { toast } from "./toast";
-import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
 import { splitBlocks } from "./liveBlocks";
@@ -437,7 +436,7 @@ export function mdHtml(src: string, _rev: unknown, cache = true): string {
   return renderMarkdown(src, cache);
 }
 
-export { splitSegments, type Segment } from "./segments";
+export { splitSegments } from "./segments";
 
 /** True while the fence being rendered is still open: it stays plain and
  *  unclamped until it closes, so it neither recolours nor collapses mid-way. */

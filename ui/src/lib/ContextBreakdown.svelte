@@ -13,6 +13,7 @@
 </script>
 
 <script lang="ts">
+  import { tokenCount } from "./format";
   import { createEventDispatcher } from "svelte";
   import { api } from "./api";
 
@@ -55,17 +56,12 @@
     const p = (n / limit) * 100;
     return p > 0 && p < 1 ? "<1%" : `${Math.round(p)}%`;
   }
-  function tok(n: number) {
-    if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${+(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}k`;
-    return String(n);
-  }
 </script>
 
 <div class="ctx">
   <div class="top">
     <span class="pct" class:warn={pct >= 70} class:bad={pct >= 90}>{pct}% used</span>
-    <span class="of">{tok(used)} / {tok(limit)}</span>
+    <span class="of">{tokenCount(used)} / {tokenCount(limit)}</span>
   </div>
   <div class="bar" aria-hidden="true">
     {#each rows as r (r.id)}
@@ -78,14 +74,14 @@
       <div class="row">
         <i class="dot s-{r.id}" />
         <span class="label">{r.label}</span>
-        <span class="n">{tok(r.n)}</span>
+        <span class="n">{tokenCount(r.n)}</span>
         <span class="p">{share(r.n)}</span>
       </div>
     {/each}
     <div class="row">
       <i class="dot s-free" />
       <span class="label">Free</span>
-      <span class="n">{tok(free)}</span>
+      <span class="n">{tokenCount(free)}</span>
       <span class="p">{share(free)}</span>
     </div>
   </div>
@@ -203,9 +199,5 @@
   .p {
     width: calc(var(--space) * 8);
     text-align: right;
-  }
-  .note {
-    font-size: var(--fs-sm);
-    color: var(--muted);
   }
 </style>

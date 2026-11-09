@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { SLIDE } from "./motion";
+  import { duration } from "./format";
   import { createEventDispatcher } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -20,24 +22,23 @@
   const dispatch = createEventDispatcher<{ open: { id: string } }>();
 
   $: recent = tools.slice(-shown);
-  const secs = (ms: number) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : `${(ms / 1000).toFixed(1)}s`);
 </script>
 
 <div class="activity">
   {#if said}<p class="said">{said}</p>{/if}
   {#each recent as t (t.id)}
-    <div class="step" class:done={!t.running} class:failed={!t.running && !t.ok} in:fly|local={{ y: 4, duration: 160, easing: cubicOut }}>
+    <div class="step" class:done={!t.running} class:failed={!t.running && !t.ok} in:fly|local={{ y: 4, duration: SLIDE, easing: cubicOut }}>
       <span class="mark">
         {#if t.running}<span class="spin" aria-label="Running" />{:else if t.ok}<Icon name="check" size={12} />{:else}<Icon name="close" size={12} />{/if}
       </span>
       <span class="label">{t.label}</span>
-      {#if !t.running && t.ms >= 5000}<span class="ms">{secs(t.ms)}</span>{/if}
+      {#if !t.running && t.ms >= 5000}<span class="ms">{duration(t.ms)}</span>{/if}
     </div>
   {/each}
   {#if helpers.length}
     <div class="helpers">
       {#each helpers as h (h.id)}
-        <button class="helper" on:click={() => dispatch("open", { id: h.id })} in:fly|local={{ y: 4, duration: 160, easing: cubicOut }}>
+        <button class="helper" on:click={() => dispatch("open", { id: h.id })} in:fly|local={{ y: 4, duration: SLIDE, easing: cubicOut }}>
           <span class="mark">{#if h.need}<i class="need" />{:else}<ThinkingFace size={14} />{/if}</span>
           <span class="who">{h.title}</span>
           <span class="what">{h.need ? "needs you" : h.step || "working"}</span>
@@ -74,7 +75,7 @@
     align-items: center;
     gap: var(--col);
     min-width: 0;
-    height: 24px;
+    height: var(--h-sm);
     font-size: var(--fs-md);
     line-height: 20px;
     color: var(--text);

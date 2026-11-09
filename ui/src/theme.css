@@ -11,8 +11,6 @@
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 500; src: url(../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2) format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 500; src: url(../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-ext-500-normal.woff2) format("woff2"); }
 
-
-
 @property --dock {
   syntax: "<length>";
   inherits: false;
@@ -62,8 +60,6 @@
   --card-edge: 100%;
   --card-blur: none;
 
-
-
   --font: "Inter";
   --font-size: 14px;
   --mono: "JetBrains Mono";
@@ -89,7 +85,6 @@
 
   --z-pop: 600;
   --z-tip: 2000;
-
 
   --fs-xs: 11px;
   --fs-sm: 12px;
@@ -179,12 +174,6 @@ html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
 .viz-tip-row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .viz-tip-row span { color: var(--muted); }
 
-kbd {
-  font-family: var(--mono); font-size: var(--fs-xs); padding: var(--space) calc(var(--space) * 2);
-  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: var(--radius-sm);
-  background: var(--panel); color: var(--text);
-}
-
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: calc(var(--space) * 2);
   background: transparent;
@@ -224,10 +213,12 @@ kbd {
 }
 .icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .icon-btn:disabled { opacity: var(--disabled); cursor: default; }
-.icon-btn.armed { color: var(--bad-text); }
-.icon-btn .spin { animation: spin 0.9s linear infinite; }
+/* Motion shared by components: a spinner's turn, a soft pulse for work in
+   progress, a progress sweep and a bar filling. */
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .icon-btn .spin { animation: none; } }
+@keyframes breathe { 50% { opacity: 0.45; } }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 .tin {
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
@@ -386,9 +377,7 @@ button.info-line.row:hover { background: var(--hover); }
   font-size: var(--fs-sm); font-weight: 400; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.row-label small.ok { color: var(--ok-text); }
 .row-label small.bad { color: var(--bad-text); }
-.row-label small.mono { font-family: var(--mono), ui-monospace, monospace; }
 .row-ctl { display: flex; align-items: center; gap: calc(var(--space) * 2); flex: none; }
 .row-ctl.auto { justify-content: flex-end; }
 /* One height for every card's title row, with or without a control in it, so
@@ -406,7 +395,6 @@ button.info-line.row:hover { background: var(--hover); }
 .msg h2 { font-size: var(--fs-lg); }
 .msg h3, .msg h4, .msg h5, .msg h6 { font-size: var(--fs-base); }
 .msg strong { font-weight: 600; }
-
 
 a { color: var(--link); }
 a:hover { color: var(--link); }
@@ -482,7 +470,6 @@ a:hover { color: var(--link); }
   background: linear-gradient(transparent, var(--bg)); pointer-events: none;
 }
 
-
 .codeblock.diagram { container-type: inline-size; }
 .codeblock.diagram pre, .codeblock.diagram code {
   white-space: pre; line-height: 1.17;
@@ -494,7 +481,6 @@ a:hover { color: var(--link); }
   border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); cursor: pointer;
 }
 .code-expand:hover { color: var(--text); background: var(--panel); }
-
 
 .msg .md-table { width: 100%; margin: 1em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
 .msg table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-base); }

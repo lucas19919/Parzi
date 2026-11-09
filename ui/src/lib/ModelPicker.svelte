@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DUR } from "./motion";
   import { createEventDispatcher, tick } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -162,7 +163,7 @@
     aria-label="Model"
     {style}
     use:popover={{ anchor: trigger, close: () => (open = false) }}
-    transition:fly={{ y: above ? 6 : -6, duration: 140, easing: cubicOut }}
+    transition:fly={{ y: above ? 6 : -6, duration: DUR, easing: cubicOut }}
   >
     <div class="search">
       <Icon name="search" size={12} />
@@ -241,7 +242,7 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     flex: none;
-    height: 32px;
+    height: var(--h-field);
     padding: 0 calc(var(--space) * 2);
     border: 1px solid var(--line);
     border-radius: var(--radius-in);
@@ -266,11 +267,6 @@
     border-top-color: var(--muted);
     animation: spin 0.8s linear infinite;
   }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
   .list {
     flex: 1;
     min-height: 0;
@@ -285,7 +281,7 @@
     align-items: center;
     gap: calc(var(--space) * 3);
     width: 100%;
-    height: 32px;
+    height: var(--h-field);
     padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;

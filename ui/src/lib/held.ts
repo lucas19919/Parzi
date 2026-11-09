@@ -1,4 +1,3 @@
-
 import type { PlanQuote } from "./api";
 
 export interface HeldItem {
@@ -166,7 +165,6 @@ export function flushHeld(): void {
   if (!latest) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(latest));
-  } catch {
-  }
+  } catch {}
   latest = null;
 }
