@@ -252,7 +252,7 @@ pub(crate) fn confined_path(store: &SessionStore, raw: &str) -> Result<PathBuf, 
     confine(store, raw).map(|(normal, _)| normal)
 }
 
-/// One entry of a folder, for the File card's tree.
+/// One entry of a folder, for the Files card's tree.
 #[derive(serde::Serialize)]
 pub struct DirEntry {
     name: String,

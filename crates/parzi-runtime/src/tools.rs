@@ -420,7 +420,7 @@ fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "ui.show_file".into(),
-            description: "Put a file in front of the person: it opens in the File card beside the conversation, markdown rendered. For something they should read now, such as a plan, a doc you wrote, or a file you are pointing at. path: an absolute path, a path relative to this session's folder, or a note in the brain (projects/parzi.md). Say in a sentence what it is; do not paste it into chat too. A file to keep that is not on disk yet is ui_show_artifact.".into(),
+            description: "Put a file in front of the person: it opens in the side bar beside the conversation, markdown rendered. For something they should read now, such as a plan, a doc you wrote, or a file you are pointing at. path: an absolute path, a path relative to this session's folder, or a note in the brain (projects/parzi.md). Say in a sentence what it is; do not paste it into chat too. A file to keep that is not on disk yet is ui_show_artifact.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
@@ -656,7 +656,7 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "app.actions".into(),
-            description: "What you can do in Parzi's own window right now, as named actions with their arguments: tabs, sessions, the composer (model, effort, permission), the sidebar, the file card, settings, the theme and more. query narrows the list. Run one with app_do. For anything not listed, use app_screen and app_click.".into(),
+            description: "What you can do in Parzi's own window right now, as named actions with their arguments: tabs, sessions, the composer (model, effort, permission), the side bar and its files, settings, the theme and more. query narrows the list. Run one with app_do. For anything not listed, use app_screen and app_click.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"query": {"type": "string"}},

@@ -5,6 +5,8 @@
   import InfoCard, { unfold } from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import RunningCard from "./RunningCard.svelte";
+  import FilesCard from "./FilesCard.svelte";
+  import type { ArtifactDoc } from "./tabs";
   import NotificationsCard from "./NotificationsCard.svelte";
   import TodoList, { todoItems, todoOpen } from "./TodoList.svelte";
   import { dockedTodos, setTodoDocked } from "./todoDock";
@@ -47,6 +49,8 @@
   // Open or shut: the column animates its own width instead of mounting
   // in and out, so the thread never jumps.
   export let open = true;
+  /** The file open in the side bar's second column, if any. */
+  export let reading = "";
 
   const dispatch = createEventDispatcher<{
     openSession: { id: string };
@@ -54,6 +58,7 @@
     compact: void;
     plan: void;
     resize: { width: number };
+    openFile: ArtifactDoc;
   }>();
 
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
@@ -198,6 +203,8 @@
       {/if}
     </InfoCard>
   {/if}
+
+  <FilesCard {folder} shown={open} current={reading} on:open={(e) => dispatch("openFile", e.detail)} />
 
   <!-- While the plan is open in the thread, the column does not repeat it. -->
   {#if ((plan && planCount) || planError) && !planInline}

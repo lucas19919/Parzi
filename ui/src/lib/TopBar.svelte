@@ -15,7 +15,6 @@
   export let panelable = false;
   export let panelOpen = false;
   export let panelCount = 0;
-  export let fileOpen = false;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -25,7 +24,6 @@
     manager: void;
     settings: void;
     panel: void;
-    file: void;
   }>();
 
 </script>
@@ -78,23 +76,13 @@
           class="icon-btn panel-btn flip"
           class:active={panelOpen}
           aria-pressed={panelOpen}
-          aria-label={panelCount > 0 ? `Session column, ${panelCount} agents running` : "Session column"}
-          use:tooltip={"Session column (Ctrl+J)"}
+          aria-label={panelCount > 0 ? `Side bar, ${panelCount} agents running` : "Side bar"}
+          use:tooltip={"Side bar (Ctrl+J)"}
           on:click={() => dispatch("panel")}
         >
         <Icon name="panel" />
         </button>
       {/if}
-      <button
-        class="icon-btn panel-btn"
-        class:active={fileOpen}
-        aria-pressed={fileOpen}
-        aria-label="Files"
-        use:tooltip={"Files"}
-        on:click={() => dispatch("file")}
-      >
-        <Icon name="file" />
-      </button>
       <WinControls />
   </div>
 </header>

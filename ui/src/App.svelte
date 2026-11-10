@@ -19,7 +19,7 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
-  import FilePanel, { FILE_MAX, FILE_MIN, fileDoc as diskDoc } from "./lib/FilePanel.svelte";
+  import FileReader, { FILE_MAX, FILE_MIN, fileDoc as diskDoc } from "./lib/FileReader.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
@@ -229,10 +229,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const w = parseInt(localStorage.getItem("parzi.info.width") ?? "", 10);
     if (w >= 220 && w <= 520) infoWidth = w;
   } catch {}
-  let fileOpen = false;
-  try {
-    fileOpen = localStorage.getItem("parzi.file.open") === "1";
-  } catch {}
   let fileWidth = 420;
   try {
     const w = parseInt(localStorage.getItem("parzi.file.width") ?? "", 10);
@@ -431,9 +427,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (tab.kind === "session") watchPlan(planProject, folder);
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
-  $: fileShown = fileOpen && innerWidth >= 900;
+  // A file open in the side bar takes its second column, beside the cards.
+  // It gives way before the thread does: never wider than leaves the
+  // thread 480px.
+  $: readerShown = infoShown && !!fileDoc;
+  $: readerWidth = Math.max(FILE_MIN, Math.min(fileWidth, innerWidth - infoWidth - 480));
 
-  $: shift = Math.round((infoShown ? infoWidth + 8 : 0) / 2);
+  $: shift = Math.round(((infoShown ? infoWidth + 8 : 0) + (readerShown ? readerWidth + 8 : 0)) / 2);
 
   function toggleInfo(open = !infoShown) {
     infoOpen = open;
@@ -448,14 +448,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     try {
       localStorage.setItem("parzi.info.width", String(infoWidth));
     } catch {}
-  }
-
-  function toggleFiles(open = !fileOpen, byHand = true) {
-    fileOpen = open;
-    try {
-      localStorage.setItem("parzi.file.open", open ? "1" : "0");
-    } catch {}
-    if (open && byHand && innerWidth < 900) toast("Widen the window to see the file");
   }
 
   function resizeFile(e: { detail: { width: number } }) {
@@ -748,7 +740,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     selectTab(t.id);
   }
 
-  // The file card holds one document per session; tabs outside a session share one.
+  // The side bar reads one file per session (tabs outside a session share one).
   let sessionDocs: Record<string, ArtifactDoc> = {};
   let looseDoc: ArtifactDoc | null = null;
   $: group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
@@ -769,7 +761,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const next = { ...doc, version };
     if (at) sessionDocs = { ...sessionDocs, [at]: next };
     else looseDoc = next;
-    toggleFiles(true, false);
+    // Shown here: the side bar opens to read it.
+    if (at === group && !infoOpen) toggleInfo(true);
   }
 
   async function pinNote(path: string) {
@@ -789,7 +782,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   /** An agent's ui.show_file: the file or brain note opens in that session's
-   *  File card. Errors go back to the agent rather than to a toast. */
+   *  side bar, beside the cards. Errors go back to the agent rather than to
+   *  a toast. */
   async function showFileFor(session: string, path: string, note: boolean): Promise<{ text: string }> {
     const at = session || group;
     if (note) {
@@ -800,10 +794,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else {
       putFile(diskDoc(path, await api.readTextFile(path)), at);
     }
-    return { text: `${path} is open in the File card${at === group ? "" : "; the person sees it when they open this session"}.` };
+    return { text: `${path} is open beside the session${at === group ? "" : "; the person sees it when they open this session"}.` };
   }
 
-  /** A linked file opens in the file card; one that isn't workspace text opens outside Parzi. */
+  /** A linked file opens in the side bar; one that isn't workspace text opens outside Parzi. */
   async function openFileInCard(path: string) {
     const at = group;
     let content: string;
@@ -1783,7 +1777,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function whereNow(): string {
     const page = coverOn && cover ? (cover === "settings" ? `Settings, ${settingsSection}` : "Sessions") : "";
     const kind = tab.kind === "page" ? "web page" : tab.kind === "session" ? (hasSession ? "session" : "Home") : tab.kind;
-    return `Window: ${kind} tab "${tab.title || "New session"}"${page ? `, showing ${page}` : ""}${infoShown ? ", side column open" : ""}${fileShown ? ", file card open" : ""}.`;
+    return `Window: ${kind} tab "${tab.title || "New session"}"${page ? `, showing ${page}` : ""}${infoShown ? ", side column open" : ""}${readerShown && fileDoc ? `, reading ${fileDoc.title}` : ""}.`;
   }
 
   /** Answers the desk: an agent listing or running Parzi's actions, or
@@ -1855,8 +1849,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       { id: "settings.open", title: "Open Settings at a page", args: [{ name: "section", type: "string", choices: ["general", "providers", "connections", "appearance"] }], run: (a) => { openSettings(String(a.section ?? "general")); return `Opened Settings, ${a.section ?? "general"}. Use app_screen to see its controls.`; } },
       { id: "settings.close", title: "Close Settings or the sessions list", when: () => coverOn, run: () => void clearCover() },
       { id: "sidebar.toggle", title: "Show or hide the session's side column", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleInfo(onOff(a.open, infoShown)); return infoOpen ? "The side column is open." : "The side column is hidden."; } },
-      { id: "files.toggle", title: "Show or hide the file card", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleFiles(onOff(a.open, fileShown)); return fileOpen ? "The file card is open." : "The file card is hidden."; } },
-      { id: "files.open", title: "Open a file in the file card", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFileInCard(String(a.path)); return `Opened ${a.path}.`; } },
+      { id: "files.open", title: "Open a file in the side bar, beside the cards", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFileInCard(String(a.path)); return `Opened ${a.path}.`; } },
+      { id: "files.close", title: "Close the file open in the side bar", run: () => { closeFile(); return "Closed the file."; } },
       { id: "plan.show", title: "Show the project's plan in the thread", run: () => void showPlan() },
       { id: "plan.hide", title: "Hide the plan", run: () => void hidePlan() },
       { id: "window.fullscreen", title: "Turn full screen on or off", args: [{ name: "on", type: "boolean" }], run: async (a) => { await setImmersive(onOff(a.on, immersive)); return immersive ? "Full screen is on." : "Full screen is off."; } },
@@ -2033,8 +2027,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       panelOpen={infoShown}
       panelCount={familyActive}
       on:panel={() => toggleInfo()}
-      fileOpen={fileShown}
-      on:file={() => toggleFiles()}
     />
   {/if}
 
@@ -2162,6 +2154,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {/if}
           </section>
           {/if}
+          {#if readerShown && fileDoc}
+            <FileReader doc={fileDoc} {folder} width={readerWidth} on:close={closeFile} on:resize={resizeFile} />
+          {/if}
           <SessionInfo
             session={shown ?? ""}
             project={planProject}
@@ -2190,6 +2185,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             on:openUrl={(e) => openPage(e.detail.url)}
             on:compact={compact}
             on:plan={showPlan}
+            reading={readerShown && fileDoc ? fileDoc.id : ""}
+            on:openFile={(e) => putFile(e.detail)}
           />
         </div>
       {/if}
@@ -2251,17 +2248,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       {/if}
     {/if}
     </main>
-    {#if !immersive}
-      <FilePanel
-        doc={fileDoc}
-        {folder}
-        width={fileWidth}
-        shown={fileShown}
-        on:close={closeFile}
-        on:resize={resizeFile}
-        on:pick={(e) => putFile(e.detail)}
-      />
-    {/if}
   </div>
 
   <ImageViewer />
@@ -2321,7 +2307,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   /* The card look (clear, glass or solid) is one set of values for all of
      Parzi (theme.css, --card-fill, --card-edge, --card-blur); on Home it
      eases as it changes. */
-  .on-home :global(:is(.info .card, .files .card, .ob .box)) {
+  .on-home :global(:is(.info .card, .reader .card, .ob .box)) {
     transition:
       background var(--dur) ease,
       border-color var(--dur) ease,
@@ -2329,7 +2315,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Onto or off the wallpaper: the change eases over about the picture's
      fade, so glass turns solid and outlines come in rather than snap. */
-  .art-shift :global(:is(.info .card, .files .card, .ob .box, .tabs .tab, .panel-btn, .info .card .btn)) {
+  .art-shift :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab, .panel-btn, .info .card .btn)) {
     transition:
       background 480ms var(--ease-even),
       border-color 480ms var(--ease-even),
@@ -2341,12 +2327,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   /* Buttons on glass are one surface with it: a faint wash of the text
      colour that lets the picture through, no grey fill and no outline. */
   :global(html[data-art-cards="glass"]) :global(.info .card .btn:not(.primary)),
-  :global(html[data-art-cards="glass"]) :global(.files .card .btn:not(.primary)) {
+  :global(html[data-art-cards="glass"]) :global(.reader .card .btn:not(.primary)) {
     background: color-mix(in srgb, var(--text) 8%, transparent);
     border-color: transparent;
   }
   :global(html[data-art-cards="glass"]) :global(.info .card .btn:not(.primary):hover:not(:disabled)),
-  :global(html[data-art-cards="glass"]) :global(.files .card .btn:not(.primary):hover:not(:disabled)) {
+  :global(html[data-art-cards="glass"]) :global(.reader .card .btn:not(.primary):hover:not(:disabled)) {
     background: color-mix(in srgb, var(--text) 14%, transparent);
     border-color: transparent;
   }
@@ -2363,7 +2349,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     --text: var(--scene-text);
     --accent: var(--scene-accent);
   }
-  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     --bg: var(--scene-text);
     --text: var(--scene-bg);
     --accent: var(--theme-accent);
@@ -2371,7 +2357,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* The colours made from the pair, made again wherever it changes. */
   :global(html[data-scene="dark"]) .over-art,
-  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
     --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
     --line: color-mix(in srgb, var(--text) 12%, var(--bg));
@@ -2390,7 +2376,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Light glass holds more of its own colour than dark glass: at half
      strength it turns grey over a dimmed picture. */
-  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .files .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     background: color-mix(in srgb, var(--panel) 80%, transparent);
     -webkit-backdrop-filter: blur(24px) saturate(1.4);
     backdrop-filter: blur(24px) saturate(1.4);

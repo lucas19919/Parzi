@@ -18,7 +18,7 @@ async function openFile(href: string) {
   } else if (link.kind === "refuse") {
     toast(link.reason, true);
   } else {
-    // The file card reads text in the workspace; anything else opens outside Parzi.
+    // The side bar reads text in the workspace; anything else opens outside Parzi.
     document.dispatchEvent(new CustomEvent<string>("parzi:open-file", { detail: link.path.replace(/:\d+(?::\d+)?$/, "") }));
   }
 }
