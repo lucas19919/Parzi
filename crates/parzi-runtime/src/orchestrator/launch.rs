@@ -313,11 +313,13 @@ impl Orchestrator {
             }
         };
         if let Some(b) = bound.filter(|b| *b != provider) {
-            return Err(ParziError::Store(format!(
-                "This thread's conversation lives on {}. Start a new thread to use {}.",
-                display_name(&b),
-                display_name(&provider)
-            )));
+            // Dynamic model switch on an existing thread: the old vendor's
+            // resume token means nothing to the new provider, so drop it.
+            // Conversation continuity comes from SessionStore history,
+            // seeded as <earlier-conversation> for fresh vendor sessions
+            // (see EngineRun::history). Record the handoff for the UI.
+            let _ = b;
+            super::queue::set_run_session(session_id, None);
         }
         let entry = cfg.provider(&provider);
         if !entry.enabled {

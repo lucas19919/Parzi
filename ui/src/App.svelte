@@ -983,10 +983,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const files = [...draft.attachments];
-    const agentOf = (model: string) => model.split("/")[0];
-    const sessionModel = threads.find((t) => t.id === target.sessionId)?.model ?? "";
-    const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
-    const fresh = !target.sessionId || otherAgent;
+    const fresh = !target.sessionId;
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
     if (!fresh && target.sessionId && (running.has(target.sessionId) || inflight.has(target.sessionId))) {
       const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
@@ -1002,7 +999,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (sendingTabs.has(target.id)) return;
-    if (target.sessionId && otherAgent && freshNotice("app", "agent-switch")) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sendingTabs = new Set(sendingTabs).add(target.id);
     if (!fresh && target.sessionId) {
