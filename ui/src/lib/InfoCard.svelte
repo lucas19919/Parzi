@@ -75,6 +75,10 @@
     gap: var(--space);
     padding-right: var(--space);
   }
+  /* A button in the header nests in the card's corner. */
+  .actions :global(.icon-btn) {
+    border-radius: var(--radius-in);
+  }
   .head {
     flex: 1;
     min-width: 0;
