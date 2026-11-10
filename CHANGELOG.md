@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Files live in the side bar now: one button, one bar. A Files card sits with the others (search, changed files, the folder as a tree), and opening a file, from the card, the thread or an agent, grows the side bar a second column beside the cards to read it in, resizable, with copy, save, show in folder and close. Closing it folds the bar back; the thread is never squeezed into a third column.
 - One card look everywhere: Settings, Appearance, Cards (Clear, Glass or Solid) now styles the whole app, not just Home: the session frame, the side cards, the composer, the open tab, the cards in the thread (todo list, plan, tests, tasks, questions, suggestions, artifacts) and the menus. Clear is an outline, Glass a frosted tint with no outline, Solid the panel colour with an outline, with or without a wallpaper.
 - You can follow an agent without opening anything: while it works, the thread shows the last thing it said or thought and its latest steps as they run, with a spinner, a tick or a cross and how long each took. It folds into "Worked for…" when the turn ends.
 - Subagents show where you are working: the ones still running appear in the thread with the step each is on (click to open), even after the parent's own turn ends, and the Running card says what each is doing, or what it reported when it finished.

@@ -1246,7 +1246,7 @@ impl ToolHost {
         }
     }
 
-    /// Opens a file or a brain note in the File card beside this session. It
+    /// Opens a file or a brain note in the side bar beside this session. It
     /// only shows something to the person, so it asks no one; the window
     /// reads project files through the same confinement as everything else.
     async fn show_file(&self, args: &Value) -> (bool, String) {
@@ -1265,14 +1265,14 @@ impl ToolHost {
                 false,
                 v.get("error")
                     .and_then(Value::as_str)
-                    .unwrap_or("the File card could not open it")
+                    .unwrap_or("the side bar could not open it")
                     .to_string(),
             ),
             Ok(v) => (
                 true,
                 v.pointer("/result/text")
                     .and_then(Value::as_str)
-                    .unwrap_or("It is open in the File card.")
+                    .unwrap_or("It is open beside the session.")
                     .to_string(),
             ),
             Err(e) => (

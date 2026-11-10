@@ -540,7 +540,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     const key = Object.keys(tree).find((k) => k && at.endsWith(`/${k}`)) ?? "";
     return tree[key] ?? [];
   },
-  pick_text_file: () => ({ path: "C:\\Users\\me\\Desktop\\todo.md", content: "# Todo\n\n- Try the file card\n" }),
+  pick_text_file: () => ({ path: "C:\\Users\\me\\Desktop\\todo.md", content: "# Todo\n\n- Try reading a file in the side bar\n" }),
   list_files: (a) => ["README.md", "CHANGELOG.md", "ui/src/App.svelte", "ui/src/lib/FilePanel.svelte", "ui/src/lib/Omnibar.svelte", "ui/src/lib/Thread.svelte", "src-tauri/src/files.rs", "crates/parzi-core/src/theme.rs", "docs/releasing.md"].filter((f) => f.toLowerCase().includes(String(a.query ?? "").toLowerCase())),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
   vault_state: () => ({ status: "missing", email: "" }),
