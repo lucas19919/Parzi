@@ -30,6 +30,8 @@ struct RunSidecar {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     report_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     last: Option<Posture>,
 }
 
@@ -81,6 +83,8 @@ struct PersistedRun {
     attachments: Vec<String>,
     #[serde(default)]
     ask: bool,
+    #[serde(default)]
+    track: Option<String>,
     #[serde(default = "restarted")]
     cause: RunCause,
 }
@@ -185,6 +189,21 @@ pub(crate) fn set_report_to(session_id: &str, parent: &str) {
     edit_sidecar(session_id, |s| s.report_to = Some(parent.to_string()));
 }
 
+/// The TASKS.md track this session staffs, if it was spawned for one.
+/// The pump caps active runs per track; run end syncs the task's status.
+pub(crate) fn set_run_track(session_id: &str, track: Option<&str>) {
+    let next = track
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    edit_sidecar(session_id, |s| s.track = next);
+}
+
+#[must_use]
+pub(crate) fn run_track(session_id: &str) -> Option<String> {
+    load_sidecar(session_id).track
+}
+
 pub(crate) fn take_report_to(session_id: &str) -> Option<String> {
     edit_sidecar(session_id, |s| s.report_to.take())
 }
@@ -210,6 +229,7 @@ pub(super) struct QueuedRun {
     pub(super) mode_override: Option<String>,
     pub(super) prompt_recorded: bool,
     pub(super) inbox_from: Option<usize>,
+    pub(super) track: Option<String>,
     pub(super) cause: RunCause,
 }
 
@@ -224,6 +244,7 @@ impl QueuedRun {
             prompt_recorded: self.prompt_recorded,
             mode_override: self.mode_override.clone(),
             inbox_from: self.inbox_from,
+            track: self.track.clone(),
             attachments: self.attachments.iter().map(|a| a.path.clone()).collect(),
             ask: self.approver.is_some() || self.restore_approver,
             cause: self.cause,
@@ -252,6 +273,7 @@ impl QueuedRun {
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
             inbox_from: p.inbox_from,
+            track: p.track,
             cause: p.cause,
         }
     }
@@ -396,9 +418,33 @@ impl Orchestrator {
                     }
                     h.keys().cloned().collect()
                 };
+                let cands: Vec<(String, Option<String>)> = {
+                    p.queue
+                        .lock()
+                        .await
+                        .iter()
+                        .map(|r| (r.session_id.clone(), r.track.clone()))
+                        .collect()
+                };
+                let mut pick: Option<String> = None;
+                for (sid, track) in cands {
+                    if busy.contains(&sid) {
+                        continue;
+                    }
+                    if let Some(t) = track.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                        if track_live_count(&p, t).await >= MAX_TRACK_ACTIVE {
+                            continue;
+                        }
+                    }
+                    pick = Some(sid);
+                    break;
+                }
+                let Some(sid) = pick else { return };
                 let mut queue = p.queue.lock().await;
-                let at = queue.iter().position(|r| !busy.contains(&r.session_id));
-                at.and_then(|i| queue.remove(i))
+                queue
+                    .iter()
+                    .position(|r| r.session_id == sid)
+                    .and_then(|i| queue.remove(i))
             };
             let Some(q) = next else { return };
             let killed = match p.store.get(&q.session_id) {
@@ -429,12 +475,42 @@ pub(super) enum Dispatch {
     Failed(ParziError),
 }
 
+/// How many runs staff one track at once. The rest queue behind them;
+/// the run queue already supports that.
+pub(crate) const MAX_TRACK_ACTIVE: usize = 3;
+
+pub(super) async fn track_live_count(p: &Pump, track: &str) -> usize {
+    let live: Vec<String> = {
+        let mut h = p.handles.lock().await;
+        h.retain(|_, handle| !handle.finished());
+        h.keys().cloned().collect()
+    };
+    let track = track.to_string();
+    tokio::task::spawn_blocking(move || {
+        live.into_iter()
+            .filter(|sid| run_track(sid).as_deref() == Some(track.as_str()))
+            .count()
+    })
+    .await
+    .unwrap_or(0)
+}
+
 impl Pump {
     fn max_live(&self) -> usize {
         self.cfg_snapshot().orchestrator.max_concurrent.max(1)
     }
 
     pub(super) async fn dispatch(&self, q: QueuedRun) -> Dispatch {
+        if let Some(t) = q.track.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            if track_live_count(self, t).await >= MAX_TRACK_ACTIVE {
+                if !self.cfg_snapshot().orchestrator.queue_when_busy {
+                    return Dispatch::Busy;
+                }
+                let _ = self.store.set_status(&q.session_id, SessionStatus::Queued);
+                self.enqueue(q).await;
+                return Dispatch::Queued;
+            }
+        }
         let live = Orchestrator::live_count(self).await;
         if live >= self.max_live() {
             if !self.cfg_snapshot().orchestrator.queue_when_busy {

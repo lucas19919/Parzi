@@ -75,6 +75,55 @@ fn id_of(json: &str) -> String {
         .to_string()
 }
 
+#[tokio::test]
+async fn one_track_staffs_three_deep_and_the_fourth_queues() {
+    let (orch, store) = team(8, hang());
+    let pump = orch.clone();
+    tokio::spawn(async move { pump.pump_loop().await });
+    let parent = store.create("boss", "t", "claude/model").unwrap();
+    let h = orch.harness();
+    let mut kids = vec![];
+    for i in 0..4 {
+        let id = id_of(
+            &h.spawn(
+                &parent.id,
+                SpawnSpec {
+                    title: format!("track hand {i}"),
+                    prompt: "hang on".into(),
+                    is_subsession: true,
+                    model: None,
+                    wait: false,
+                    mode_override: None,
+                    effort: None,
+                    track: Some("Sync daemon".into()),
+                    approver: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        kids.push(id);
+    }
+    for id in &kids[..3] {
+        assert!(
+            wait_status(&store, id, SessionStatus::Active).await,
+            "{id} runs"
+        );
+    }
+    assert!(
+        wait_status(&store, &kids[3], SessionStatus::Queued).await,
+        "the fourth waits its turn"
+    );
+    orch.kill(&kids[0]).await.unwrap();
+    assert!(
+        wait_status(&store, &kids[3], SessionStatus::Active).await,
+        "a freed slot staffs the queued track"
+    );
+    for id in &kids {
+        let _ = orch.kill(id).await;
+    }
+}
+
 #[test]
 fn session_tools_advertised_iff_allowed() {
     for t in [
@@ -132,6 +181,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                track: None,
                 approver: None,
             },
         )
@@ -159,6 +209,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                track: None,
                 approver: None,
             },
         )
@@ -186,6 +237,7 @@ async fn spawn_wait_collects_child_reply() {
                 wait: true,
                 mode_override: None,
                 effort: None,
+                track: None,
                 approver: None,
             },
         ),
@@ -539,6 +591,7 @@ async fn read_and_list_inspect_sessions() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                track: None,
                 approver: None,
             },
         )
@@ -578,6 +631,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 wait: false,
                 mode_override: None,
                 effort: None,
+                track: None,
                 approver: None,
             },
         )
@@ -596,6 +650,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 wait: true,
                 mode_override: None,
                 effort: None,
+                track: None,
                 approver: None,
             },
         )
@@ -747,6 +802,7 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
                     wait,
                     mode_override: None,
                     effort: None,
+                    track: None,
                     approver: None,
                 },
             )
@@ -797,6 +853,7 @@ async fn a_subsession_on_a_model_nobody_offers_never_starts() {
                 wait: true,
                 mode_override: Some("auto".into()),
                 effort: None,
+                track: None,
                 approver: None,
             },
         )

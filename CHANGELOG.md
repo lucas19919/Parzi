@@ -6,6 +6,9 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Switching models keeps the conversation: pick another model mid-thread and the thread stays where it is, with the new model reading what was said so far. Each reply is signed with the model and effort that wrote it, shown beside its timestamp.
+- Projects show their goals and tasks in the side bar: a Projects card reads the project's GOALS.md and TASKS.md, with a status dot per row and a count of what is still open, updating as the files change.
+- Agents can break a goal into tasks for your approval: task.decompose proposes the tasks and tracks, you approve (Save these tasks) or ask for changes, and only then do they land in TASKS.md. Staff a track with session.spawn (max three running per track, the rest queue) and the task's status follows the run: active, then done or failed.
 - Files live in the side bar now: one button, one bar. A Files card sits with the others (search, changed files, the folder as a tree), and opening a file, from the card, the thread or an agent, grows the side bar a second column beside the cards to read it in, resizable, with copy, save, show in folder and close. Closing it folds the bar back; the thread is never squeezed into a third column.
 - One card look everywhere: Settings, Appearance, Cards (Clear, Glass or Solid) now styles the whole app, not just Home: the session frame, the side cards, the composer, the open tab, the cards in the thread (todo list, plan, tests, tasks, questions, suggestions, artifacts) and the menus. Clear is an outline, Glass a frosted tint with no outline, Solid the panel colour with an outline, with or without a wallpaper.
 - You can follow an agent without opening anything: while it works, the thread shows the last thing it said or thought and its latest steps as they run, with a spinner, a tick or a cross and how long each took. It folds into "Worked for…" when the turn ends.

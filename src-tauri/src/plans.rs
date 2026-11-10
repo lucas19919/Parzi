@@ -33,7 +33,9 @@ pub(crate) fn synced(app: &AppHandle, paths: &[String]) {
 
 fn changed_plans(paths: &[String]) -> Vec<String> {
     let mut out: Vec<String> = vec![];
-    for slug in paths.iter().filter_map(|p| plan::project_of_note(p)) {
+    for slug in paths.iter().filter_map(|p| {
+        parzi_core::plan::project_of_note(p).or_else(|| parzi_core::goals::board_of_note(p))
+    }) {
         if !out.contains(&slug) {
             out.push(slug);
         }
@@ -46,6 +48,16 @@ pub async fn plan_view(project: String) -> Result<PlanView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let vault = Vault::open().map_err(|e| e.to_string())?;
         Ok(plan::load(&vault, &project))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn goals_view(project: String) -> Result<parzi_core::goals::GoalsView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let vault = Vault::open().map_err(|e| e.to_string())?;
+        Ok(parzi_core::goals::load(&vault, &project))
     })
     .await
     .map_err(|e| e.to_string())?

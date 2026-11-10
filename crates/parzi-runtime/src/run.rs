@@ -695,10 +695,15 @@ impl EngineRun {
             if self.caught(&text, true) {
                 return;
             }
-            let _ = self
-                .p
-                .store
-                .append(&self.p.session_id, &Event::Assistant { text, done });
+            let _ = self.p.store.append(
+                &self.p.session_id,
+                &Event::Assistant {
+                    text,
+                    done,
+                    model: Some(self.shown_model()),
+                    effort: self.p.effort.clone().filter(|e| !e.is_empty()),
+                },
+            );
         }
     }
 
@@ -710,8 +715,18 @@ impl EngineRun {
                 &Event::Assistant {
                     text: partial,
                     done: false,
+                    model: Some(self.shown_model()),
+                    effort: self.p.effort.clone().filter(|e| !e.is_empty()),
                 },
             );
+        }
+    }
+
+    /// The model as the thread knows it: `provider/model`, matching SessionMeta.
+    fn shown_model(&self) -> String {
+        match &self.p.model {
+            Some(m) if !m.trim().is_empty() => format!("{}/{}", self.p.provider_id, m),
+            _ => self.p.provider_id.clone(),
         }
     }
 

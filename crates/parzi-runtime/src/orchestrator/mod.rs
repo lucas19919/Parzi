@@ -5,7 +5,8 @@ mod queue;
 mod wake;
 
 pub(crate) use queue::{
-    brief_hash, run_session, set_brief_hash, set_run_note, set_run_session, VendorSession,
+    brief_hash, run_session, run_track, set_brief_hash, set_run_note, set_run_session,
+    VendorSession,
 };
 pub use queue::{run_note, BUDGET_NOTE};
 

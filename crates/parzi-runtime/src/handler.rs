@@ -94,6 +94,9 @@ pub struct SpawnSpec {
     pub wait: bool,
     pub mode_override: Option<String>,
     pub effort: Option<String>,
+    /// The TASKS.md track this child staffs. The pump caps active runs
+    /// per track; the task's status syncs back as the child reports.
+    pub track: Option<String>,
     /// Who answers the child's approval cards: the parent's own approver, so
     /// the person sees them. Without one, the child's approvals are refused.
     pub approver: Option<std::sync::Arc<dyn crate::tools::Approver>>,
@@ -109,6 +112,7 @@ impl std::fmt::Debug for SpawnSpec {
             .field("wait", &self.wait)
             .field("mode_override", &self.mode_override)
             .field("effort", &self.effort)
+            .field("track", &self.track)
             .field("approver", &self.approver.is_some())
             .finish()
     }

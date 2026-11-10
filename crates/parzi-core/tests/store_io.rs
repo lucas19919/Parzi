@@ -379,6 +379,8 @@ fn rewind_keeps_what_came_before_the_chosen_message() {
     let said = |t: &str| Event::Assistant {
         text: t.into(),
         done: true,
+        model: None,
+        effort: None,
     };
     for e in [user("first"), said("one"), user("second"), said("two")] {
         store.append(&s.id, &e).unwrap();

@@ -121,6 +121,26 @@ const prs = [
   { number: 39, title: "Remove the Work view", url: "https://github.com/lucas19919/Parzi/pull/39", head: "plan/strip", state: "merged", draft: false, checks: "pass" },
   { number: 31, title: "Old experiment", url: "https://github.com/lucas19919/Parzi/pull/31", head: "try/webgpu", state: "closed", draft: false, checks: "none" },
 ];
+const goalsView = (project: string) => ({
+  project,
+  goals_path: `projects/${project}/GOALS.md`,
+  tasks_path: `projects/${project}/TASKS.md`,
+  goals:
+    project === "parzi"
+      ? [
+          { title: "Dynamic model switching", status: "done", owner: "", detail: "" },
+          { title: "Goals, tasks and tracks", status: "active", owner: "", detail: "" },
+        ]
+      : [],
+  tasks:
+    project === "parzi"
+      ? [
+          { title: "Per-turn model attribution", status: "done", owner: "", track: "", goal: "", branch: "", detail: "" },
+          { title: "Projects dock tab", status: "active", owner: "", track: "", goal: "", branch: "", detail: "" },
+        ]
+      : [],
+  error: null,
+});
 const planView = (project: string) => ({
   project,
   path: `projects/${project}/plan.md`,
@@ -422,6 +442,7 @@ const browserPrefs = {
 
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   plan_view: (a) => planView(String(a.project ?? "")),
+  goals_view: (a) => goalsView(String(a.project ?? "")),
   plan_prs: () => (params.get("plan") === "none" ? [] : prs),
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,

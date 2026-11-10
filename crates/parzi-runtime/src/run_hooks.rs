@@ -48,7 +48,9 @@ fn summary_of(events: &[Event]) -> String {
         .iter()
         .rev()
         .find_map(|e| match e {
-            Event::Assistant { text, done: true } if !text.trim().is_empty() => {
+            Event::Assistant {
+                text, done: true, ..
+            } if !text.trim().is_empty() => {
                 Some(parzi_core::text::summarize(text, RunOutcome::SUMMARY_CAP))
             }
             _ => None,
@@ -136,6 +138,16 @@ pub(crate) async fn run_ended(store: &SessionStore, t: &Tally, stopped: bool, se
         Ok(()) => lock(t).recorded = true,
         Err(e) => tracing::warn!("run outcome of {session} not kept: {e}"),
     }
+    if let Some((kind, _)) = lock(t).end.clone() {
+        let status = match kind {
+            RunEndKind::Completed => Some("done"),
+            RunEndKind::Failed | RunEndKind::Crashed => Some("failed"),
+            _ => None,
+        };
+        if let Some(status) = status {
+            crate::plan_tools::sync_track(store, &session, status);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -148,10 +160,14 @@ mod tests {
             Event::Assistant {
                 text: "**Done**: fixed it.".into(),
                 done: true,
+                model: None,
+                effort: None,
             },
             Event::Assistant {
                 text: "half a thought".into(),
                 done: false,
+                model: None,
+                effort: None,
             },
             Event::ToolCall {
                 id: "1".into(),

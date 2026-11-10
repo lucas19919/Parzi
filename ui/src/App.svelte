@@ -53,6 +53,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
   import { watchPlan } from "./lib/planStore";
+  import { watchGoals } from "./lib/goalsStore";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -426,6 +427,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (tab.kind === "session") watchPlan(planProject, folder);
+  $: if (tab.kind === "session") watchGoals(planProject);
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
   // A file open in the side bar takes its second column, beside the cards.
   // It gives way before the thread does: never wider than leaves the

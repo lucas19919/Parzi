@@ -129,7 +129,8 @@
   const spring = { duration: SLIDE, easing: cubicOut };
 
   type Item =
-    | { key: string; kind: "user" | "assistant" | "system"; text: string; at?: number }
+    | { key: string; kind: "user" | "system"; text: string; at?: number }
+    | { key: string; kind: "assistant"; text: string; at?: number; model?: string; effort?: string }
     | { key: string; kind: "checkpoint"; text: string; at?: number; before?: number; after?: number }
     | { key: string; kind: "error"; class: string; message: string; at?: number }
     | { key: string; kind: "inter"; from: string; text: string; at?: number }
@@ -440,8 +441,9 @@ ${e.text}` : e.text;
       else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message, at: e.at });
       else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       else if (e.kind === "artifact") out.push({ key, ...e });
-      else if (e.kind === "assistant" && echoLine(e.text)) {
-        pushSys(key, out, echoLine(e.text), e.at);
+      else if (e.kind === "assistant") {
+        if (echoLine(e.text)) pushSys(key, out, echoLine(e.text), e.at);
+        else out.push({ key, kind: "assistant", text: e.text, at: e.at, model: e.model, effort: e.effort });
       } else if (e.kind === "system" && interOf(e.text)) {
         const m = interOf(e.text)!;
         out.push({ key, kind: "inter", from: m.from, text: m.body, at: e.at });
@@ -676,6 +678,7 @@ ${e.text}` : e.text;
           </div>
           {#if turnEnds.has(item.key)}
           <div class="actions">
+            {#if item.model}<span class="when">{item.model}{#if item.effort} · {item.effort}{/if}</span>{/if}
             {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
             <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
               <Icon name={copied === item.key ? "check" : "copy"} />

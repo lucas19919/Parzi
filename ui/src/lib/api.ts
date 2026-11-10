@@ -40,7 +40,7 @@ export interface RunOutcome {
 export type ChatEvent =
   | { kind: "system"; text: string; at?: number }
   | { kind: "user"; text: string; at?: number }
-  | { kind: "assistant"; text: string; done: boolean; at?: number }
+  | { kind: "assistant"; text: string; done: boolean; at?: number; model?: string; effort?: string }
   | { kind: "reasoning"; text: string; at?: number }
   | { kind: "tool_call"; id: string; name: string; args: unknown; at?: number }
   | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number; at?: number }
@@ -618,6 +618,32 @@ export interface PlanView {
   error: string | null;
 }
 
+export interface BoardGoal {
+  title: string;
+  status: string;
+  owner: string;
+  detail: string;
+}
+
+export interface BoardTask {
+  title: string;
+  status: string;
+  owner: string;
+  track: string;
+  goal: string;
+  branch: string;
+  detail: string;
+}
+
+export interface GoalsView {
+  project: string;
+  goals_path: string;
+  tasks_path: string;
+  goals: BoardGoal[];
+  tasks: BoardTask[];
+  error: string | null;
+}
+
 export interface PrInfo {
   number: number;
   title: string;
@@ -636,6 +662,7 @@ export interface PlanQuote {
 
 export const planApi = {
   view: (project: string) => invoke<PlanView>("plan_view", { project }),
+  goals: (project: string) => invoke<GoalsView>("goals_view", { project }),
   prs: (cwd: string) => invoke<PrInfo[]>("plan_prs", { cwd }),
 };
 

@@ -127,6 +127,7 @@ impl Orchestrator {
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
+            track: None,
             cause,
         };
         let snap = self.config();
@@ -238,6 +239,7 @@ impl Orchestrator {
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
+            track: None,
             cause,
         };
         let live = {
@@ -358,6 +360,7 @@ impl Orchestrator {
             "project.delete",
             "plan.read",
             "plan.write",
+            "task.decompose",
             "session.rename",
             "session.spawn",
             "session.send",
@@ -747,6 +750,7 @@ mod tests {
             "project.create",
             "plan.read",
             "plan.write",
+            "task.decompose",
             "todo.write",
         ] {
             assert!(allowed.iter().any(|a| a == t), "missing {t}");

@@ -9,6 +9,7 @@ pub(crate) fn execute(store: &SessionStore, sid: &str, name: &str, args: &Value)
         "plan.read" => read(store, sid, args),
         "plan.write" => write(store, sid, args),
         "session.rename" => rename(store, sid, args),
+        "task.decompose" => decompose(store, sid, args),
         _ => Err(format!("unknown tool `{name}`")),
     };
     match out {
@@ -277,6 +278,204 @@ pub(crate) fn brief_for(project: &str, item: Option<&str>) -> Option<String> {
     ))
 }
 
+/// The two answers offered under a decomposition proposal.
+pub(crate) const USE_TASKS: &str = "Save these tasks";
+pub(crate) const DECOMPOSE_LATER: &str = "Not now";
+
+const MAX_DECOMPOSED: usize = 10;
+
+#[derive(Debug, Clone, PartialEq)]
+struct DeTask {
+    title: String,
+    detail: String,
+    track: String,
+}
+
+/// Idea → goal → tasks, validated but not saved: the person sees the
+/// proposal first (ask.user) and only their yes appends to TASKS.md.
+fn parse_decompose(
+    store: &SessionStore,
+    sid: &str,
+    args: &Value,
+) -> Result<(String, String, Vec<DeTask>), String> {
+    let meta = store.get(sid).map_err(|e| e.to_string())?;
+    parse_decompose_args(&meta.project, args)
+}
+
+fn parse_decompose_args(
+    project: &str,
+    args: &Value,
+) -> Result<(String, String, Vec<DeTask>), String> {
+    let slug = plan::check_slug(project)?.to_string();
+    let goal = str_arg(args, "goal")
+        .ok_or("task.decompose needs a `goal`: the outcome these tasks deliver")?;
+    if goal.chars().count() > 200 {
+        return Err("that goal is over 200 chars; say the outcome in one line".into());
+    }
+    let raw = args
+        .get("tasks")
+        .and_then(Value::as_array)
+        .filter(|t| !t.is_empty())
+        .ok_or("task.decompose needs `tasks`: at least one {title, detail?, track?}")?;
+    if raw.len() > MAX_DECOMPOSED {
+        return Err(format!(
+            "that is {} tasks; keep a decomposition to {MAX_DECOMPOSED} so tracks stay staffable",
+            raw.len()
+        ));
+    }
+    let mut tasks = vec![];
+    for (n, t) in raw.iter().enumerate() {
+        let title = t
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or(format!("task {} needs a `title`", n + 1))?;
+        if title.chars().count() > 120 {
+            return Err(format!(
+                "task {} is over 120 chars; keep titles to one line",
+                n + 1
+            ));
+        }
+        let detail = t
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if detail.chars().count() > 400 {
+            return Err(format!("task {} is over 400 chars of detail", n + 1));
+        }
+        let track = t
+            .get("track")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if track.chars().count() > 40 {
+            return Err(format!("task {} names a track over 40 chars", n + 1));
+        }
+        if tasks.iter().any(|d: &DeTask| d.title == title) {
+            return Err(format!("\"{title}\" is in there twice; one task per title"));
+        }
+        tasks.push(DeTask {
+            title: title.to_string(),
+            detail: detail.to_string(),
+            track: track.to_string(),
+        });
+    }
+    Ok((slug, goal, tasks))
+}
+
+/// What a task.decompose would append, for the person to approve before
+/// anything lands in TASKS.md. The same checks as the write, so a bad
+/// decomposition fails before anyone is asked.
+pub(crate) fn decompose_proposal(
+    store: &SessionStore,
+    sid: &str,
+    args: &Value,
+) -> Result<plan::Proposal, String> {
+    let (slug, goal, tasks) = parse_decompose(store, sid, args)?;
+    let mut lines = vec![format!("Goal: {goal}")];
+    for t in &tasks {
+        lines.push(if t.track.is_empty() {
+            format!("+ {}", t.title)
+        } else {
+            format!("+ {} [{}]", t.title, t.track)
+        });
+    }
+    Ok(plan::Proposal {
+        review: true,
+        question: format!(
+            "Break \"{goal}\" into {} for {slug}? They land in TASKS.md.",
+            if tasks.len() == 1 {
+                "1 task".into()
+            } else {
+                format!("{} tasks", tasks.len())
+            }
+        ),
+        lines,
+    })
+}
+
+pub(crate) fn decompose_verdict(answer: &str) -> Verdict {
+    let a = answer.trim();
+    if a == USE_TASKS {
+        return Verdict::Save("The person approved this decomposition.");
+    }
+    if a == DECOMPOSE_LATER {
+        return Verdict::Hold(
+            "The person said not now, so nothing was saved. Carry on without new tasks, and do not propose them again unless they ask.".into(),
+        );
+    }
+    let lower = a.to_ascii_lowercase();
+    if lower.starts_with("skipped") {
+        return Verdict::Save("The person skipped the review, so the tasks are saved as proposed.");
+    }
+    if a.is_empty() || lower.starts_with("the user didn't answer") {
+        return Verdict::Hold(
+            "Nobody answered, so nothing was saved. Say in your reply what tasks you would propose; the person can ask you to save them.".into(),
+        );
+    }
+    Verdict::Hold(format!(
+        "The person wants changes before anything is saved: \"{a}\". Nothing was saved. Change it and call task.decompose again."
+    ))
+}
+
+fn decompose(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String> {
+    let (slug, goal, tasks) = parse_decompose(store, sid, args)?;
+    let v = vault()?;
+    let path = parzi_core::goals::tasks_path(&slug);
+    let mut text = match v.read(&path) {
+        Ok(t) => t,
+        Err(_) => "# TASKS\n".to_string(),
+    };
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    for t in &tasks {
+        text.push('\n');
+        text.push_str(&format!("## {}\n", t.title));
+        text.push_str("status: planned\n");
+        text.push_str(&format!("goal: {goal}\n"));
+        if !t.track.is_empty() {
+            text.push_str(&format!("track: {}\n", t.track));
+        }
+        if !t.detail.is_empty() {
+            text.push('\n');
+            text.push_str(&t.detail);
+            text.push('\n');
+        }
+    }
+    v.write(&path, &text).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "Saved {} task{} to {path} under \"{goal}\". Staff them with session.spawn; their status syncs back as they report.",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" }
+    ))
+}
+
+/// Note a track's status change back into TASKS.md: the orchestrator owns
+/// status transitions, and workers report through their run's end.
+/// Best effort and off the hot path: a missed write never fails a run.
+pub(crate) fn sync_track(store: &SessionStore, sid: &str, status: &str) {
+    let (store, sid, status) = (store.clone(), sid.to_string(), status.to_string());
+    tokio::task::spawn_blocking(move || {
+        let track = crate::orchestrator::run_track(&sid).unwrap_or_default();
+        if track.trim().is_empty() {
+            return;
+        }
+        let project = match store.get(&sid) {
+            Ok(m) => m.project,
+            Err(_) => return,
+        };
+        let Ok(vault) = Vault::open() else { return };
+        match parzi_core::goals::set_task_status(&vault, &project, &track, &status) {
+            Ok(true) => tracing::info!("track {track} is now {status} in {project}/TASKS.md"),
+            Ok(false) => tracing::debug!("no task {track} in {project}/TASKS.md to mark {status}"),
+            Err(e) => tracing::warn!("track {track} not marked {status}: {e}"),
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +531,66 @@ mod tests {
                 && why.contains("call plan.write again"),
             "{why}"
         );
+    }
+
+    #[test]
+    fn the_decomposition_proposes_before_anything_is_saved() {
+        let args = serde_json::json!({
+            "goal": "Ship ParziOS",
+            "tasks": [
+                {"title": "Sync daemon", "detail": "Keep the mobile view fresh.", "track": "daemon"},
+                {"title": "Top bar", "track": "mobile"},
+            ],
+        });
+        let (slug, goal, tasks) = parse_decompose_args("demo", &args).unwrap();
+        assert_eq!(slug, "demo");
+        assert_eq!(goal, "Ship ParziOS");
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].track, "daemon");
+        // A store-backed proposal carries the same shape to the person.
+        let proposal = plan::Proposal {
+            review: true,
+            question: format!("Break \"{goal}\" into {} tasks?", tasks.len()),
+            lines: vec![],
+        };
+        assert!(proposal.review);
+        assert!(proposal.question.contains("Ship ParziOS"));
+    }
+
+    #[test]
+    fn bad_decompositions_fail_before_anyone_is_asked() {
+        let no_goal = serde_json::json!({"tasks": [{"title": "T"}]});
+        assert!(parse_decompose_args("demo", &no_goal).is_err());
+        let no_tasks = serde_json::json!({"goal": "G", "tasks": []});
+        assert!(parse_decompose_args("demo", &no_tasks).is_err());
+        let untitled = serde_json::json!({"goal": "G", "tasks": [{"detail": "no title"}]});
+        assert!(parse_decompose_args("demo", &untitled).is_err());
+        let too_many: Vec<Value> = (0..11)
+            .map(|i| serde_json::json!({"title": format!("T{i}")}))
+            .collect();
+        let flood = serde_json::json!({"goal": "G", "tasks": too_many});
+        let err = parse_decompose_args("demo", &flood).unwrap_err();
+        assert!(err.contains("10"), "{err}");
+        let dup = serde_json::json!({"goal": "G", "tasks": [{"title": "T"}, {"title": "T"}]});
+        assert!(parse_decompose_args("demo", &dup).is_err());
+        assert!(parse_decompose_args(
+            "default",
+            &serde_json::json!({"goal": "G", "tasks": [{"title": "T"}]})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn the_decompose_answers_save_or_hold_like_plans() {
+        assert!(matches!(decompose_verdict(USE_TASKS), Verdict::Save(_)));
+        let Verdict::Hold(why) = decompose_verdict(DECOMPOSE_LATER) else {
+            panic!("not now holds")
+        };
+        assert!(why.contains("nothing was saved"), "{why}");
+        let Verdict::Hold(why) = decompose_verdict("Split the daemon track in two") else {
+            panic!("a typed answer holds")
+        };
+        assert!(why.contains("call task.decompose again"), "{why}");
     }
 
     #[test]

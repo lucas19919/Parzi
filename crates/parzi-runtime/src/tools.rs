@@ -155,6 +155,7 @@ impl ToolExecutor {
                 || is_brain_tool(name)
                 || is_session_tool(name)
                 || is_plan_tool(name)
+                || is_task_tool(name)
             {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
             }
@@ -361,6 +362,7 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_shell_tool(name)
         || is_brain_tool(name)
         || is_plan_tool(name)
+        || is_task_tool(name)
 }
 
 pub fn all_defs() -> Vec<ToolDef> {
@@ -982,6 +984,10 @@ pub fn is_plan_tool(name: &str) -> bool {
     matches!(name, "plan.read" | "plan.write")
 }
 
+pub fn is_task_tool(name: &str) -> bool {
+    matches!(name, "task.decompose")
+}
+
 fn plan_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -1021,6 +1027,29 @@ fn plan_defs() -> Vec<ToolDef> {
                     },
                     "replace": {"type": "boolean"},
                 },
+            }),
+        },
+        ToolDef {
+            name: "task.decompose".into(),
+            description: "Turn an idea or goal into structured tasks and parallel tracks, saved to this project's TASKS.md. Args: goal (the outcome, one line) and tasks: [{title, detail?, track?}] — a track names an independent workstream one agent can staff (max 3 active, the rest queue). Max 10 tasks per call; titles one line, detail 400 chars. The decomposition is a proposal: the person approves it (Save these tasks / Not now, or asks for changes) before anything is saved, and nothing runs until then. Staff approved tracks with session.spawn; their status syncs back as they report.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "detail": {"type": "string"},
+                                "track": {"type": "string"},
+                            },
+                            "required": ["title"],
+                        },
+                    },
+                },
+                "required": ["goal", "tasks"],
             }),
         },
     ]
@@ -1112,7 +1141,7 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder and model; to use another model, pass an id from models.list. Anything else is refused and nothing starts. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder and model; to use another model, pass an id from models.list. Anything else is refused and nothing starts. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll. Pass track (a TASKS.md task title) to staff that track: max 3 active runs per track, the rest queue, and the task's status syncs back as the run ends.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1121,6 +1150,7 @@ fn session_defs() -> Vec<ToolDef> {
                     "is_subsession": {"type": "boolean"},
                     "model": {"type": "string", "description": "An id from models.list, such as claude/opus. Leave it out to use your own model."},
                     "effort": {"type": "string"},
+                    "track": {"type": "string", "description": "The TASKS.md task title this run staffs. Max 3 active per track; status syncs back."},
                     "wait": {"type": "boolean"},
                 },
                 "required": ["prompt"],
@@ -1280,6 +1310,24 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 (true, _) => format!("Writing a new plan: {count}"),
                 (false, 0) => "Updating the plan".into(),
                 (false, _) => format!("Updating the plan: {count}"),
+            }
+        }
+        "task.decompose" => {
+            let n = args
+                .get("tasks")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            let goal = args
+                .get("goal")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| one_line(s, 50))
+                .unwrap_or_default();
+            if goal.is_empty() {
+                format!("Proposing {n} tasks")
+            } else {
+                format!("Proposing {n} tasks for {goal}")
             }
         }
         "browser.open" => format!(
@@ -1459,8 +1507,8 @@ fn short_tool_name(name: &str) -> &str {
 }
 
 const NAMESPACES: &[&str] = &[
-    "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "models",
-    "ask", "todo", "github", "app",
+    "ui", "browser", "desk", "brain", "session", "plan", "task", "shell", "project", "image",
+    "models", "ask", "todo", "github", "app",
 ];
 
 /// The MCP server agents reach Parzi's own tools on.

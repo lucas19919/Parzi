@@ -7,7 +7,10 @@ use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
 
 use super::normalize_effort;
-use super::queue::{posture, set_report_to, take_report_to, Dispatch, Pump, QueuedRun};
+use super::queue::{
+    posture, run_track, set_report_to, set_run_track, take_report_to, track_live_count, Dispatch,
+    Pump, QueuedRun, MAX_TRACK_ACTIVE,
+};
 
 const HARNESS_WAIT_SECS: u64 = 180;
 
@@ -116,6 +119,7 @@ impl Pump {
             wait,
             mode_override,
             effort,
+            track,
             approver,
         } = spec;
         let caller = self.store.get(caller_id)?;
@@ -148,6 +152,12 @@ impl Pump {
         if !wait {
             set_report_to(&meta.id, caller_id);
         }
+        let track = track
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        if track.is_some() {
+            set_run_track(&meta.id, track.as_deref());
+        }
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: caller.project.clone(),
@@ -161,19 +171,30 @@ impl Pump {
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
+            track: track.clone(),
             cause: RunCause::Message,
         };
         let crippled_note = "no one can answer this child's approvals, so its tools that need one are refused. Staff autonomous work from a Full session.";
         match self.dispatch(q).await {
-            Dispatch::Launched => {}
+            Dispatch::Launched => {
+                if track.is_some() {
+                    crate::plan_tools::sync_track(&self.store, &meta.id, "active");
+                }
+            }
             Dispatch::Queued => {
                 set_report_to(&meta.id, caller_id);
+                let mut note = "no run slot free; it runs when one frees";
+                if let Some(t) = track.as_deref() {
+                    if track_live_count(self, t).await >= MAX_TRACK_ACTIVE {
+                        note = "this track is staffed 3-deep; it runs when one finishes";
+                    }
+                }
                 let mut o = serde_json::json!({
                     "session_id": meta.id,
                     "status": "queued",
                     "title": meta.title,
                     "model": meta.model,
-                    "note": "no run slot free; it runs when one frees",
+                    "note": note,
                     "report": REPORTS,
                 });
                 if crippled {
@@ -335,6 +356,7 @@ impl HarnessBridge for Pump {
             prompt_recorded: true,
             mode_override: last.and_then(|l| l.mode_override),
             inbox_from: Some(at),
+            track: run_track(session_id),
             cause: RunCause::Message,
         };
         match self.dispatch(q).await {

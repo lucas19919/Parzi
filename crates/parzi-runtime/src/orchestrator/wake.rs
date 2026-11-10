@@ -10,7 +10,7 @@ use crate::handler::RunEvent;
 use crate::inter;
 
 use super::normalize_effort;
-use super::queue::{posture, take_report_to, Pump, QueuedRun};
+use super::queue::{posture, run_track, take_report_to, Pump, QueuedRun};
 
 const DEBOUNCE: Duration = Duration::from_secs(2);
 pub(crate) const REPORT_CAP: usize = 1_500;
@@ -218,6 +218,7 @@ impl Pump {
             prompt_recorded: true,
             mode_override: last.mode_override,
             inbox_from: Some(from),
+            track: run_track(parent),
             cause: RunCause::Wake,
         };
         tracing::info!(session = %parent, "woken by the sessions it started");

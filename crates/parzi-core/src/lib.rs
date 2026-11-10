@@ -5,6 +5,7 @@ pub mod connectors;
 pub mod context;
 pub mod device;
 pub mod error;
+pub mod goals;
 pub mod hash;
 pub mod hooks;
 pub mod paths;

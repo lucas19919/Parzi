@@ -181,7 +181,7 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
     assert_eq!(store.get(&meta.id).unwrap().status, SessionStatus::Killed);
     assert!(events(&store, &meta.id)
         .iter()
-        .any(|e| matches!(e, Event::Assistant { text, done: false } if text.contains("tick"))));
+        .any(|e| matches!(e, Event::Assistant { text, done: false, .. } if text.contains("tick"))));
 }
 
 #[tokio::test]

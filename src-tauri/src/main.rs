@@ -827,6 +827,7 @@ fn main() {
             sessions::approve_tool,
             sessions::answer_question,
             plans::plan_view,
+            plans::goals_view,
             plans::plan_prs,
             files::pick_folder,
             files::list_files,

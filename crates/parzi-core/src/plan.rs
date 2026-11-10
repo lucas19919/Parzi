@@ -811,7 +811,7 @@ pub fn load(vault: &Vault, slug: &str) -> PlanView {
     view
 }
 
-fn read_note(vault: &Vault, path: &str) -> Result<Option<String>, String> {
+pub(crate) fn read_note(vault: &Vault, path: &str) -> Result<Option<String>, String> {
     let full = vault.resolve(path).map_err(|e| e.to_string())?;
     if !full.is_file() {
         return Ok(None);

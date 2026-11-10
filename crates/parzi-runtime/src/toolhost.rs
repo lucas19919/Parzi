@@ -17,8 +17,9 @@ use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     bool_arg, category, current_name, display_name, int_arg, is_brain_tool, is_browser_tool,
     is_desk_tool, is_github_tool, is_image_tool, is_models_tool, is_plan_tool, is_project_tool,
-    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered,
-    ApprovalMode, Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
+    is_question_tool, is_session_tool, is_shell_tool, is_task_tool, is_ui_tool,
+    window_tool_offered, ApprovalMode, Approver, AskRequest, Asker, CallNames, ToolCallInfo,
+    ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -222,14 +223,20 @@ impl ToolHost {
                 .await
                 .unwrap_or_else(|e| (false, e.to_string()));
         }
-        if is_plan_tool(name) || name == "session.rename" {
-            let writes = name != "plan.read";
+        if is_plan_tool(name) || is_task_tool(name) || name == "session.rename" {
+            let writes = !matches!(name, "plan.read");
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
             }
             let mut approved = "";
             if name == "plan.write" {
                 match self.plan_review(id, args).await {
+                    Ok(note) => approved = note,
+                    Err(answer) => return answer,
+                }
+            }
+            if name == "task.decompose" {
+                match self.decompose_review(id, args).await {
                     Ok(note) => approved = note,
                     Err(answer) => return answer,
                 }
@@ -326,7 +333,8 @@ impl ToolHost {
                 return Some(self.refused(name, why));
             }
             // The plan tools refuse these in read-only mode too, without saying why.
-            if self.p.mode == ApprovalMode::Deny && matches!(name, "plan.write" | "session.rename")
+            if self.p.mode == ApprovalMode::Deny
+                && matches!(name, "plan.write" | "session.rename" | "task.decompose")
             {
                 return Some(self.refused(name, Refusal::ReadOnly));
             }
@@ -578,6 +586,7 @@ impl ToolHost {
                             wait: flag("wait", true),
                             mode_override: Some(self.child_mode().into()),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
+                            track: str_arg("track").filter(|s| !s.trim().is_empty()),
                             approver: Some(self.p.approver.clone()),
                         },
                     )
@@ -845,6 +854,58 @@ impl ToolHost {
             a = asker.ask(&req) => a,
         };
         match crate::plan_tools::verdict(&answer) {
+            crate::plan_tools::Verdict::Save(note) => Ok(note),
+            crate::plan_tools::Verdict::Hold(why) => Err((true, why)),
+        }
+    }
+
+    /// A decomposition is the person's too: goal → tasks lands in
+    /// TASKS.md only on their yes. `Ok` carries what to tell the agent
+    /// with the saved result; `Err` is the tool's answer instead.
+    async fn decompose_review(
+        &self,
+        id: &str,
+        args: &Value,
+    ) -> std::result::Result<&'static str, (bool, String)> {
+        let Some(asker) = &self.p.asker else {
+            return Ok("");
+        };
+        let (store, sid, raw) = (
+            self.p.store.clone(),
+            self.p.session_id.clone(),
+            args.clone(),
+        );
+        let proposal = tokio::task::spawn_blocking(move || {
+            crate::plan_tools::decompose_proposal(&store, &sid, &raw)
+        })
+        .await
+        .map_err(|e| (false, e.to_string()))?
+        .map_err(|e| (false, e))?;
+        if !proposal.review {
+            return Ok("");
+        }
+        let req = AskRequest {
+            id: id.into(),
+            question: proposal.text(),
+            options: vec![
+                crate::plan_tools::USE_TASKS.into(),
+                crate::plan_tools::DECOMPOSE_LATER.into(),
+            ],
+            details: vec![
+                "Save them to TASKS.md. Agents in this project work from it.".into(),
+                "Nothing is saved. The agent carries on without it.".into(),
+            ],
+            multi: false,
+            kind: String::new(),
+            session: self.p.session_id.clone(),
+        };
+        let answer = tokio::select! {
+            () = self.p.cancel.cancelled() => {
+                return Err((false, "the turn stopped before the person answered; nothing was saved".into()));
+            }
+            a = asker.ask(&req) => a,
+        };
+        match crate::plan_tools::decompose_verdict(&answer) {
             crate::plan_tools::Verdict::Save(note) => Ok(note),
             crate::plan_tools::Verdict::Hold(why) => Err((true, why)),
         }

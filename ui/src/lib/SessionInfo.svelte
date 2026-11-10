@@ -16,6 +16,7 @@
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { planState } from "./planStore";
+  import { goalsState, statusTone } from "./goalsStore";
   import { isTrunk, progress, deriveItems, groupItems } from "./planModel";
   import PlanMark from "./PlanMark.svelte";
   import { activity } from "./activity";
@@ -93,6 +94,9 @@
   })();
 
   $: plan = $planState.project === project ? $planState.plan : null;
+  $: goalsBoard = $goalsState.project === project ? $goalsState.goals : null;
+  $: boardOpen = goalsBoard ? goalsBoard.tasks.filter((t) => statusTone(t.status) !== "ok").length : 0;
+  $: boardAside = goalsBoard ? (boardOpen ? `${boardOpen} open` : goalsBoard.tasks.length ? "All done" : `${goalsBoard.goals.length} goal${goalsBoard.goals.length === 1 ? "" : "s"}`) : "";
   $: planError = $planState.project === project ? $planState.error : "";
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   $: planViews = plan ? deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity }) : [];
@@ -236,6 +240,24 @@
   {/if}
 
   <RunningCard {session} {helpers} {running} {waiting} on:openSession />
+
+  {#if goalsBoard && (goalsBoard.goals.length || goalsBoard.tasks.length)}
+    <InfoCard id="projects" title="Projects">
+      <svelte:fragment slot="aside">{boardAside}</svelte:fragment>
+      {#each goalsBoard.goals as g}
+        <div class="info-line">
+          <span class="dot {statusTone(g.status)}" aria-hidden="true"></span>
+          <span class="info-v"><strong>{g.title}</strong>{#if g.owner} · {g.owner}{/if}</span>
+        </div>
+      {/each}
+      {#each goalsBoard.tasks as t}
+        <div class="info-line quiet">
+          <span class="dot {statusTone(t.status)}" aria-hidden="true"></span>
+          <span class="info-v">{t.title}{#if t.track} · {t.track}{/if}{#if t.owner} · {t.owner}{/if}{#if t.status} <span class="st">({t.status})</span>{/if}</span>
+        </div>
+      {/each}
+    </InfoCard>
+  {/if}
   </div>
 </aside>
 
@@ -303,5 +325,25 @@
   .plan-item :global(.mark) {
     width: 12px;
     height: 12px;
+  }
+  .dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    margin-top: var(--space);
+    border-radius: 50%;
+    background: var(--line);
+  }
+  .dot.ok {
+    background: var(--ok);
+  }
+  .dot.warn {
+    background: var(--warn);
+  }
+  .dot.bad {
+    background: var(--bad-text);
+  }
+  .st {
+    color: var(--muted);
   }
 </style>
