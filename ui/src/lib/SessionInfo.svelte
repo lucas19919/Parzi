@@ -46,6 +46,59 @@
   $: if (stepsHere) unfold("steps");
   $: stepItems = todoItems(todo);
   export let width = 264;
+  // Card order: environment first, then inbox, then plan. Swappable by drag,
+  // persisted per machine.
+  const ORDER_KEY = "parzi.info.order";
+  const DEFAULT_ORDER = ["env", "notifications", "plan", "steps", "context", "usage", "changes", "files", "running"];
+  function loadOrder(): string[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
+      if (Array.isArray(v)) {
+        const known = v.filter((x) => typeof x === "string" && DEFAULT_ORDER.includes(x));
+        return [...known, ...DEFAULT_ORDER.filter((x) => !known.includes(x))];
+      }
+    } catch {}
+    return [...DEFAULT_ORDER];
+  }
+  let cardOrder: string[] = loadOrder();
+  $: pos = (id: string) => {
+    const i = cardOrder.indexOf(id);
+    return i < 0 ? 99 : i;
+  };
+  function saveOrder() {
+    try {
+      localStorage.setItem(ORDER_KEY, JSON.stringify(cardOrder));
+    } catch {}
+  }
+  let dragId = "";
+  function onDragStart(id: string, e: DragEvent) {
+    dragId = id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      try {
+        e.dataTransfer.setData("text/plain", id);
+      } catch {}
+    }
+  }
+  function onDrop(target: string, e: DragEvent) {
+    e.preventDefault();
+    const from = dragId || (() => {
+      try {
+        return e.dataTransfer?.getData("text/plain") ?? "";
+      } catch {
+        return "";
+      }
+    })();
+    dragId = "";
+    if (!from || from === target) return;
+    const next = [...cardOrder];
+    const fi = next.indexOf(from);
+    const ti = next.indexOf(target);
+    if (fi < 0 || ti < 0) return;
+    next.splice(ti, 0, next.splice(fi, 1)[0]);
+    cardOrder = next;
+    saveOrder();
+  }
   // Open or shut: the column animates its own width instead of mounting
   // in and out, so the thread never jumps.
   export let open = true;
@@ -121,16 +174,7 @@
 <aside class="info" class:shut={!open} aria-label="Session" style="width: {open ? width : 0}px" inert={!open}>
   <ResizeGrip label="Resize session column" min={220} max={520} on:resize />
   <div class="col">
-  <NotificationsCard on:openSession />
-  {#if stepsHere}
-    <InfoCard id="steps" title="Steps">
-      <svelte:fragment slot="aside">{stepItems.filter((i) => i.state === "done").length} of {stepItems.length}</svelte:fragment>
-      <svelte:fragment slot="actions">
-        <button class="doc-btn" use:tooltip={"Move to the thread"} aria-label="Move steps to the thread" on:click={() => setTodoDocked(session, false)}><Icon name="external" size={12} /></button>
-      </svelte:fragment>
-      <TodoList {todo} working={streaming} docked />
-    </InfoCard>
-  {/if}
+  <div class="slot" style="order: {pos('env')}" draggable="true" on:dragstart={(e) => onDragStart('env', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('env', e)}>
   <InfoCard id="env" title="Environment" foldedAside>
     <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
     <div class="info-line">
@@ -148,8 +192,57 @@
       </div>
     {/if}
   </InfoCard>
+  </div>
+
+  <div class="slot" style="order: {pos('notifications')}" draggable="true" on:dragstart={(e) => onDragStart('notifications', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('notifications', e)}>
+  <NotificationsCard on:openSession />
+  </div>
+
+  <!-- While the plan is open in the thread, the column does not repeat it. -->
+  {#if ((plan && planCount) || planError) && !planInline}
+  <div class="slot" style="order: {pos('plan')}" draggable="true" on:dragstart={(e) => onDragStart('plan', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('plan', e)}>
+    <InfoCard id="plan" title={plan?.title ? `Plan · ${plan.title}` : "Plan"}>
+      <svelte:fragment slot="aside">{planAside}</svelte:fragment>
+      {#if plan && planCount}
+        {#each planOpen.slice(0, PLAN_ROWS) as v (v.item.id)}
+          <button class="info-line row plan-item" use:tooltip={v.item.detail || "Show the plan in the thread"} on:click={() => dispatch("plan")}>
+            <PlanMark state={v.state} />
+            <span class="info-v">{v.item.title}</span>
+          </button>
+        {:else}
+          <div class="info-line quiet">Everything is done</div>
+        {/each}
+        {#if planOpen.length > PLAN_ROWS}
+          <div class="info-line quiet">and {planOpen.length - PLAN_ROWS} more</div>
+        {/if}
+        <button class="info-line row plan-row" on:click={() => dispatch("plan")}>
+          <Icon name="plan" size={12} />
+          <span class="info-v">Show in the thread</span>
+        </button>
+      {:else}
+        <button class="info-line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
+          <Icon name="plan" size={12} />
+          <span class="info-v">Plan unreadable</span>
+        </button>
+      {/if}
+    </InfoCard>
+  </div>
+  {/if}
+
+  {#if stepsHere}
+  <div class="slot" style="order: {pos('steps')}" draggable="true" on:dragstart={(e) => onDragStart('steps', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('steps', e)}>
+    <InfoCard id="steps" title="Steps">
+      <svelte:fragment slot="aside">{stepItems.filter((i) => i.state === "done").length} of {stepItems.length}</svelte:fragment>
+      <svelte:fragment slot="actions">
+        <button class="doc-btn" use:tooltip={"Move to the thread"} aria-label="Move steps to the thread" on:click={() => setTodoDocked(session, false)}><Icon name="external" size={12} /></button>
+      </svelte:fragment>
+      <TodoList {todo} working={streaming} docked />
+    </InfoCard>
+  </div>
+  {/if}
 
   {#if contextLimit > 0}
+  <div class="slot" style="order: {pos('context')}" draggable="true" on:dragstart={(e) => onDragStart('context', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('context', e)}>
     <InfoCard id="context" title="Context" foldedAside>
       <svelte:fragment slot="aside">{pct}%</svelte:fragment>
       <ContextBreakdown
@@ -161,8 +254,10 @@
         on:compact={() => dispatch("compact")}
       />
     </InfoCard>
+  </div>
   {/if}
   {#if limits.length || (!contextLimit && (tokensIn || tokensOut))}
+  <div class="slot" style="order: {pos('usage')}" draggable="true" on:dragstart={(e) => onDragStart('usage', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('usage', e)}>
     <InfoCard id="usage" title="Usage">
       <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
       {#if !contextLimit && (tokensIn || tokensOut)}
@@ -175,9 +270,11 @@
         </div>
       {/each}
     </InfoCard>
+  </div>
   {/if}
 
   {#if git}
+  <div class="slot" style="order: {pos('changes')}" draggable="true" on:dragstart={(e) => onDragStart('changes', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('changes', e)}>
     <InfoCard id="changes" title="Changes">
       <svelte:fragment slot="aside">
         {#if git.added || git.removed}
@@ -202,40 +299,16 @@
         </button>
       {/if}
     </InfoCard>
+  </div>
   {/if}
 
+  <div class="slot" style="order: {pos('files')}" draggable="true" on:dragstart={(e) => onDragStart('files', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('files', e)}>
   <FilesCard {folder} shown={open} current={reading} on:open={(e) => dispatch("openFile", e.detail)} />
+  </div>
 
-  <!-- While the plan is open in the thread, the column does not repeat it. -->
-  {#if ((plan && planCount) || planError) && !planInline}
-    <InfoCard id="plan" title={plan?.title ? `Plan · ${plan.title}` : "Plan"}>
-      <svelte:fragment slot="aside">{planAside}</svelte:fragment>
-      {#if plan && planCount}
-        {#each planOpen.slice(0, PLAN_ROWS) as v (v.item.id)}
-          <button class="info-line row plan-item" use:tooltip={"Show the plan in the thread"} on:click={() => dispatch("plan")}>
-            <PlanMark state={v.state} />
-            <span class="info-v">{v.item.title}</span>
-          </button>
-        {:else}
-          <div class="info-line quiet">Everything is done</div>
-        {/each}
-        {#if planOpen.length > PLAN_ROWS}
-          <div class="info-line quiet">and {planOpen.length - PLAN_ROWS} more</div>
-        {/if}
-        <button class="info-line row plan-row" on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={12} />
-          <span class="info-v">Show in the thread</span>
-        </button>
-      {:else}
-        <button class="info-line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={12} />
-          <span class="info-v">Plan unreadable</span>
-        </button>
-      {/if}
-    </InfoCard>
-  {/if}
-
+  <div class="slot" style="order: {pos('running')}" draggable="true" on:dragstart={(e) => onDragStart('running', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('running', e)}>
   <RunningCard {session} {helpers} {running} {waiting} on:openSession />
+  </div>
   </div>
 </aside>
 
@@ -265,6 +338,14 @@
   }
   .info.shut {
     margin-right: 0;
+  }
+  .slot {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .slot[draggable="true"] {
+    cursor: grab;
   }
   .doc-btn {
     flex: none;

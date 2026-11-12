@@ -26,6 +26,13 @@
 
   let open = true;
   let showDone = false;
+  let expanded = new Set<string>();
+
+  function toggleDetail(id: string) {
+    expanded = new Set(expanded);
+    if (expanded.has(id)) expanded.delete(id);
+    else expanded.add(id);
+  }
 
   $: plan = $planState.project === project ? $planState.plan : null;
   $: error = $planState.project === project ? $planState.error : "";
@@ -77,18 +84,43 @@
           <ul>
             {#each g.items as v (v.item.id)}
               <li>
-                <button
-                  class="item"
-                  class:mine={v.sessions.some((s) => s.id === session)}
-                  class:picked={quoted(v)}
-                  use:tooltip={quoted(v) ? "Quoted. Click to remove it." : `${STATE_WORDS[v.state]}. Click to quote it.`}
-                  on:click={() => quote(v)}
-                >
-                  <PlanMark state={v.state} />
-                  <span class="t">{v.item.title}</span>
-                  {#if quoted(v)}<span class="why">Quoted</span>
-                  {:else if itemNote(v)}<span class="why" class:asks={v.state === "needs"}>{itemNote(v)}</span>{/if}
-                </button>
+                <div class="itemrow">
+                  <button
+                    class="item"
+                    class:mine={v.sessions.some((s) => s.id === session)}
+                    class:picked={quoted(v)}
+                    use:tooltip={quoted(v) ? "Quoted. Click to remove it." : `${STATE_WORDS[v.state]}. Click to quote it.`}
+                    on:click={() => quote(v)}
+                  >
+                    <PlanMark state={v.state} />
+                    <span class="t">{v.item.title}</span>
+                    {#if quoted(v)}<span class="why">Quoted</span>
+                    {:else if itemNote(v)}<span class="why" class:asks={v.state === "needs"}>{itemNote(v)}</span>{/if}
+                  </button>
+                  {#if v.item.detail || v.after.length || v.item.branch || v.item.note}
+                    <button
+                      class="expander"
+                      aria-expanded={expanded.has(v.item.id)}
+                      aria-label={expanded.has(v.item.id) ? "Hide details" : "Show details"}
+                      use:tooltip={expanded.has(v.item.id) ? "Hide details" : "Show what this involves"}
+                      on:click={() => toggleDetail(v.item.id)}
+                    >
+                      <Icon name={expanded.has(v.item.id) ? "chevDown" : "chevRight"} size={12} />
+                    </button>
+                  {/if}
+                </div>
+                {#if expanded.has(v.item.id)}
+                  <div class="detail">
+                    {#if v.item.detail}<p class="d">{v.item.detail}</p>{/if}
+                    <div class="meta">
+                      {#if v.after.length}<span>After {v.after.join(", ")}</span>{/if}
+                      {#if v.item.branch}<span class="mono">{v.item.branch}</span>{/if}
+                      {#if v.item.note}<span>{v.item.note}</span>{/if}
+                    </div>
+                  </div>
+                {:else if v.item.detail}
+                  <div class="teaser">{v.item.detail.slice(0, 140)}{v.item.detail.length > 140 ? "…" : ""}</div>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -204,7 +236,8 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     min-height: 30px;
     padding: var(--space) calc(var(--space) * 3);
     background: none;
@@ -218,6 +251,64 @@
   }
   .item:hover {
     background: var(--hover);
+  }
+  .itemrow {
+    display: flex;
+    align-items: center;
+    gap: var(--space);
+  }
+  .expander {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .expander:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .detail {
+    margin: 0 calc(var(--space) * 3) var(--space) calc(var(--space) * 8);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
+    background: var(--hover);
+    border-radius: var(--radius-in);
+  }
+  .detail .d {
+    margin: 0 0 var(--space);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .detail .d:last-child {
+    margin-bottom: 0;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space) calc(var(--space) * 3);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+  .meta .mono {
+    font-family: var(--mono);
+  }
+  .teaser {
+    margin: 0 calc(var(--space) * 3) var(--space) calc(var(--space) * 8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .item.mine .t {
     font-weight: 600;

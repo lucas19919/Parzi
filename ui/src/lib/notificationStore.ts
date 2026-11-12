@@ -72,6 +72,23 @@ export function markSessionRead(sessionId: string) {
   });
 }
 
+export function markAllRead() {
+  notifications.update((list) => {
+    if (!list.some((n) => !n.read)) return list;
+    const updated = list.map((n) => ({ ...n, read: true }));
+    persist(updated);
+    return updated;
+  });
+}
+
+export function dismissNotification(id: string) {
+  notifications.update((list) => {
+    const updated = list.filter((n) => n.id !== id);
+    persist(updated);
+    return updated;
+  });
+}
+
 export function dropNotification(key: string) {
   notifications.update((list) => {
     if (!list.some((n) => n.key === key)) return list;
