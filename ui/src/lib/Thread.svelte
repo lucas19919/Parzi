@@ -386,6 +386,8 @@
         return "Reading command output";
       case "shell.kill":
         return "Stopping a command";
+      case "wait":
+        return "Waiting for background work";
       case "browser.click":
         return `Clicking ${arg(args, "text", "selector") || "a control"}`;
       case "browser.type":
