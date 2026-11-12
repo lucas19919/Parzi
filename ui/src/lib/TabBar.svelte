@@ -440,7 +440,9 @@
     max-width: 168px;
     min-width: 80px;
   }
-  /* Connected tabs sit in one shell, so they read as one thing. */
+  /* Connected tabs sit in one shell, so they read as one thing.
+     The shell's padding and ring add up, so the tabs inside shrink by
+     exactly that: the group lands at tab height like every lone tab. */
   .group {
     flex: 0 1 auto;
     min-width: 0;
@@ -453,6 +455,10 @@
     -webkit-backdrop-filter: var(--card-blur);
     backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
+  }
+  .group .tab {
+    height: calc(var(--h) - var(--space));
+    border-radius: var(--radius-in);
   }
   .group .tab.active {
     background: var(--selected);
