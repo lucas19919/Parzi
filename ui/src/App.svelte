@@ -423,24 +423,34 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else openPageNext(last.url);
   }
 
-  $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
+  $: planProject = (hasSession ? meta?.project : "") || sideMeta?.project || project?.slug || "";
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (tab.kind === "session") watchPlan(planProject, folder);
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
+  // Browser tabs borrow the side column of the session they belong to, so
+  // the inbox, plan and helpers stay one click away while reading a page.
+  $: pageOwner = tab.kind === "page" ? (tab.owner ?? tab.group ?? null) : null;
+  $: pageOwnerMeta = pageOwner ? (threads.find((t) => t.id === pageOwner) ?? null) : null;
+  $: pageInfoShown = tab.kind === "page" && (!!pageOwnerMeta || !!shown) && infoOpen && innerWidth >= 900;
+  $: sideId = pageOwner ?? shown ?? "";
+  $: sideMeta = pageOwnerMeta ?? meta;
+  $: if (tab.kind === "page") watchPlan(sideMeta?.project ?? "", sideMeta?.cwd ?? "");
   // A file open in the side bar takes its second column, beside the cards.
   // It gives way before the thread does: never wider than leaves the
   // thread 480px.
-  $: readerShown = infoShown && !!fileDoc;
+  $: readerShown = (infoShown || pageInfoShown) && !!fileDoc;
   $: readerWidth = Math.max(FILE_MIN, Math.min(fileWidth, innerWidth - infoWidth - 480));
 
-  $: shift = Math.round(((infoShown ? infoWidth + 8 : 0) + (readerShown ? readerWidth + 8 : 0)) / 2);
+  $: shift = Math.round(
+    ((infoShown || pageInfoShown ? infoWidth + 8 : 0) + (readerShown ? readerWidth + 8 : 0)) / 2,
+  );
 
-  function toggleInfo(open = !infoShown) {
+  function toggleInfo(open = !(infoShown || pageInfoShown)) {
     infoOpen = open;
     try {
       localStorage.setItem("parzi.info.open", open ? "1" : "0");
     } catch {}
-    if (open && hasSession && innerWidth < 900) toast("Widen the window to see the session column");
+    if (open && (hasSession || pageOwnerMeta) && innerWidth < 900) toast("Widen the window to see the session column");
   }
 
   function resizeInfo(e: { detail: { width: number } }) {
@@ -2028,8 +2038,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     on:newTab={newSession}
       on:manager={toggleManager}
       on:settings={toggleSettings}
-      panelable={tab.kind === "session"}
-      panelOpen={infoShown}
+      panelable={tab.kind === "session" || tab.kind === "page"}
+      panelOpen={infoShown || pageInfoShown}
       panelCount={familyActive}
       on:panel={() => toggleInfo()}
     />
@@ -2045,18 +2055,56 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         {/key}
       </div>
     {:else if tab.kind === "page"}
-      {#key tab.id}
-        <PageView
-          bind:this={page}
-          {tab}
-          {immersive}
-          on:navigate={(e) => navigatePage(e.detail.url)}
-          on:error={(e) => toast(e.detail.text, true)}
-          on:openTab={(e) => openPageNext(e.detail.url)}
-          on:recover={() => recoverPage(tab.id)}
-          on:resume={() => patchTab(tab.id, { crashed: undefined })}
+      <div class="stagerow">
+        <div class="page-card">
+          {#key tab.id}
+            <PageView
+              bind:this={page}
+              {tab}
+              {immersive}
+              on:navigate={(e) => navigatePage(e.detail.url)}
+              on:error={(e) => toast(e.detail.text, true)}
+              on:openTab={(e) => openPageNext(e.detail.url)}
+              on:recover={() => recoverPage(tab.id)}
+              on:resume={() => patchTab(tab.id, { crashed: undefined })}
+            />
+          {/key}
+        </div>
+        {#if readerShown && fileDoc}
+          <FileReader doc={fileDoc} folder={sideMeta?.cwd ?? folder} width={readerWidth} on:close={closeFile} on:resize={resizeFile} />
+        {/if}
+        <SessionInfo
+          session={sideId}
+          project={sideMeta?.project ?? ""}
+          projectTitle={sideMeta?.project ?? ""}
+          folder={sideMeta?.cwd ?? ""}
+          branch={sideMeta?.branch ?? ""}
+          remoteHost=""
+          contextUsed={0}
+          contextLimit={0}
+          {compacting}
+          streaming={sideId ? running.has(sideId) : false}
+          {threads}
+          {running}
+          {approvals}
+          questions={asks}
+          {planInline}
+          todo={null}
+          width={infoWidth}
+          open={pageInfoShown}
+          on:resize={resizeInfo}
+          tokensIn={0}
+          tokensOut={0}
+          costUsd={0}
+          provider={sideMeta?.model?.split("/")[0] ?? ""}
+          on:openSession={(e) => openSession(e.detail.id)}
+          on:openUrl={(e) => openPage(e.detail.url)}
+          on:compact={compact}
+          on:plan={showPlan}
+          reading={readerShown && fileDoc ? fileDoc.id : ""}
+          on:openFile={(e) => putFile(e.detail)}
         />
-      {/key}
+      </div>
     {:else}
       {#if tab.kind === "session" && (hasSession || infoShown || coverOn)}
         <div class="stagerow" class:solo={!hasSession && !coverOn} out:fade|local={{ duration: motion.duration }}>
@@ -2480,6 +2528,24 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
+  }
+  .page-card {
+    min-width: 0;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 0 var(--gap);
+    overflow: hidden;
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    border-bottom: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    animation: enter 600ms var(--ease-out);
+  }
+  .page-card :global(.page) {
+    flex: 1;
+    min-height: 0;
   }
   @keyframes enter {
     from {

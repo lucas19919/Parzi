@@ -521,8 +521,9 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
+    margin: calc(var(--space) * 2) var(--gap) var(--gap);
     padding: 0 calc(var(--space) * 2);
-    border-bottom: 1px solid var(--line);
+    padding-bottom: calc(var(--space) * 2);
   }
   .nav {
     width: 30px;
@@ -683,6 +684,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    margin: 0 var(--gap) var(--gap);
+    border-radius: var(--radius);
+    overflow: hidden;
     background: var(--bg);
   }
   .slot.dark {
@@ -750,7 +754,7 @@
   }
   .suggest {
     position: absolute;
-    top: 31px;
+    top: calc(var(--gap) + calc(var(--space) * 2) + 30px);
     z-index: 20;
     min-width: 320px;
   }
