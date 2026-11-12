@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus, type RegistryAgent } from "../api";
   import { formatCommand, splitCommand } from "../acpCommand";
-  import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits, signInAgent } from "../providerStore";
+  import { board, checking, ensureBoard, installAgent, nextStep, refreshBoard, refreshStale, setupWaits, signInAgent } from "../providerStore";
   import { BILLING_OPTIONS, PROVIDER_ORDER, billingNote, isUsable, nameOf, stateLabel, type Billing } from "../providerRows";
   import { updateConfig } from "../config";
   import { refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "../remote";
@@ -299,6 +299,13 @@
             {#key wait.note}
               <div class="bar"><span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span /></span></div>
             {/key}
+          {/if}
+
+          {#if ready && p?.hint}
+            <div class="row">
+              <span class="row-label">{p.hint}</span>
+              <span class="row-ctl auto"><button class="btn primary" disabled={busy} on:click={() => installAgent(id)}>Update</button></span>
+            </div>
           {/if}
 
           {#if id !== "acp" && entry.enabled}
