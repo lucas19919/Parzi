@@ -17,8 +17,9 @@ use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     bool_arg, category, current_name, display_name, int_arg, is_brain_tool, is_browser_tool,
     is_desk_tool, is_github_tool, is_image_tool, is_models_tool, is_plan_tool, is_project_tool,
-    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, is_wait_tool, window_tool_offered,
-    ApprovalMode, Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
+    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, is_wait_tool,
+    window_tool_offered, ApprovalMode, Approver, AskRequest, Asker, CallNames, ToolCallInfo,
+    ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -1322,7 +1323,9 @@ impl ToolHost {
         let shells = ids(args, "shells");
         let sessions = ids(args, "sessions");
         let delay = int_arg(args, "seconds").unwrap_or(0);
-        let timeout_ms = int_arg(args, "timeout_ms").unwrap_or(300_000).clamp(1_000, 600_000);
+        let timeout_ms = int_arg(args, "timeout_ms")
+            .unwrap_or(300_000)
+            .clamp(1_000, 600_000);
         let any = bool_arg(args, "any").unwrap_or(false);
         if shells.is_empty() && sessions.is_empty() && delay == 0 {
             return (
@@ -2157,7 +2160,8 @@ mod tests {
         assert!(text.contains("shell a: done (exit 0)"), "{text}");
         assert!(text.contains("session s1: done"), "{text}");
         let live = vec!["shell b".to_string()];
-        let text = ToolHost::wait_report(&[], &[], &["shell z".to_string()], &live, true, 60_000, 0);
+        let text =
+            ToolHost::wait_report(&[], &[], &["shell z".to_string()], &live, true, 60_000, 0);
         assert!(text.starts_with("timed out after 60s"), "{text}");
         assert!(text.contains("shell b: still running"), "{text}");
         assert!(text.contains("unknown here"), "{text}");
@@ -2168,7 +2172,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_tool_names_the_close_ones() {        assert_eq!(edit_distance("kitten", "sitting"), 3);
+    fn an_unknown_tool_names_the_close_ones() {
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
         assert_eq!(edit_distance("", "abc"), 3);
         assert_eq!(edit_distance("same", "same"), 0);
         let offered: Vec<String> = [

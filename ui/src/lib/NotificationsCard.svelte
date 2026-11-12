@@ -71,7 +71,7 @@
   .list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: calc(var(--space) / 2);
     max-height: calc(var(--space) * 72);
     overflow-y: auto;
     margin: 0 calc(var(--space) * -3);
@@ -109,7 +109,7 @@
   .dot {
     flex: none;
     display: inline-flex;
-    margin-top: 2px;
+    margin-top: calc(var(--space) / 2);
   }
   .dot.info { color: var(--muted); }
   .dot.success { color: var(--ok-text); }
@@ -121,7 +121,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 0;
   }
   .t {
     overflow: hidden;
@@ -147,7 +147,7 @@
     flex: none;
     width: 6px;
     height: 6px;
-    margin-top: 5px;
+    margin-top: var(--space);
     border-radius: 50%;
     background: var(--accent);
   }

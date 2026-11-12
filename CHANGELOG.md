@@ -31,6 +31,12 @@ a full release moves it under its version. See `docs/releasing.md`.
 - The wallpaper's grain is now a dither you can tune: strength and dot size, under Settings, Appearance, Wallpaper. Agents can set them too.
 - Dev builds: turn them on in Settings, General, and Parzi updates to pre-releases as soon as they are out. Off, it stays on full releases.
 - Phones are coming: `parzi serve` can open a gateway for paired devices (`parzi gateway on`, `parzi devices add`), the first step of Parzi mobile.
+- The side column is an inbox now: Environment first, then Inbox, then the plan. Cards swap by dragging, and the inbox sorts unread first with an Open button per row, dismiss, mark-all-read and an all-caught-up empty state.
+- Plan items show what they involve: a chevron per item reveals its detail, dependencies, branch and note, with a one-line teaser when shut.
+- The composer's file and plan pills and the queued-message rows follow the card look (Clear, Glass, Solid) like everything else.
+- Agents can sleep until background work finishes: the `wait` tool watches shells, sessions or a plain delay and wakes with the result, instead of polling.
+- New Google models arrive on their own: the Antigravity server moves to 1.4.0, a day-old cached model list quietly re-learns in the background, and Settings, Providers offers an Update button when your server is older than the pin.
+- Opening a page in the system browser works for http pages too, such as local dev servers — not just https.
 
 ## 1.4.0 (2026-11-07)
 

@@ -416,8 +416,7 @@ const MODEL_RELEARN_EVERY: Duration = Duration::from_secs(24 * 3600);
 /// model list is older than that. Missing or unreadable caches read as
 /// fresh here: an empty list already learns through the warm path.
 fn cache_stale(agent: &'static str) -> bool {
-    static RELEARN_AT: OnceLock<Mutex<HashMap<&'static str, std::time::Instant>>> =
-        OnceLock::new();
+    static RELEARN_AT: OnceLock<Mutex<HashMap<&'static str, std::time::Instant>>> = OnceLock::new();
     let old = models_cache(agent)
         .and_then(|p| std::fs::metadata(p).ok())
         .and_then(|m| m.modified().ok())
