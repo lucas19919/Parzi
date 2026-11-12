@@ -1062,9 +1062,11 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     min-height: var(--h-row);
-    padding: var(--space) calc(var(--space) * 2);
-    background: none;
-    border: 1px solid var(--line);
+    padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
     border-radius: var(--radius);
   }
   .queue-item.dragover {
@@ -1080,7 +1082,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: 50%;
     color: var(--muted);
     cursor: grab;
   }
@@ -1147,7 +1149,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: 50%;
     color: var(--muted);
     cursor: pointer;
   }
@@ -1212,11 +1214,14 @@
     display: inline-flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    height: 26px;
+    height: var(--h);
     max-width: 220px;
-    padding: 0 var(--space) 0 calc(var(--space) * 2);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
-    border-radius: var(--radius);
+    padding: 0 var(--space) 0 calc(var(--space) * 3);
+    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
+    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    -webkit-backdrop-filter: var(--card-blur);
+    backdrop-filter: var(--card-blur);
+    border-radius: 999px;
     color: var(--muted);
     font-size: var(--fs-sm);
   }
@@ -1241,8 +1246,8 @@
     color: var(--text);
   }
   .chip button {
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -1250,15 +1255,13 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: 50%;
     color: var(--muted);
     cursor: pointer;
   }
   .chip button:hover {
+    background: var(--hover);
     color: var(--text);
-  }
-  .chip.quote {
-    border-radius: var(--radius);
   }
   .error {
     padding: var(--space) calc(var(--space) * 3) 0;
