@@ -19,7 +19,7 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
-  import FileReader, { FILE_MAX, FILE_MIN, fileDoc as diskDoc } from "./lib/FileReader.svelte";
+  import FileReader, { FILE_MAX, FILE_MIN, fileDoc as diskDoc, imageDoc, isImagePath } from "./lib/FileReader.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
@@ -792,7 +792,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
       putFile({ id: path, title, kind: "markdown", content, version: 1 }, at);
     } else {
-      putFile(diskDoc(path, await api.readTextFile(path)), at);
+      if (isImagePath(path)) putFile(imageDoc(path), at);
+      else putFile(diskDoc(path, await api.readTextFile(path)), at);
     }
     return { text: `${path} is open beside the session${at === group ? "" : "; the person sees it when they open this session"}.` };
   }
@@ -800,6 +801,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   /** A linked file opens in the side bar; one that isn't workspace text opens outside Parzi. */
   async function openFileInCard(path: string) {
     const at = group;
+    if (isImagePath(path)) {
+      putFile(imageDoc(path), at);
+      return;
+    }
     let content: string;
     try {
       content = await api.readTextFile(path);

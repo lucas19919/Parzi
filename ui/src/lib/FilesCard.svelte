@@ -3,7 +3,7 @@
   import InfoCard from "./InfoCard.svelte";
   import Icon from "./Icon.svelte";
   import { api } from "./api";
-  import { fileDoc } from "./FileReader.svelte";
+  import { fileDoc, imageDoc, isImagePath } from "./FileReader.svelte";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
   import type { ArtifactDoc } from "./tabs";
@@ -109,15 +109,20 @@
   $: if (!wanted) listed = "";
 
   async function openPath(path: string) {
+    if (isImagePath(path)) {
+      showDoc(imageDoc(path));
+      return;
+    }
     try {
       show(path, await api.readTextFile(path));
     } catch {
-      // Not text (an image, a PDF): open it the system's way.
+      // Not text (a PDF): open it the system's way.
       await api.openFilePath(path).catch(toastError);
     }
   }
 
   const show = (id: string, content: string) => dispatch("open", fileDoc(id, content));
+  const showDoc = (doc: ArtifactDoc) => dispatch("open", doc);
 
   async function browse() {
     // The dev mock has no system dialog, so it uses the browser's picker.
