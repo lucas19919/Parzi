@@ -4,13 +4,25 @@
   export const FILE_MIN = 220;
   export const FILE_MAX = 640;
   const MD = /\.(md|markdown)$/i;
+  const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i;
   const ABSOLUTE = /^([a-zA-Z]:[\\/]|\/|\\\\)/;
 
-  /** A file read from disk as a card document: markdown renders, the rest stays plain. */
+  /** A file read from disk as a card document: markdown renders, images
+   *  show, the rest stays plain. An image doc's content is its path; the
+   *  data URL loads when it renders, like thread attachments. */
   export function fileDoc(id: string, content: string): ArtifactDoc {
     const name = id.split(/[\\/]/).pop() || id;
     const md = MD.test(name);
     return { id, title: md ? name.replace(MD, "") || name : name, kind: md ? "markdown" : "text", content, version: 1 };
+  }
+
+  export function isImagePath(id: string): boolean {
+    return IMAGE.test(id.split(/[\\/]/).pop() || id);
+  }
+
+  export function imageDoc(id: string): ArtifactDoc {
+    const name = id.split(/[\\/]/).pop() || id;
+    return { id, title: name, kind: "image", content: id, version: 1 };
   }
 </script>
 
@@ -25,6 +37,7 @@
   import { handleLinkClick } from "./links";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
+  import { viewImage } from "./imageViewer";
 
   /** The side bar's second column: a file or note opened from the Files
    *  card, the thread or an agent, read at a width of its own beside the
@@ -50,6 +63,7 @@
   }
 
   $: markdown = !!doc && (doc.kind === "markdown" || doc.kind === "md");
+  $: image = !!doc && doc.kind === "image";
   // A file's id is its absolute path, a note's id its vault path.
   $: revealable = !!doc && /[\\/]/.test(doc.id);
   $: onDisk = !!doc && ABSOLUTE.test(doc.id);
@@ -57,6 +71,23 @@
   // Relative links resolve beside the open file or note, not at the project root.
   $: linkFolder = onDisk ? doc!.id.replace(/[\\/][^\\/]*$/, "") : folder;
   $: noteDir = isNote ? doc!.id.replace(/\\/g, "/").replace(/\/?[^/]*$/, "") : null;
+  $: imgKey = image ? `${doc!.id}:${doc!.version}` : "";
+  $: if (imgKey && imgKey !== imgLoaded) {
+    imgLoaded = imgKey;
+    imgUrl = null;
+    imgErr = "";
+    void api
+      .readImageDataUrl(doc!.content || doc!.id, linkFolder)
+      .then((u) => {
+        if (imgKey === imgLoaded) imgUrl = u;
+      })
+      .catch((e) => {
+        if (imgKey === imgLoaded) imgErr = String(e);
+      });
+  }
+  let imgUrl: string | null = null;
+  let imgErr = "";
+  let imgLoaded = "";
 
   function copy() {
     if (!doc) return;
@@ -95,8 +126,10 @@
     <div class="bar">
       <span class="title t-section" use:tooltip={doc.id}>{doc.title}</span>
       <span class="actions">
-        <button class="icon-btn" aria-label={copied ? "Copied" : "Copy"} use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} /></button>
-        <button class="icon-btn" aria-label="Save as file" use:tooltip={"Save as file"} on:click={save}><Icon name="download" /></button>
+        {#if !image}
+          <button class="icon-btn" aria-label={copied ? "Copied" : "Copy"} use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} /></button>
+          <button class="icon-btn" aria-label="Save as file" use:tooltip={"Save as file"} on:click={save}><Icon name="download" /></button>
+        {/if}
         {#if revealable}
           <button class="icon-btn" aria-label="Open in file explorer" use:tooltip={"Open in file explorer"} on:click={reveal}><Icon name="folder" /></button>
         {/if}
@@ -106,7 +139,16 @@
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="doc msg" on:click={onDocClick}>
       {#key `${doc.id}:${doc.version}:${$richReady}`}
-        {#if markdown}
+        {#if image}
+          {#if imgUrl}
+            <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+            <img class="photo" src={imgUrl} alt={doc.title} title={"View full size"} on:click={() => viewImage(imgUrl ?? "", doc.title)} />
+          {:else if imgErr}
+            <p class="empty">Couldn't show that image: {imgErr}</p>
+          {:else}
+            <p class="empty">Loading image…</p>
+          {/if}
+        {:else if markdown}
           {@html mdHtml(doc.content, $richReady)}
         {:else}
           <pre class="plain">{doc.content}</pre>
@@ -180,5 +222,17 @@
     overflow-wrap: anywhere;
     font: inherit;
     font-size: var(--fs-md);
+  }
+  .photo {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-in);
+    cursor: zoom-in;
+  }
+  .empty {
+    margin: calc(var(--space) * 2) 0;
+    color: var(--muted);
+    font-size: var(--fs-sm);
   }
 </style>
