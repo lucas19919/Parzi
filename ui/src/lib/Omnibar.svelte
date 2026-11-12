@@ -1221,7 +1221,7 @@
     border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
     -webkit-backdrop-filter: var(--card-blur);
     backdrop-filter: var(--card-blur);
-    border-radius: 999px;
+    border-radius: 50%;
     color: var(--muted);
     font-size: var(--fs-sm);
   }
