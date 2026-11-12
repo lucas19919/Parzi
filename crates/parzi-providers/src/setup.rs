@@ -150,7 +150,10 @@ mod tests {
         }
         if antigravity {
             let script = install_script("antigravity").unwrap();
-            assert!(script.contains("dl.google.com/agy-extensions/releases/"), "{script}");
+            assert!(
+                script.contains("dl.google.com/agy-extensions/releases/"),
+                "{script}"
+            );
             // Deliberate pin: a newer server brings the newest Google models.
             // Bump ANTIGRAVITY_VERSION (and this) when Google ships one.
             assert!(script.contains("agy-acp-server-1.4.0-"), "{script}");
