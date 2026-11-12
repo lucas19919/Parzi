@@ -17,7 +17,7 @@ use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     bool_arg, category, current_name, display_name, int_arg, is_brain_tool, is_browser_tool,
     is_desk_tool, is_github_tool, is_image_tool, is_models_tool, is_plan_tool, is_project_tool,
-    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered,
+    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, is_wait_tool, window_tool_offered,
     ApprovalMode, Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
@@ -290,6 +290,9 @@ impl ToolHost {
         }
         if is_models_tool(name) {
             return (true, self.models_list());
+        }
+        if is_wait_tool(name) {
+            return self.execute_wait(args).await;
         }
         if let Err(why) = self.approved(id, name, args).await {
             return self.refused(name, why);
@@ -1246,8 +1249,150 @@ impl ToolHost {
         }
     }
 
-    /// Opens a file or a brain note in the side bar beside this session. It
-    /// only shows something to the person, so it asks no one; the window
+    /// One wake report: what finished with its result, what is still
+    /// running on a timeout, and what was never watched to begin with.
+    fn wait_report(
+        done_shells: &[(String, Option<i32>, String)],
+        done_sessions: &[(String, String)],
+        unknown: &[String],
+        live: &[String],
+        timed_out: bool,
+        timeout_ms: u64,
+        delay: u64,
+    ) -> String {
+        fn tail1500(tail: &str) -> &str {
+            let tail = tail.trim();
+            let cut = tail
+                .char_indices()
+                .take_while(|(i, _)| *i <= 1500)
+                .last()
+                .map_or(0, |(i, c)| i + c.len_utf8());
+            tail[tail.len().saturating_sub(cut)..].trim_start()
+        }
+        let mut lines = Vec::new();
+        for (id, exit, tail) in done_shells {
+            let shown = tail1500(tail);
+            lines.push(format!(
+                "shell {id}: done (exit {}){}",
+                exit.unwrap_or(-1),
+                if shown.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{shown}")
+                }
+            ));
+        }
+        for (id, status) in done_sessions {
+            lines.push(format!("session {id}: {status}"));
+        }
+        for id in unknown {
+            lines.push(format!("{id}: unknown here, dropped from the watch"));
+        }
+        for id in live {
+            lines.push(format!("{id}: still running"));
+        }
+        if lines.is_empty() {
+            lines.push(format!("waited {delay}s"));
+        }
+        if timed_out {
+            lines.insert(0, format!("timed out after {}s", timeout_ms / 1000));
+        }
+        lines.join("\n")
+    }
+
+    /// Sleep until background work finishes, then wake with the result.
+    /// One blocking call replaces polling shell.logs or session.read in a
+    /// loop: it watches background shells, sessions and a plain delay, and
+    /// returns when everything watched is done, the first finish with
+    /// any=true, or the timeout.
+    async fn execute_wait(&self, args: &Value) -> (bool, String) {
+        fn ids(args: &Value, key: &str) -> Vec<String> {
+            let mut out: Vec<String> = args
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()))
+                .map(str::to_string)
+                .collect();
+            out.sort();
+            out.dedup();
+            out
+        }
+        let shells = ids(args, "shells");
+        let sessions = ids(args, "sessions");
+        let delay = int_arg(args, "seconds").unwrap_or(0);
+        let timeout_ms = int_arg(args, "timeout_ms").unwrap_or(300_000).clamp(1_000, 600_000);
+        let any = bool_arg(args, "any").unwrap_or(false);
+        if shells.is_empty() && sessions.is_empty() && delay == 0 {
+            return (
+                false,
+                "wait needs something to wait for: `shells` (ids from shell.start), `sessions` (ids from session.spawn or session.list), or `seconds`".into(),
+            );
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        let delay_until = (delay > 0).then(|| {
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(delay.saturating_mul(1_000).min(timeout_ms))
+        });
+        loop {
+            let mut done_shells: Vec<(String, Option<i32>, String)> = Vec::new();
+            let mut live_shells: Vec<String> = Vec::new();
+            let mut unknown: Vec<String> = Vec::new();
+            for id in &shells {
+                match self.p.shell.logs(id, 0, 1500) {
+                    Some(t) if t.running => live_shells.push(id.clone()),
+                    Some(t) => done_shells.push((id.clone(), t.exit, t.text)),
+                    None => unknown.push(format!("shell {id}")),
+                }
+            }
+            let mut done_sessions: Vec<(String, String)> = Vec::new();
+            let mut live_sessions: Vec<String> = Vec::new();
+            for id in &sessions {
+                match self.p.store.get(id) {
+                    Ok(m) => match m.status {
+                        parzi_core::store::SessionStatus::Idle
+                        | parzi_core::store::SessionStatus::Done
+                        | parzi_core::store::SessionStatus::Killed => {
+                            done_sessions.push((id.clone(), m.status.word().to_string()));
+                        }
+                        _ => live_sessions.push(id.clone()),
+                    },
+                    Err(_) => unknown.push(format!("session {id}")),
+                }
+            }
+            let known_done = done_shells.len() + done_sessions.len();
+            let known_live = live_shells.len() + live_sessions.len();
+            let delay_over = delay_until.is_some_and(|t| std::time::Instant::now() >= t);
+            let finished = if any {
+                known_done > 0
+            } else {
+                known_live == 0 && (delay == 0 || delay_over)
+            };
+            if finished || std::time::Instant::now() >= deadline {
+                let live: Vec<String> = live_shells
+                    .iter()
+                    .map(|id| format!("shell {id}"))
+                    .chain(live_sessions.iter().map(|id| format!("session {id}")))
+                    .collect();
+                return (
+                    true,
+                    Self::wait_report(
+                        &done_shells,
+                        &done_sessions,
+                        &unknown,
+                        &live,
+                        !finished,
+                        timeout_ms,
+                        delay,
+                    ),
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    }
+
+    /// Opens a file or a brain note in the side bar beside this session. It    /// only shows something to the person, so it asks no one; the window
     /// reads project files through the same confinement as everything else.
     async fn show_file(&self, args: &Value) -> (bool, String) {
         let raw = args
@@ -2005,8 +2150,25 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_tool_names_the_close_ones() {
-        assert_eq!(edit_distance("kitten", "sitting"), 3);
+    fn the_wait_report_names_what_finished_and_what_runs_on() {
+        let shells = vec![("a".to_string(), Some(0), "ok\n".to_string())];
+        let sessions = vec![("s1".to_string(), "done".to_string())];
+        let text = ToolHost::wait_report(&shells, &sessions, &[], &[], false, 300_000, 0);
+        assert!(text.contains("shell a: done (exit 0)"), "{text}");
+        assert!(text.contains("session s1: done"), "{text}");
+        let live = vec!["shell b".to_string()];
+        let text = ToolHost::wait_report(&[], &[], &["shell z".to_string()], &live, true, 60_000, 0);
+        assert!(text.starts_with("timed out after 60s"), "{text}");
+        assert!(text.contains("shell b: still running"), "{text}");
+        assert!(text.contains("unknown here"), "{text}");
+        let text = ToolHost::wait_report(&[], &[], &[], &[], false, 300_000, 30);
+        assert_eq!(text, "waited 30s");
+        assert!(crate::tools::is_wait_tool("wait"));
+        assert!(crate::tools::all_defs().iter().any(|d| d.name == "wait"));
+    }
+
+    #[test]
+    fn an_unknown_tool_names_the_close_ones() {        assert_eq!(edit_distance("kitten", "sitting"), 3);
         assert_eq!(edit_distance("", "abc"), 3);
         assert_eq!(edit_distance("same", "same"), 0);
         let offered: Vec<String> = [

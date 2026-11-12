@@ -348,6 +348,10 @@ pub fn bool_arg(args: &serde_json::Value, key: &str) -> Option<bool> {
     args.get(key).and_then(lenient_bool)
 }
 
+pub(crate) fn is_wait_tool(name: &str) -> bool {
+    name == "wait"
+}
+
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
     is_ui_tool(name)
         || is_browser_tool(name)
@@ -359,6 +363,7 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_question_tool(name)
         || is_project_tool(name)
         || is_shell_tool(name)
+        || is_wait_tool(name)
         || is_brain_tool(name)
         || is_plan_tool(name)
 }
@@ -376,6 +381,7 @@ pub fn all_defs() -> Vec<ToolDef> {
     d.extend(plan_defs());
     d.extend(project_defs());
     d.extend(shell_defs());
+    d.extend(wait_defs());
     d
 }
 
@@ -897,7 +903,7 @@ fn shell_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "shell.start".into(),
-            description: "Start a long-running command (dev server, watcher, build) in the background. Returns a shell id immediately; poll with shell.logs, stop with shell.kill.".into(),
+            description: "Start a long-running command (dev server, watcher, build) in the background. Returns a shell id immediately; wait for it with wait, peek with shell.logs, stop with shell.kill.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -927,6 +933,25 @@ fn shell_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
                 "required": ["id"],
+            }),
+        },
+    ]
+}
+
+fn wait_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "wait".into(),
+            description: "Sleep until background work finishes, then wake with the result — never poll. Waits for background shells (ids from shell.start), sessions (ids from session.spawn or session.list), a plain delay in seconds, or any mix. Wakes when everything watched is done, when any=true the first finish, or at timeout_ms (default 5 minutes, max 10). Returns each thing watched with done or still running.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "shells": {"type": "array", "items": {"type": "string"}, "description": "Background shell ids from shell.start."},
+                    "sessions": {"type": "array", "items": {"type": "string"}, "description": "Session ids from session.spawn or session.list."},
+                    "seconds": {"type": "number", "description": "Also just wait this long."},
+                    "timeout_ms": {"type": "number", "description": "Give up after this long (default 300000, max 600000)."},
+                    "any": {"type": "boolean", "description": "Wake on the first finish instead of all of them."},
+                },
             }),
         },
     ]
@@ -1362,6 +1387,20 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "shell.logs" => "Reading command output".into(),
         "shell.kill" => "Stopping a command".into(),
+        "wait" => {
+            let count = ["sessions", "shells"]
+                .iter()
+                .filter_map(|k| args.get(k).and_then(|v| v.as_array()))
+                .map(|a| a.len())
+                .sum::<usize>();
+            if count > 0 {
+                format!("Waiting on {count}")
+            } else if let Some(s) = args.get("seconds").and_then(lenient_u64) {
+                format!("Waiting {s}s")
+            } else {
+                "Waiting".into()
+            }
+        }
         "ask.user" if str_arg("kind").is_some() && args.get("options").is_none() => format!(
             "Asking for {}",
             one_line(
