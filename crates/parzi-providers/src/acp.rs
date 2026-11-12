@@ -407,6 +407,40 @@ pub fn cached_models(agent: &str) -> Vec<ModelInfo> {
         .unwrap_or_default()
 }
 
+/// How long a cached model list is trusted before it is quietly re-learned
+/// in the background. Launches are in the news the day they land; a day-old
+/// list is worth re-checking, and the check itself is throttled to this.
+const MODEL_RELEARN_EVERY: Duration = Duration::from_secs(24 * 3600);
+
+/// True at most once per MODEL_RELEARN_EVERY per agent, when its cached
+/// model list is older than that. Missing or unreadable caches read as
+/// fresh here: an empty list already learns through the warm path.
+fn cache_stale(agent: &'static str) -> bool {
+    static RELEARN_AT: OnceLock<Mutex<HashMap<&'static str, std::time::Instant>>> =
+        OnceLock::new();
+    let old = models_cache(agent)
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+        .is_some_and(|age| age >= MODEL_RELEARN_EVERY);
+    if !old {
+        return false;
+    }
+    let mut at = RELEARN_AT
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = std::time::Instant::now();
+    if at
+        .get(agent)
+        .is_some_and(|t| now.duration_since(*t) < MODEL_RELEARN_EVERY)
+    {
+        return false;
+    }
+    at.insert(agent, now);
+    true
+}
+
 fn remember_models(agent: &str, models: &[ModelInfo]) {
     let (Some(path), false) = (models_cache(agent), models.is_empty()) else {
         return;
@@ -683,6 +717,29 @@ impl Provider for Acp {
                 status.models = cached_models(self.agent.id);
             }
             conn.proc.kill().await;
+        }
+        if self.agent.id == "antigravity"
+            && status.version.as_deref().is_some_and(|v| {
+                setup::version_key(v) < setup::version_key(setup::ANTIGRAVITY_VERSION)
+            })
+        {
+            status.hint = format!(
+                "{} is out — reinstall {} to get the newest models",
+                setup::ANTIGRAVITY_VERSION,
+                self.agent.name
+            );
+        }
+        if self.agent.slow_start
+            && matches!(status.state, State::Ready)
+            && !status.models.is_empty()
+            && cache_stale(self.agent.id)
+        {
+            // Slow starters report the disk cache. Re-learn it in the
+            // background when it goes stale so new models arrive on their
+            // own; the next refresh picks them up.
+            if let Some(path) = self.program() {
+                self.warm_up(path);
+            }
         }
         billing::enforce(status, self.billing)
     }
@@ -2817,6 +2874,19 @@ mod tests {
         );
         assert!(got[1].is_default);
         assert!(session_models(&json!({"sessionId": "S"})).is_empty());
+    }
+
+    #[test]
+    fn a_missing_model_cache_is_not_stale() {
+        // Nothing on disk: the empty list already learns through the warm
+        // path, so there is nothing for the staleness check to schedule.
+        assert!(!cache_stale("no-such-agent-for-staleness-test"));
+    }
+
+    #[test]
+    fn an_older_server_counts_as_outdated() {
+        assert!(setup::version_key("1.3.0") < setup::version_key(setup::ANTIGRAVITY_VERSION));
+        assert_eq!(setup::ANTIGRAVITY_VERSION, "1.4.0");
     }
 
     #[test]

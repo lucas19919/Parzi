@@ -4,7 +4,7 @@ use parzi_core::config::Billing;
 
 use crate::process::{self, ps_quote, sh_quote};
 
-const ANTIGRAVITY_VERSION: &str = "1.3.0";
+pub(crate) const ANTIGRAVITY_VERSION: &str = "1.4.0";
 const ANTIGRAVITY_EXE: &str = if cfg!(windows) {
     "agy_acp_server.exe"
 } else {
@@ -76,7 +76,7 @@ pub(crate) fn installed_version(program: &Path) -> Option<String> {
         .then_some(name)
 }
 
-fn version_key(name: &str) -> Vec<u32> {
+pub(crate) fn version_key(name: &str) -> Vec<u32> {
     name.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
 
@@ -149,9 +149,11 @@ mod tests {
             assert!(!script.contains('"'), "{id}: {script}");
         }
         if antigravity {
-            assert!(install_script("antigravity")
-                .unwrap()
-                .contains("dl.google.com/agy-extensions/releases/"));
+            let script = install_script("antigravity").unwrap();
+            assert!(script.contains("dl.google.com/agy-extensions/releases/"), "{script}");
+            // Deliberate pin: a newer server brings the newest Google models.
+            // Bump ANTIGRAVITY_VERSION (and this) when Google ships one.
+            assert!(script.contains("agy-acp-server-1.4.0-"), "{script}");
         }
     }
 
