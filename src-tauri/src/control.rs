@@ -603,7 +603,7 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "desk.open" => desk_open(ctx, req).await,
         "desk.notify" => desk_notify(ctx, req),
         "desk.theme" => desk_theme(ctx, req).await,
-        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" | "app.show_file" => {
+        "app.actions" | "app.do" | "app.screen" | "app.click" | "app.type" | "app.show_file" | "app.host_site" => {
             app_call(ctx, op, req).await
         }
         "desk.screenshot" => desk_screenshot(ctx).await,

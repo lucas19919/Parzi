@@ -3,6 +3,9 @@
   import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
+  import NotificationsCard from "./NotificationsCard.svelte";
+  import { notifications } from "./notificationStore";
+  import { popover, placeAbove } from "./popover";
   import type { Tab } from "./tabs";
   import { installUpdate, updateState, updateVersion } from "./updateStore";
   import { startWindowDrag } from "./windowChrome";
@@ -24,8 +27,14 @@
     manager: void;
     settings: void;
     panel: void;
+    openSession: { id: string };
   }>();
 
+  let bellBtn: HTMLButtonElement | null = null;
+  let bellOpen = false;
+  let bellStyle = "";
+  $: unread = $notifications.filter((n) => !n.read).length;
+  $: if (bellOpen && bellBtn) bellStyle = placeAbove(bellBtn, 340, true);
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -73,6 +82,18 @@
       {/if}
       {#if panelable}
         <button
+          bind:this={bellBtn}
+          class="icon-btn bell"
+          class:active={bellOpen}
+          aria-pressed={bellOpen}
+          aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
+          use:tooltip={"Notifications"}
+          on:click={() => (bellOpen = !bellOpen)}
+        >
+          <Icon name="bell" />
+          {#if unread}<span class="badge">{unread > 9 ? "9+" : unread}</span>{/if}
+        </button>
+        <button
           class="icon-btn panel-btn flip"
           class:active={panelOpen}
           aria-pressed={panelOpen}
@@ -82,6 +103,11 @@
         >
         <Icon name="panel" />
         </button>
+      {/if}
+      {#if bellOpen}
+        <div class="noti-pop" style={bellStyle} use:popover={{ anchor: bellBtn, close: () => (bellOpen = false) }}>
+          <NotificationsCard on:openSession={(e) => { bellOpen = false; dispatch("openSession", e.detail); }} />
+        </div>
       {/if}
       <WinControls />
   </div>
@@ -107,6 +133,37 @@
   }
   .panel-btn.flip :global(svg) {
     transform: scaleX(-1);
+  }
+  .bell {
+    position: relative;
+  }
+  .badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent);
+    border-radius: 7px;
+    color: var(--bg);
+    font-size: 9px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  .noti-pop {
+    width: 340px;
+    padding: calc(var(--space) * 2);
+  }
+  .noti-pop :global(.card) {
+    background: none;
+    border: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
   .left {
     display: flex;

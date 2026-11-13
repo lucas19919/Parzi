@@ -108,7 +108,7 @@ fn makers_and_readers_are_advertised() {
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["*".into()],
     };
-    for t in ["image.generate", "models.list", "browser.shot"] {
+    for t in ["models.list", "browser.shot", "ui.show_artifact"] {
         assert!(
             open.defs().iter().any(|d| d.name == *t),
             "{t} must be advertised"

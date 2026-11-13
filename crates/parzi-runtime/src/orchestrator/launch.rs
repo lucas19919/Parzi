@@ -335,10 +335,10 @@ impl Orchestrator {
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
         for u in [
             "ui.show_artifact",
+            "ui.host_site",
             "ui.offer_replies",
             "ui.propose_task",
             "todo.write",
-            "image.generate",
             "github.issue",
             "models.list",
             "ask.user",
@@ -735,8 +735,8 @@ mod tests {
             "browser.open",
             "browser.read",
             "browser.click",
-            "image.generate",
             "ui.show_artifact",
+            "ui.host_site",
             "brain.search",
             "brain.write",
             "session.spawn",

@@ -357,7 +357,6 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_browser_tool(name)
         || is_desk_tool(name)
         || is_session_tool(name)
-        || is_image_tool(name)
         || is_github_tool(name)
         || is_models_tool(name)
         || is_question_tool(name)
@@ -374,7 +373,6 @@ pub fn all_defs() -> Vec<ToolDef> {
     d.extend(desk_defs());
     d.extend(brain_defs());
     d.extend(session_defs());
-    d.extend(image_defs());
     d.extend(github_defs());
     d.extend(team_defs());
     d.extend(question_defs());
@@ -434,6 +432,18 @@ fn ui_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "ui.host_site".into(),
+            description: "Pin a live dev server in the person's side bar: it embeds in a Hosted card with reload and open-outside, so they watch while you work. Only your own loopback servers (localhost, 127.0.0.1, ::1); anything else is refused. Say in a sentence what it is and what to look at. Call again with another url to swap it.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "http(s) url of the loopback server, e.g. http://localhost:5173"},
+                    "title": {"type": "string", "description": "short label for the card"},
+                },
+                "required": ["url"],
+            }),
+        },
+        ToolDef {
             name: "ui.offer_replies".into(),
             description: "End a turn that leaves the person a decision with one to three reply buttons under your reply: a go-ahead, a choice between two ways, approve or not. Call it last, after your final text. Labels are one to four words (\"Release 0.1.36\", \"Not yet\"); your recommendation goes first. A click sends its message (or the label) as the person's reply. Optional question: the decision in one short line. Skip it when nothing waits on them, and never for questions you need answered mid-turn (that is ask.user).".into(),
             schema: serde_json::json!({
@@ -476,7 +486,7 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_artifact" | "ui.show_file" | "ui.offer_replies" | "ui.propose_task" | "todo.write"
+        "ui.show_artifact" | "ui.show_file" | "ui.host_site" | "ui.offer_replies" | "ui.propose_task" | "todo.write"
     )
 }
 
@@ -850,10 +860,6 @@ pub fn is_brain_tool(name: &str) -> bool {
     )
 }
 
-pub(crate) fn is_image_tool(name: &str) -> bool {
-    matches!(name, "image.generate")
-}
-
 pub(crate) fn is_github_tool(name: &str) -> bool {
     matches!(name, "github.issue")
 }
@@ -1098,21 +1104,6 @@ fn project_defs() -> Vec<ToolDef> {
             }),
         },
     ]
-}
-
-fn image_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "image.generate".into(),
-        description: "Generate an image from a text prompt. Saves a PNG under generated/ in the working folder and publishes it as an image artifact the user sees. Describe the picture concretely (subject, style, mood, composition).".into(),
-        schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "prompt": {"type": "string"},
-                "size": {"type": "string", "description": "square, wide, or tall"},
-            },
-            "required": ["prompt"],
-        }),
-    }]
 }
 
 fn team_defs() -> Vec<ToolDef> {
@@ -1376,10 +1367,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Filing an issue: {}",
             one_line(&str_arg("title").unwrap_or_default(), 60)
         ),
-        "image.generate" => format!(
-            "Drawing {}",
-            one_line(&str_arg("prompt").unwrap_or_else(|| "an image".into()), 60)
-        ),
         "models.list" => "Listing models".into(),
         "shell.start" => format!(
             "Starting {}",
@@ -1469,6 +1456,10 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "ui.show_file" => format!(
             "Showing {}",
             one_line(&str_arg("path").unwrap_or_else(|| "a file".into()), 60)
+        ),
+        "ui.host_site" => format!(
+            "Hosting {}",
+            one_line(&str_arg("url").unwrap_or_else(|| "a site".into()), 60)
         ),
         "ui.show_artifact" => format!(
             "Publishing {}",
@@ -1787,7 +1778,6 @@ mod tests {
             "session.rename",
             "shell.exec",
             "project.create",
-            "image.generate",
             "ask.user",
             "session.read",
         ] {

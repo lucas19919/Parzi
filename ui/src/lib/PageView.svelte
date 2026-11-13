@@ -335,16 +335,16 @@
   {#if !immersive}
     <div class="toolbar">
       <button class="nav" use:tooltip={"Back (Alt+Left)"} disabled={!tab.canGoBack} on:click={() => nav("back")}>
-        <Icon name="arrowLeft" />
+        <Icon name="arrowLeft" size={14} />
       </button>
       <button class="nav" use:tooltip={"Forward (Alt+Right)"} disabled={!tab.canGoForward} on:click={() => nav("forward")}>
-        <Icon name="arrowRight" />
+        <Icon name="arrowRight" size={14} />
       </button>
       {#if tab.loading}
-        <button class="nav" use:tooltip={"Stop loading"} on:click={() => nav("stop")}><Icon name="close" /></button>
+        <button class="nav" use:tooltip={"Stop loading"} on:click={() => nav("stop")}><Icon name="close" size={14} /></button>
       {:else}
         <button class="nav" use:tooltip={"Reload (Ctrl+R)"} disabled={!url} on:click={() => nav("reload")}>
-          <Icon name="reload" />
+          <Icon name="reload" size={14} />
         </button>
       {/if}
       <form bind:this={form} class="address" class:editing on:submit|preventDefault={go}>
@@ -389,7 +389,7 @@
                 : "The ad blocker is off. Click to turn it on."}
           on:click={toggleShield}
         >
-          <Icon name="shield" />
+          <Icon name="shield" size={14} />
           {#if count}<span class="count">{count}</span>{/if}
         </button>
       {/if}
@@ -402,11 +402,11 @@
           disabled={!url.startsWith("https://")}
           on:click={fillLogin}
         >
-          <Icon name="key" />
+          <Icon name="key" size={14} />
         </button>
       {/if}
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
-        <Icon name="pin" />
+        <Icon name="pin" size={14} />
       </button>
       <button
         class="nav"
@@ -414,7 +414,7 @@
         disabled={!/^https?:\/\//i.test(url)}
         on:click={() => api.openConfirmedUrl(url).catch((e) => dispatch("error", { text: String(e) }))}
       >
-        <Icon name="external" />
+        <Icon name="external" size={14} />
       </button>
     </div>
   {/if}
@@ -520,14 +520,14 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
-    margin: calc(var(--space) * 2) var(--gap) var(--gap);
-    padding: 0 calc(var(--space) * 2);
-    padding-bottom: calc(var(--space) * 2);
+    gap: var(--space);
+    min-height: 26px;
+    margin: var(--gap) var(--gap) var(--gap);
+    padding: 0 var(--space);
   }
   .nav {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -602,7 +602,7 @@
     position: relative;
     flex: 1;
     min-width: 0;
-    height: 30px;
+    height: 26px;
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
@@ -685,7 +685,8 @@
     align-items: center;
     justify-content: center;
     margin: 0 var(--gap) var(--gap);
-    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-in);
     overflow: hidden;
     background: var(--bg);
   }
@@ -754,7 +755,7 @@
   }
   .suggest {
     position: absolute;
-    top: calc(var(--gap) + calc(var(--space) * 2) + 30px);
+    top: calc(var(--gap) + 26px);
     z-index: 20;
     min-width: 320px;
   }

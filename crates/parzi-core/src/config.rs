@@ -24,8 +24,6 @@ pub struct ParziConfig {
     pub budget: Budget,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favorite_models: Vec<String>,
-    #[serde(default)]
-    pub image: ImageConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,30 +146,6 @@ pub struct McpConfig {
     pub seeded: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageConfig {
-    #[serde(default = "default_image_endpoint")]
-    pub endpoint: String,
-    #[serde(default = "default_image_model")]
-    pub model: String,
-}
-
-fn default_image_endpoint() -> String {
-    "https://image.pollinations.ai/prompt/{prompt}?width={width}&height={height}&model={model}&nologo=true".into()
-}
-fn default_image_model() -> String {
-    "flux".into()
-}
-
-impl Default for ImageConfig {
-    fn default() -> Self {
-        Self {
-            endpoint: default_image_endpoint(),
-            model: default_image_model(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct McpServerCfg {
     #[serde(default)]
@@ -291,7 +265,6 @@ impl ParziConfig {
             routing: RoutingConfig::default(),
             budget: Budget::default(),
             favorite_models: vec![],
-            image: ImageConfig::default(),
         }
     }
 

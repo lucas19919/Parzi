@@ -352,8 +352,6 @@
         return "Reading the page";
       case "browser.shot":
         return "Looking at the page";
-      case "image.generate":
-        return `Drawing ${arg(args, "prompt") || "an image"}`;
       case "models.list":
         return "Listing models";
       case "ask.user":
@@ -645,11 +643,11 @@ ${e.text}` : e.text;
             {#if said.text}
               <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
             {:else}
-              <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
+              <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{q.title}</span></span>{/each}</div>
             {/if}
           </div>
           {#if said.text && said.quotes.length}
-            <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
+            <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{q.title}</span></span>{/each}</div>
           {/if}
           {#if images.length}
             <div class="sent">

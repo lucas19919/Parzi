@@ -7,7 +7,8 @@
   import RunningCard from "./RunningCard.svelte";
   import FilesCard from "./FilesCard.svelte";
   import type { ArtifactDoc } from "./tabs";
-  import NotificationsCard from "./NotificationsCard.svelte";
+  import HostedCard from "./HostedCard.svelte";
+  import { hostedSites, clearHosted } from "./hosted";
   import TodoList, { todoItems, todoOpen } from "./TodoList.svelte";
   import { dockedTodos, setTodoDocked } from "./todoDock";
   import { board, reloadBoard } from "./providerStore";
@@ -46,10 +47,10 @@
   $: if (stepsHere) unfold("steps");
   $: stepItems = todoItems(todo);
   export let width = 264;
-  // Card order: environment first, then inbox, then plan. Swappable by drag,
+  // Card order: environment first, then the plan. Swappable by drag,
   // persisted per machine.
   const ORDER_KEY = "parzi.info.order";
-  const DEFAULT_ORDER = ["env", "notifications", "plan", "steps", "context", "usage", "changes", "files", "running"];
+  const DEFAULT_ORDER = ["env", "plan", "steps", "context", "usage", "changes", "files", "running"];
   function loadOrder(): string[] {
     try {
       const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
@@ -148,6 +149,7 @@
   $: plan = $planState.project === project ? $planState.plan : null;
   $: planError = $planState.project === project ? $planState.error : "";
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
+  $: site = $hostedSites[session];
   $: planViews = plan ? deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity }) : [];
   $: planCount = plan ? progress(planViews) : null;
   $: planAside = planError ? "Unreadable" : planCount ? `${planCount.done} of ${planCount.total}` : "";
@@ -194,14 +196,17 @@
   </InfoCard>
   </div>
 
-  <div class="slot" style="order: {pos('notifications')}" draggable="true" on:dragstart={(e) => onDragStart('notifications', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('notifications', e)}>
-  <NotificationsCard on:openSession />
+  <!-- Pinned second: whatever the agent hosts stays one glance down. -->
+  {#if site}
+  <div class="slot" style="order: {pos('env')}">
+    <HostedCard {site} on:close={() => clearHosted(session)} />
   </div>
+  {/if}
 
   <!-- While the plan is open in the thread, the column does not repeat it. -->
   {#if ((plan && planCount) || planError) && !planInline}
   <div class="slot" style="order: {pos('plan')}" draggable="true" on:dragstart={(e) => onDragStart('plan', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('plan', e)}>
-    <InfoCard id="plan" title={plan?.title ? `Plan · ${plan.title}` : "Plan"}>
+    <InfoCard id="plan" title={plan?.title ?? "Plan"}>
       <svelte:fragment slot="aside">{planAside}</svelte:fragment>
       {#if plan && planCount}
         {#each planOpen.slice(0, PLAN_ROWS) as v (v.item.id)}

@@ -55,6 +55,31 @@ export function addNotification(item: Omit<NotificationItem, "id" | "time" | "re
   });
 }
 
+/** One "needs you" per session: a newer ask replaces an older unread one,
+ *  and a stale "finished" for the session goes with it. Answering settles
+ *  the ask, so nothing is lost; the card just stops nagging twice. */
+export function addNeedsNotification(item: Omit<NotificationItem, "id" | "time" | "read">) {
+  const next: NotificationItem = {
+    ...item,
+    id: `noti-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    time: Date.now(),
+    read: false,
+  };
+  notifications.update((list) => {
+    const updated = [
+      next,
+      ...list.filter(
+        (n) =>
+          n.key !== next.key &&
+          n.key !== newsKey(item.sessionId ?? "") &&
+          !(n.sessionId === item.sessionId && !n.read && (n.kind === "question" || n.kind === "approval")),
+      ),
+    ].slice(0, MAX_NOTIFICATIONS);
+    persist(updated);
+    return updated;
+  });
+}
+
 export function markRead(id: string) {
   notifications.update((list) => {
     const updated = list.map((n) => (n.id === id ? { ...n, read: true } : n));
@@ -93,6 +118,19 @@ export function dropNotification(key: string) {
   notifications.update((list) => {
     if (!list.some((n) => n.key === key)) return list;
     const updated = list.filter((n) => n.key !== key);
+    persist(updated);
+    return updated;
+  });
+}
+
+/** Drop collapsed "needs you" lines for sessions with nothing pending: the
+ *  visible line may carry a newer ask's key than the one just settled. */
+export function dropStaleNeeds(pendingSessions: Set<string>) {
+  notifications.update((list) => {
+    if (!list.some((n) => !n.read && (n.kind === "question" || n.kind === "approval") && !pendingSessions.has(n.sessionId ?? ""))) return list;
+    const updated = list.filter(
+      (n) => n.read || (n.kind !== "question" && n.kind !== "approval") || pendingSessions.has(n.sessionId ?? ""),
+    );
     persist(updated);
     return updated;
   });

@@ -47,7 +47,8 @@
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
-  import { addNotification, dropNotification, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
+  import { addNeedsNotification, addNotification, dropNotification, dropStaleNeeds, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
+  import { setHosted } from "./lib/hosted";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
@@ -427,11 +428,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (tab.kind === "session") watchPlan(planProject, folder);
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
-  // Browser tabs borrow the side column of the session they belong to, so
-  // the inbox, plan and helpers stay one click away while reading a page.
+  // Browser tabs get the side column on their own: there is not always a
+  // session behind a page, so the column shows the current context instead
+  // of waiting for one.
   $: pageOwner = tab.kind === "page" ? (tab.owner ?? tab.group ?? null) : null;
   $: pageOwnerMeta = pageOwner ? (threads.find((t) => t.id === pageOwner) ?? null) : null;
-  $: pageInfoShown = tab.kind === "page" && (!!pageOwnerMeta || !!shown) && infoOpen && innerWidth >= 900;
+  $: pageInfoShown = tab.kind === "page" && infoOpen && innerWidth >= 900;
   $: sideId = pageOwner ?? shown ?? "";
   $: sideMeta = pageOwnerMeta ?? meta;
   $: if (tab.kind === "page") watchPlan(sideMeta?.project ?? "", sideMeta?.cwd ?? "");
@@ -808,6 +810,34 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return { text: `${path} is open beside the session${at === group ? "" : "; the person sees it when they open this session"}.` };
   }
 
+  /** An agent's ui.host_site: a loopback dev server pins in that session's
+   *  side bar as a live Hosted card. Errors go back to the agent rather
+   *  than to a toast. */
+  function loopbackUrl(raw: string): string | null {
+    const url = raw.trim();
+    if (!/^https?:\/\//i.test(url)) return null;
+    let host = "";
+    try {
+      host = new URL(url).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+    const loopback =
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "::1" ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+    return loopback ? url : null;
+  }
+
+  async function hostSiteFor(session: string, url: string, title: string): Promise<{ text: string }> {
+    const good = loopbackUrl(url);
+    if (!good) throw new Error("Only this computer's servers can be hosted (localhost, 127.0.0.1 or ::1).");
+    setHosted(session || group || shown || "home", good, title.trim() || "Hosted");
+    if (!infoShown && !pageInfoShown) toggleInfo(true);
+    return { text: `${good} is pinned in the side bar as a live Hosted card.` };
+  }
+
   /** A linked file opens in the side bar; one that isn't workspace text opens outside Parzi. */
   async function openFileInCard(path: string) {
     const at = group;
@@ -1017,7 +1047,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (sendingTabs.has(target.id)) return;
-    if (target.sessionId && otherAgent && freshNotice("app", "agent-switch")) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
+    if (target.sessionId && otherAgent) {
+      // A thread stays with the agent it started on, so switching agents
+      // forks a new session and the tab follows it: the old history is not
+      // deleted, it just lives on the earlier session. Say so every time
+      // (not deduped) with a way back, or it reads as cleared history.
+      const earlier = target.sessionId;
+      const earlierAgent = agentOf(sessionModel);
+      keyedToast(`agent-switch-${target.id}`, `New session on ${nameOf(agentOf(draft.model))}: the earlier thread stays on ${nameOf(earlierAgent)}`, {
+        action: { label: "Open earlier thread", run: () => openSession(earlier) },
+        ms: 12000,
+      });
+    }
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sendingTabs = new Set(sendingTabs).add(target.id);
     if (!fresh && target.sessionId) {
@@ -1556,8 +1597,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   /** Tells the person about an agent they are not looking at, as much as
    *  Settings, General, Notifications allows:
-   *  - "needs": an approval, question or request. A card line, a toast that
-   *    goes once it is answered, and a short tone if they are elsewhere.
+   *  - "needs": an approval, question or request. One card line per session
+   *    (a newer ask replaces an older unread one), a toast that goes once
+   *    it is answered, and a short tone if they are elsewhere.
    *  - "done": a run finished. A quiet card line; a toast and tone only on
    *    "all", and the tone only while the window is in the background.
    *  - "problem": an error or a spending pause. A card line and a toast.
@@ -1573,7 +1615,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (child && opts.news !== "needs" && level !== "all") return;
     const title = titleOf(session);
     const key = opts.key ?? newsKey(session);
-    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key });
+    const body = what[0].toUpperCase() + what.slice(1);
+    if (opts.news === "needs") addNeedsNotification({ title, body, kind, sessionId: session, key });
+    else addNotification({ title, body, kind, sessionId: session, key });
     if (level === "off") return;
     const toastIt = level === "all" || opts.news !== "done";
     // The card shows it when the column is open; a toast would say it twice.
@@ -1589,6 +1633,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     questions = questions.filter((q) => q.key !== key);
     requests = requests.filter((r) => r.key !== key);
     dropNotification(key);
+    dropStaleNeeds(new Set([...approvals, ...questions, ...requests].map((x) => x.session)));
   }
 
   const stopped = (error: string) => {
@@ -1823,6 +1868,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         case "show_file":
           result = await showFileFor(str("session"), str("path"), call.note === true);
           break;
+        case "host_site":
+          result = await hostSiteFor(str("session"), str("url"), str("title"));
+          break;
         default:
           result = { ok: false, error: `unknown call ${String(call.kind)}` };
       }
@@ -2042,6 +2090,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       panelOpen={infoShown || pageInfoShown}
       panelCount={familyActive}
       on:panel={() => toggleInfo()}
+      on:openSession={(e) => openSession(e.detail.id)}
     />
   {/if}
 

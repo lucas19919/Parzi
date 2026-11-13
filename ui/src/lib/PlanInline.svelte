@@ -64,7 +64,7 @@
     <div class="head-row">
       <button class="head" aria-expanded={open} on:click={() => (open = !open)}>
         <Icon name={open ? "chevDown" : "chevRight"} size={12} />
-        <span class="title t-section">{plan?.title ? `Plan · ${plan.title}` : "Plan"}</span>
+        <span class="title t-section">{plan?.title ?? "Plan"}</span>
         {#if plan}<span class="count">{count.done} of {count.total}</span>{/if}
       </button>
       <button class="x" use:tooltip={"Hide plan"} aria-label="Hide plan" on:click={() => dispatch("close")}>

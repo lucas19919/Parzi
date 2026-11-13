@@ -36,7 +36,7 @@
   }
 </script>
 
-<InfoCard id="notifications" title="Inbox">
+<InfoCard id="notifications" title="Notifications">
   <svelte:fragment slot="aside">{#if unread}{unread} new{:else if $notifications.length}caught up{/if}</svelte:fragment>
   <svelte:fragment slot="actions">
     {#if unread}<button class="icon-btn" use:tooltip={"Mark all read"} aria-label="Mark all read" on:click={markAllRead}><Icon name="check" size={12} /></button>{/if}
@@ -61,9 +61,9 @@
         </div>
       {/each}
     </div>
-    <button class="btn sm" on:click={clearNotifications}>Clear inbox</button>
+    <button class="btn sm" on:click={clearNotifications}>Clear notifications</button>
   {:else}
-    <div class="empty">All caught up. Work that needs you lands here.</div>
+    <div class="empty">All caught up. Things that need you land here.</div>
   {/if}
 </InfoCard>
 

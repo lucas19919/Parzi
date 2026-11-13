@@ -23,6 +23,40 @@ pub(super) fn show_target(cwd: &str, raw: &str) -> (String, bool) {
     }
 }
 
+/// An http(s) url on this computer, for ui.host_site: localhost names and
+/// loopback IPs only, so the side-bar card cannot embed a page the agent
+/// does not control.
+pub(super) fn loopback_site(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if !(raw.starts_with("http://") || raw.starts_with("https://")) {
+        return None;
+    }
+    let authority = raw
+        .split(['/', '?', '#'])
+        .nth(2)?
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+    let host = if let Some(inner) = authority.strip_prefix('[') {
+        inner.split(']').next()?
+    } else if authority.matches(':').count() == 1 {
+        authority.rsplit(':').nth(1)?
+    } else {
+        authority
+    };
+    let host = host.to_ascii_lowercase();
+    let loopback = host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "::1"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.octets()[0] == 127);
+    loopback.then(|| raw.to_string())
+}
+
 pub(super) fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     let rel = relative_text(cwd, path)?;
     let root = std::fs::canonicalize(cwd).ok()?;
