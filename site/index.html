@@ -73,15 +73,22 @@
   </script>
 
   <link rel="preload" href="./fonts/figtree-latin.woff2" as="font" type="font/woff2" crossorigin />
-  <link rel="icon" type="image/svg+xml" href="./parzi-mark.svg" />
-  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
-  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=5" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png?v=5" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png?v=5" />
   <meta name="theme-color" content="#161616" />
-  <link rel="stylesheet" href="./styles.css?v=4" />
+  <link rel="stylesheet" href="./styles.css?v=5" />
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#top">Parzi</a>
+    <a class="brand" href="#top">
+      <svg class="brand-mark" width="24" height="24" viewBox="0 0 1024 1024" aria-hidden="true">
+        <rect x="16" y="16" width="992" height="992" rx="248" fill="var(--ink)" stroke="var(--line)" stroke-width="32"/>
+        <path d="M555.04 180.13A28.00 28.00 0 0 1 585.70 220.78L250.07 842.30A28.00 28.00 0 0 1 225.44 857.00L148.16 857.00A28.00 28.00 0 0 1 123.52 815.70L448.72 213.47A28.00 28.00 0 0 1 467.34 199.43Z" fill="var(--paper)"/>
+        <path d="M671.41 213.58A28.00 28.00 0 0 1 719.14 211.04L892.70 464.00A28.00 28.00 0 0 1 869.62 507.84L559.45 507.84A28.00 28.00 0 0 1 534.81 466.54L567.21 406.54A28.00 28.00 0 0 1 591.85 391.84L649.34 391.84A28.00 28.00 0 0 0 672.43 348.00L640.92 302.07A28.00 28.00 0 0 1 639.37 272.92Z" fill="var(--paper)"/>
+      </svg>
+      <span>Parzi</span>
+    </a>
     <div class="top-actions">
       <a class="top-btn ghost" href="https://github.com/lucas19919/Parzi/releases/latest">Download</a>
       <a class="top-btn filled star" href="https://github.com/lucas19919/Parzi" target="_blank" rel="noopener"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.2l1.7 3.8 4.2.5-3.1 2.8.9 4.1L8 10.5 4.3 12.4l.9-4.1L2.1 5.5l4.2-.5L8 1.2z"/></svg>Star</a>

@@ -119,12 +119,21 @@ main { display: block; padding-top: calc(var(--space) * 8); }
   border-radius: var(--radius);
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
   font-weight: 600;
   letter-spacing: -0.02em;
   font-size: 1.02rem;
   color: var(--paper);
   text-decoration: none;
   white-space: nowrap;
+}
+.brand-mark {
+  width: calc(var(--space) * 6);
+  height: calc(var(--space) * 6);
+  display: block;
+  flex: none;
 }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .top-btn {

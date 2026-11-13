@@ -1,11 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <clipPath id="inner"><circle cx="512" cy="512" r="240"/></clipPath>
-  </defs>
-  <circle cx="512" cy="512" r="385" fill="#07070B"/>
-  <g clip-path="url(#inner)" stroke="#EDEDF2" stroke-width="110">
-    <path d="M 109 349 L 675 915"/>
-    <path d="M 349 109 L 915 675"/>
-  </g>
-  <circle cx="512" cy="512" r="335" fill="none" stroke="#EDEDF2" stroke-width="100"/>
+  <style>
+    :root { --bg: #161616; --text: #ececec; }
+  </style>
+  <rect width="1024" height="1024" rx="256" fill="var(--bg, #161616)"/>
+  <path d="M555.04 180.13A28.00 28.00 0 0 1 585.70 220.78L250.07 842.30A28.00 28.00 0 0 1 225.44 857.00L148.16 857.00A28.00 28.00 0 0 1 123.52 815.70L448.72 213.47A28.00 28.00 0 0 1 467.34 199.43Z" fill="var(--text, #ececec)"/>
+  <path d="M671.41 213.58A28.00 28.00 0 0 1 719.14 211.04L892.70 464.00A28.00 28.00 0 0 1 869.62 507.84L559.45 507.84A28.00 28.00 0 0 1 534.81 466.54L567.21 406.54A28.00 28.00 0 0 1 591.85 391.84L649.34 391.84A28.00 28.00 0 0 0 672.43 348.00L640.92 302.07A28.00 28.00 0 0 1 639.37 272.92Z" fill="var(--text, #ececec)"/>
 </svg>

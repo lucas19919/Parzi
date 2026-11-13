@@ -60,13 +60,32 @@
     stop: void;
     command: { name: string };
     unavailable: { provider: string };
+    usage: void;
     folder: { path: string };
     project: { path?: string };
     remote: { on: boolean };
     remoteFolder: { path: string };
   }>();
 
+  // The current provider's limit windows (Claude: Session is the 5-hour
+  // window, Weekly the 7-day one). The board re-renders this when limits
+  // arrive; the pill shows the fullest window, the tooltip them all.
+  $: usageWindows = board.find((b) => b.provider === (model.split("/")[0] || ""))?.usage ?? [];
+  $: worstUsage = [...usageWindows].filter((w) => w.used_percent > 0).sort((a, b) => b.used_percent - a.used_percent)[0] ?? null;
+  function resetsIn(at?: number): string {
+    if (!at) return "";
+    const s = at - Date.now() / 1000;
+    if (s <= 0) return "resets now";
+    if (s < 3600) return `resets in ${Math.round(s / 60)} min`;
+    if (s < 86400) return `resets in ${Math.round(s / 3600)} h`;
+    return `resets in ${Math.round(s / 86400)} d`;
+  }
+  $: usageTip = worstUsage
+    ? ["Provider limits — click for details", ...usageWindows.map((w) => `${w.label}: ${Math.round(w.used_percent)}%${resetsIn(w.resets_at) ? `, ${resetsIn(w.resets_at)}` : ""}`)].join("\n")
+    : "";
+
   const PERMS: { id: string; title: string; label: string; icon: IconName }[] = [
+
     { id: "supervised", title: "Ask", label: "Ask", icon: "lock" },
     { id: "auto", title: "Auto", label: "Auto", icon: "spark" },
     { id: "full", title: "Full", label: "Full", icon: "unlock" },
@@ -720,6 +739,18 @@
         {/if}
       {/if}
       <div class="acts">
+        {#if !web && worstUsage}
+          <button
+            class="usage"
+            class:hot={worstUsage.used_percent >= 80}
+            use:tooltip={usageTip}
+            aria-label={`Provider usage: ${usageTip}`}
+            on:click={() => dispatch("usage")}
+          >
+            <span class="usage-bar"><span class="usage-fill" style="width:{Math.min(100, worstUsage.used_percent)}%" /></span>
+            <span class="usage-label">{worstUsage.label} {Math.round(worstUsage.used_percent)}%</span>
+          </button>
+        {/if}
         {#if !web}
           <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="paperclip" /></button>
         {/if}
@@ -1024,6 +1055,48 @@
   .icon:hover,
   .icon.on {
     color: var(--text);
+  }
+  .usage {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--space) * 1.5);
+    height: calc(var(--space) * 6);
+    padding: 0 calc(var(--space) * 1.5);
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .usage:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .usage.hot {
+    color: var(--warn-text);
+  }
+  .usage-bar {
+    width: 28px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .usage-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  .usage.hot .usage-fill {
+    background: var(--warn-text);
+  }
+  .usage-label {
+    font-weight: 600;
   }
   .truncate {
     overflow: hidden;
