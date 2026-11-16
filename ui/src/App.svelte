@@ -529,13 +529,25 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void api.warmAgent(provider).catch(() => {});
   }
 
+  // Going from one session to another, the thread fades out, the next one
+  // loads and settles at its bottom unseen, then fades in: no frame of the
+  // old thread under the new title, no jump from the top.
+  let swapping = false;
+  const SWAP_OUT = 100;
+
   async function showSession(id: string) {
     const my = ++navSeq;
+    const fade = !reduced && hasSession && !!shown && shown !== id;
+    if (fade) swapping = true;
+    const started = performance.now();
     shown = id;
     markSessionRead(id);
     clearLive();
     try {
       const [m, ev] = await api.getThread(id);
+      if (my !== navSeq) return;
+      const left = SWAP_OUT - (performance.now() - started);
+      if (fade && left > 0) await new Promise((r) => setTimeout(r, left));
       if (my !== navSeq) return;
       meta = m;
       events = ev;
@@ -549,6 +561,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       await scrollToBottom();
     } catch (e) {
       if (my === navSeq) toastError(e);
+    } finally {
+      if (my === navSeq) swapping = false;
     }
   }
 
@@ -2111,7 +2125,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                 />
               </div>
             {:else if hasSession}
-            <div class="workarea">
+            <div class="workarea" class:swapping>
               <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} use:follow.attach>
                 <Thread
                   {events}
@@ -2483,6 +2497,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex: 1;
     min-height: 0;
     display: flex;
+    transition:
+      opacity 240ms var(--ease-out),
+      transform 240ms var(--ease-out);
+  }
+  .workarea.swapping {
+    opacity: 0;
+    transform: translateY(4px);
+    transition-duration: 100ms;
   }
 
   .back {
@@ -2561,11 +2583,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     .composer.docked {
       animation: none;
     }
-  }
-  /* Docked over the thread, the composer is the same glass as Home's, a
-     little denser so the text scrolling under it never competes. */
-  .composer.docked :global(.box) {
-    background: var(--surface-raised);
   }
   .toasts {
     position: fixed;

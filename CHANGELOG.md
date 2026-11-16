@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Switching sessions is smooth: the thread fades out, the next one loads at its bottom out of sight and fades in, instead of a jump. The composer is the same glass on Home and in a session.
 - Each session has its own plan: the agent's checklist is kept on the session, survives a restart or a switch to another agent, and shows in the thread as one Plan card; the session manager shows "3 of 7". For a bigger piece of work an agent can ask first (Use this plan / Not now). Project-wide plans, plan items and quote chips are gone.
 - Work for later is a draft: an agent writes it down (a title, a brief and a rough plan) instead of a suggestion card, it waits under Drafts in the session manager, and Start runs it on the same session. Old project plans turn into drafts once, on the first start after this update (the old note is kept as plan.archived.md).
 - Switching to another agent keeps the thread: at a usage limit, Switch model picks another model and resends your last message on the same session, and the new agent gets the conversation so far instead of a fresh, empty session.
