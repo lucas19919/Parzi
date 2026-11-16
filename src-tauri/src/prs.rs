@@ -1,55 +1,20 @@
+//! Open pull requests for a folder's repository, from `gh`, cached for a
+//! minute: the Changes card shows the one on the session's branch.
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use parzi_core::brain::Vault;
-use parzi_core::plan::{self, PlanItem, PlanView};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, State};
+use serde::Serialize;
+use serde_json::Value;
+use tauri::State;
 
 use crate::AppState;
 
 const PRS_FRESH: Duration = Duration::from_secs(60);
 const GH_BUDGET: Duration = Duration::from_secs(20);
-const MAX_QUOTES: usize = 4;
-
-pub(crate) fn watch(app: &AppHandle) {
-    let app = app.clone();
-    plan::on_change(move |slug| emit(&app, slug));
-}
-
-fn emit(app: &AppHandle, project: &str) {
-    let _ = app.emit("parzi://plan", json!({ "project": project }));
-}
-
-pub(crate) fn synced(app: &AppHandle, paths: &[String]) {
-    for slug in changed_plans(paths) {
-        emit(app, &slug);
-    }
-}
-
-fn changed_plans(paths: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = vec![];
-    for slug in paths.iter().filter_map(|p| plan::project_of_note(p)) {
-        if !out.contains(&slug) {
-            out.push(slug);
-        }
-    }
-    out
-}
-
-#[tauri::command]
-pub async fn plan_view(project: String) -> Result<PlanView, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let vault = Vault::open().map_err(|e| e.to_string())?;
-        Ok(plan::load(&vault, &project))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PrInfo {
@@ -181,7 +146,7 @@ async fn gh_prs(dir: &Path) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn plan_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrInfo>, String> {
+pub async fn branch_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrInfo>, String> {
     if cwd.trim().is_empty() || crate::files::remote_or_device(&cwd) {
         return Ok(vec![]);
     }
@@ -215,92 +180,10 @@ pub async fn plan_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrI
     Ok(prs)
 }
 
-fn pr_of<'a>(prs: &'a [PrInfo], item: &PlanItem) -> Option<&'a PrInfo> {
-    let own = format!("plan/{}", item.id);
-    let mine: Vec<&PrInfo> = prs
-        .iter()
-        .filter(|p| p.head == own || (!item.branch.is_empty() && p.head == item.branch))
-        .collect();
-    let rank = |p: &&PrInfo| match p.state.as_str() {
-        "open" => 0,
-        "merged" => 1,
-        _ => 2,
-    };
-    mine.iter().min_by_key(|p| rank(p)).copied()
-}
-
-fn pr_words(p: &PrInfo) -> String {
-    match p.state.as_str() {
-        "merged" => format!("PR #{} merged.", p.number),
-        "closed" => format!("PR #{} closed.", p.number),
-        _ => {
-            let open = if p.draft { "open as a draft" } else { "open" };
-            let checks = match p.checks.as_str() {
-                "pass" => ", checks pass",
-                "fail" => ", checks fail",
-                "pending" => ", checks running",
-                _ => "",
-            };
-            format!("PR #{} {open}{checks}.", p.number)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Quote {
-    pub project: String,
-    pub id: String,
-}
-
-pub(crate) fn resolve(quotes: &[Quote]) -> Vec<(String, PlanItem)> {
-    let Ok(vault) = Vault::open() else {
-        return vec![];
-    };
-    let mut plans: HashMap<String, Option<plan::Plan>> = HashMap::new();
-    let mut out: Vec<(String, PlanItem)> = vec![];
-    for q in quotes.iter().take(MAX_QUOTES) {
-        let project = q.project.trim().to_string();
-        let p = plans
-            .entry(project.clone())
-            .or_insert_with(|| plan::load(&vault, &project).plan);
-        let Some(item) = p.as_ref().and_then(|p| p.item(q.id.trim())) else {
-            continue;
-        };
-        if !out.iter().any(|(pr, i)| *pr == project && i.id == item.id) {
-            out.push((project, item.clone()));
-        }
-    }
-    out
-}
-
-pub(crate) fn quoted_prompt(text: &str, items: &[(String, PlanItem)], cwd: &str) -> String {
-    let prs = cached(cwd).unwrap_or_default();
-    let mut out = match (text.trim(), items.first()) {
-        ("", Some((_, first))) => format!("Work on {}.", first.title),
-        (t, _) => t.to_string(),
-    };
-    for (project, item) in items {
-        let pr = pr_of(&prs, item).map(pr_words);
-        out.push_str("\n\n");
-        out.push_str(&plan::quote_block(project, item, pr.as_deref()));
-    }
-    out
-}
-
-pub(crate) fn named_after_item(text: &str) -> bool {
-    text.split_whitespace().count() <= 3
-}
-
-pub(crate) fn link_for<'a>(project: &str, items: &'a [(String, PlanItem)]) -> Option<&'a str> {
-    items
-        .iter()
-        .find(|(p, _)| p == project)
-        .map(|(_, i)| i.id.as_str())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const FIXTURE: &str = r#"[
       {"number": 42, "title": "Session names", "url": "https://github.com/o/r/pull/42",
@@ -360,77 +243,5 @@ mod tests {
         );
         assert!(parse_prs("gh: not logged in").is_empty());
         assert!(parse_prs("{}").is_empty());
-    }
-
-    fn item(id: &str, branch: &str) -> PlanItem {
-        PlanItem {
-            id: id.into(),
-            title: format!("Item {id}"),
-            detail: "Do the thing".into(),
-            phase: String::new(),
-            needs: vec![],
-            state: plan::PlanState::Active,
-            branch: branch.into(),
-            note: String::new(),
-        }
-    }
-
-    #[test]
-    fn an_item_finds_its_pull_request_by_branch() {
-        let prs = parse_prs(FIXTURE);
-        assert_eq!(pr_of(&prs, &item("names", "")).map(|p| p.number), Some(42));
-        assert_eq!(
-            pr_of(&prs, &item("other", "feature/x")).map(|p| p.number),
-            Some(39)
-        );
-        assert_eq!(pr_of(&prs, &item("none", "")), None);
-        assert_eq!(pr_words(&prs[0]), "PR #42 open, checks pass.");
-        assert_eq!(pr_words(&prs[1]), "PR #41 open as a draft, checks running.");
-        assert_eq!(pr_words(&prs[2]), "PR #40 merged.");
-    }
-
-    #[test]
-    fn quotes_follow_the_text_and_an_empty_send_works_on_the_item() {
-        let cwd = "C:/test/quotes";
-        remember(cwd, parse_prs(FIXTURE));
-        let items = vec![
-            ("parzi".to_string(), item("names", "plan/names")),
-            ("parzi".to_string(), item("panel", "")),
-        ];
-        let p = quoted_prompt("why is this stuck?", &items, cwd);
-        assert!(p.starts_with("why is this stuck?\n\n<plan-item project=\"parzi\" id=\"names\" title=\"Item names\">\nDo the thing\nState: active. Needs: none. Branch: plan/names. PR #42 open, checks pass.\n</plan-item>"), "{p}");
-        assert!(
-            p.ends_with("PR #41 open as a draft, checks running.\n</plan-item>"),
-            "{p}"
-        );
-        assert_eq!(p.matches("<plan-item ").count(), 2);
-        let p = quoted_prompt("  ", &items[..1], "C:/elsewhere");
-        assert!(p.starts_with("Work on Item names.\n\n<plan-item"), "{p}");
-        assert!(!p.contains("PR #"), "no list for that folder: {p}");
-        assert_eq!(
-            parzi_core::text::name_from_prompt(&quoted_prompt("why is this stuck?", &items, cwd)),
-            "Why is this stuck",
-            "the name comes from the text, not the blocks"
-        );
-        assert!(named_after_item("start this") && named_after_item(""));
-        assert!(!named_after_item("split this into two items please"));
-        let mixed = vec![
-            ("other".to_string(), item("x", "")),
-            ("parzi".to_string(), item("names", "")),
-        ];
-        assert_eq!(link_for("parzi", &mixed), Some("names"));
-        assert_eq!(link_for("default", &mixed), None);
-    }
-
-    #[test]
-    fn plan_notes_among_changed_paths_are_news_once() {
-        let paths = [
-            "projects/parzi/plan.md".to_string(),
-            "notes/a.md".to_string(),
-            "projects/parzi/plan.md".to_string(),
-            "projects/other/plan.md".to_string(),
-            "projects/parzi/plans/2026-10-13-old.md".to_string(),
-        ];
-        assert_eq!(changed_plans(&paths), ["parzi", "other"]);
     }
 }

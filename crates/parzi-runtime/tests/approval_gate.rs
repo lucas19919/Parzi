@@ -619,7 +619,7 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
         paths: vec![],
     };
     assert_eq!(
-        ask.decide(wrapped("parzi__ui_propose_task")).await,
+        ask.decide(wrapped("parzi__ui_offer_replies")).await,
         PermissionDecision::Allow
     );
     let direct = PermissionRequest {

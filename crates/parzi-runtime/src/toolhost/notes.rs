@@ -42,13 +42,11 @@ pub(super) fn execute_brain(name: &str, args: &Value) -> (bool, String) {
         }
         "brain.delete" => {
             let path = note(arg("path"));
-            let _plan = parzi_core::plan::lock_if_plan(&path);
             brain::delete(&path).map(|()| format!("deleted {path}"))
         }
         "brain.write" => match args.get("content").and_then(Value::as_str) {
             Some(content) if !arg("path").is_empty() => {
                 let path = note(arg("path"));
-                let _plan = parzi_core::plan::lock_if_plan(&path);
                 vault
                     .write(&path, content)
                     .map(|m| format!("saved {} ({} bytes)", m.path, m.bytes))

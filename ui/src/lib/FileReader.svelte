@@ -64,6 +64,13 @@
 
   $: markdown = !!doc && (doc.kind === "markdown" || doc.kind === "md");
   $: image = !!doc && doc.kind === "image";
+  $: diff = !!doc && doc.kind === "diff";
+  /** A code fence longer than any backtick run inside, so nothing closes it early. */
+  function fenced(text: string, lang: string): string {
+    const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((r) => r.length));
+    const fence = "`".repeat(longest + 1);
+    return `${fence}${lang}\n${text.replace(/\n$/, "")}\n${fence}`;
+  }
   // A file's id is its absolute path, a note's id its vault path.
   $: revealable = !!doc && /[\\/]/.test(doc.id);
   $: onDisk = !!doc && ABSOLUTE.test(doc.id);
@@ -103,7 +110,8 @@
   function save() {
     if (!doc) return;
     // Markdown titles drop ".md"; other files keep their own name.
-    void saveFile(markdown ? `${doc.title || "note"}.md` : doc.title || "file.txt", doc.content);
+    const name = markdown ? `${doc.title || "note"}.md` : diff ? `${doc.title || "changes"}.diff` : doc.title || "file.txt";
+    void saveFile(name, doc.content);
   }
 
   function reveal() {
@@ -150,6 +158,8 @@
           {/if}
         {:else if markdown}
           {@html mdHtml(doc.content, $richReady)}
+        {:else if diff}
+          {@html mdHtml(fenced(doc.content, "diff"), $richReady)}
         {:else}
           <pre class="plain">{doc.content}</pre>
         {/if}
@@ -175,10 +185,10 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .bar {

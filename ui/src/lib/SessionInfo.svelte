@@ -2,24 +2,19 @@
   import { tokenCount } from "./format";
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
-  import InfoCard, { unfold } from "./InfoCard.svelte";
+  import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import RunningCard from "./RunningCard.svelte";
   import FilesCard from "./FilesCard.svelte";
   import type { ArtifactDoc } from "./tabs";
   import HostedCard from "./HostedCard.svelte";
   import { hostedSites, clearHosted } from "./hosted";
-  import TodoList, { todoItems, todoOpen } from "./TodoList.svelte";
-  import { dockedTodos, setTodoDocked } from "./todoDock";
   import { board, reloadBoard } from "./providerStore";
   import ResizeGrip from "./ResizeGrip.svelte";
   import { nameOf } from "./providerRows";
-  import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
+  import { api, onRunEvent, type GitStatus, type PrInfo, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
-  import { planState } from "./planStore";
-  import { isTrunk, progress, deriveItems, groupItems } from "./planModel";
-  import PlanMark from "./PlanMark.svelte";
-  import { activity } from "./activity";
+  import { isTrunk } from "./sessionTone";
   import { folderName } from "./tabs";
   import { tooltip } from "./tooltip";
 
@@ -41,16 +36,11 @@
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
-  export let planInline = false;
-  export let todo: unknown = null;
-  $: stepsHere = !!todo && $dockedTodos.has(session) && todoOpen(todo);
-  $: if (stepsHere) unfold("steps");
-  $: stepItems = todoItems(todo);
   export let width = 264;
-  // Card order: environment first, then the plan. Swappable by drag,
+  // Card order: environment first. Swappable by drag,
   // persisted per machine.
   const ORDER_KEY = "parzi.info.order";
-  const DEFAULT_ORDER = ["env", "plan", "steps", "context", "usage", "changes", "files", "running"];
+  const DEFAULT_ORDER = ["env", "context", "usage", "changes", "files", "running"];
   function loadOrder(): string[] {
     try {
       const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
@@ -72,14 +62,33 @@
     } catch {}
   }
   let dragId = "";
-  function onDragStart(id: string, e: DragEvent) {
-    dragId = id;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "move";
-      try {
-        e.dataTransfer.setData("text/plain", id);
-      } catch {}
-    }
+  /** A card's slot: drag it onto another to swap their places. */
+  function movable(node: HTMLElement, id: string) {
+    node.draggable = true;
+    const start = (e: DragEvent) => {
+      dragId = id;
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        try {
+          e.dataTransfer.setData("text/plain", id);
+        } catch {}
+      }
+    };
+    const over = (e: DragEvent) => e.preventDefault();
+    const drop = (e: DragEvent) => onDrop(id, e);
+    node.addEventListener("dragstart", start);
+    node.addEventListener("dragover", over);
+    node.addEventListener("drop", drop);
+    return {
+      update(next: string) {
+        id = next;
+      },
+      destroy() {
+        node.removeEventListener("dragstart", start);
+        node.removeEventListener("dragover", over);
+        node.removeEventListener("drop", drop);
+      },
+    };
   }
   function onDrop(target: string, e: DragEvent) {
     e.preventDefault();
@@ -110,7 +119,6 @@
     openSession: { id: string };
     openUrl: { url: string };
     compact: void;
-    plan: void;
     resize: { width: number };
     openFile: ArtifactDoc;
   }>();
@@ -129,8 +137,39 @@
     const dir = gitFor;
     const s = dir ? await api.gitStatus(dir).catch(() => null) : null;
     if (dir === gitFor) git = s;
+    // gh is slow and cached a minute in the backend: after the status.
+    const found = dir ? await api.branchPrs(dir).catch(() => []) : [];
+    if (dir === gitFor) prs = found;
   }
-  $: pr = branch && !isTrunk(branch) ? ($planState.prs.find((p) => p.head === branch && p.state === "open") ?? null) : null;
+  // The Changes card: one row per changed file, a click shows its diff.
+  const CHANGE_ROWS = 8;
+  let allChanges = false;
+  type ChangeRow = { path: string; abs: string; name: string; dir: string; added: number; removed: number; fresh: boolean };
+  $: changeRows = ((): ChangeRow[] => {
+    if (!git?.files?.length) return [];
+    const stat = new Map((git.stats ?? []).map((s) => [s.path, s]));
+    const top = (git.top || folder).replace(/[\\/]+$/, "");
+    const sep = top.includes("\\") ? "\\" : "/";
+    return git.files.map((path) => {
+      const s = stat.get(path);
+      const cut = path.lastIndexOf("/");
+      return {
+        path,
+        abs: `${top}${sep}${path.replace(/\//g, sep)}`,
+        name: path.slice(cut + 1),
+        dir: cut > 0 ? path.slice(0, cut) : "",
+        added: s?.added ?? 0,
+        removed: s?.removed ?? 0,
+        fresh: !s,
+      };
+    });
+  })();
+  async function showDiff(f: ChangeRow) {
+    const content = await api.gitDiff(folder, f.path).catch((e) => `Couldn't read the diff: ${e}`);
+    dispatch("openFile", { id: f.abs, title: f.name, kind: "diff", content: content || "No changes against HEAD.", version: Date.now() });
+  }
+  let prs: PrInfo[] = [];
+  $: pr = branch && !isTrunk(branch) ? (prs.find((p) => p.head === branch && p.state === "open") ?? null) : null;
 
   $: waiting = new Set([...approvals.map((a) => a.session), ...questions.map((q) => q.session)]);
   $: helpers = (() => {
@@ -146,16 +185,8 @@
     return out.sort((a, b) => (Date.parse(b.updated) || 0) - (Date.parse(a.updated) || 0)).slice(0, 8);
   })();
 
-  $: plan = $planState.project === project ? $planState.plan : null;
-  $: planError = $planState.project === project ? $planState.error : "";
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   $: site = $hostedSites[session];
-  $: planViews = plan ? deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity }) : [];
-  $: planCount = plan ? progress(planViews) : null;
-  $: planAside = planError ? "Unreadable" : planCount ? `${planCount.done} of ${planCount.total}` : "";
-  // The open items in plan order, the first few; the thread shows them all.
-  const PLAN_ROWS = 6;
-  $: planOpen = plan ? groupItems(plan, planViews).open.flatMap((g) => g.items) : [];
 
   onMount(() => {
     const onFocus = () => void loadGit();
@@ -176,7 +207,7 @@
 <aside class="info" class:shut={!open} aria-label="Session" style="width: {open ? width : 0}px" inert={!open}>
   <ResizeGrip label="Resize session column" min={220} max={520} on:resize />
   <div class="col">
-  <div class="slot" style="order: {pos('env')}" draggable="true" on:dragstart={(e) => onDragStart('env', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('env', e)}>
+  <div class="slot" style="order: {pos('env')}" use:movable={"env"}>
   <InfoCard id="env" title="Environment" foldedAside>
     <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
     <div class="info-line">
@@ -199,55 +230,12 @@
   <!-- Pinned second: whatever the agent hosts stays one glance down. -->
   {#if site}
   <div class="slot" style="order: {pos('env')}">
-    <HostedCard {site} on:close={() => clearHosted(session)} />
-  </div>
-  {/if}
-
-  <!-- While the plan is open in the thread, the column does not repeat it. -->
-  {#if ((plan && planCount) || planError) && !planInline}
-  <div class="slot" style="order: {pos('plan')}" draggable="true" on:dragstart={(e) => onDragStart('plan', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('plan', e)}>
-    <InfoCard id="plan" title={plan?.title ?? "Plan"}>
-      <svelte:fragment slot="aside">{planAside}</svelte:fragment>
-      {#if plan && planCount}
-        {#each planOpen.slice(0, PLAN_ROWS) as v (v.item.id)}
-          <button class="info-line row plan-item" use:tooltip={v.item.detail || "Show the plan in the thread"} on:click={() => dispatch("plan")}>
-            <PlanMark state={v.state} />
-            <span class="info-v">{v.item.title}</span>
-          </button>
-        {:else}
-          <div class="info-line quiet">Everything is done</div>
-        {/each}
-        {#if planOpen.length > PLAN_ROWS}
-          <div class="info-line quiet">and {planOpen.length - PLAN_ROWS} more</div>
-        {/if}
-        <button class="info-line row plan-row" on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={12} />
-          <span class="info-v">Show in the thread</span>
-        </button>
-      {:else}
-        <button class="info-line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={12} />
-          <span class="info-v">Plan unreadable</span>
-        </button>
-      {/if}
-    </InfoCard>
-  </div>
-  {/if}
-
-  {#if stepsHere}
-  <div class="slot" style="order: {pos('steps')}" draggable="true" on:dragstart={(e) => onDragStart('steps', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('steps', e)}>
-    <InfoCard id="steps" title="Steps">
-      <svelte:fragment slot="aside">{stepItems.filter((i) => i.state === "done").length} of {stepItems.length}</svelte:fragment>
-      <svelte:fragment slot="actions">
-        <button class="doc-btn" use:tooltip={"Move to the thread"} aria-label="Move steps to the thread" on:click={() => setTodoDocked(session, false)}><Icon name="external" size={12} /></button>
-      </svelte:fragment>
-      <TodoList {todo} working={streaming} docked />
-    </InfoCard>
+    <HostedCard {site} on:close={() => clearHosted(session)} on:openUrl />
   </div>
   {/if}
 
   {#if contextLimit > 0}
-  <div class="slot" style="order: {pos('context')}" draggable="true" on:dragstart={(e) => onDragStart('context', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('context', e)}>
+  <div class="slot" style="order: {pos('context')}" use:movable={"context"}>
     <InfoCard id="context" title="Context" foldedAside>
       <svelte:fragment slot="aside">{pct}%</svelte:fragment>
       <ContextBreakdown
@@ -262,7 +250,7 @@
   </div>
   {/if}
   {#if limits.length || (!contextLimit && (tokensIn || tokensOut))}
-  <div class="slot" style="order: {pos('usage')}" draggable="true" on:dragstart={(e) => onDragStart('usage', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('usage', e)}>
+  <div class="slot" style="order: {pos('usage')}" use:movable={"usage"}>
     <InfoCard id="usage" title="Usage">
       <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
       {#if !contextLimit && (tokensIn || tokensOut)}
@@ -278,19 +266,32 @@
   </div>
   {/if}
 
-  {#if git}
-  <div class="slot" style="order: {pos('changes')}" draggable="true" on:dragstart={(e) => onDragStart('changes', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('changes', e)}>
+  {#if git && (changeRows.length || pr || (git.upstream && (git.ahead || git.behind)))}
+  <div class="slot" style="order: {pos('changes')}" use:movable={"changes"}>
     <InfoCard id="changes" title="Changes">
       <svelte:fragment slot="aside">
         {#if git.added || git.removed}
           <span class="add">+{git.added.toLocaleString()}</span>&nbsp;<span class="del">−{git.removed.toLocaleString()}</span>
         {/if}
       </svelte:fragment>
-      <div class="info-line">
-        <span class="info-v" class:quiet={!git.changed && !git.untracked}>
-          {git.changed || git.untracked ? [git.changed ? `${git.changed} changed` : "", git.untracked ? `${git.untracked} new` : ""].filter(Boolean).join(" · ") : "No changes"}
-        </span>
-      </div>
+      {#each changeRows.slice(0, allChanges ? changeRows.length : CHANGE_ROWS) as f (f.path)}
+        <button class="info-line row file" class:on={reading === f.abs} use:tooltip={`${f.path}: show the diff`} on:click={() => showDiff(f)}>
+          <span class="fname">
+            <span class="info-v">{f.name}</span>
+            {#if f.dir}<span class="fdir">{f.dir}</span>{/if}
+          </span>
+          {#if f.fresh}
+            <span class="add n">new</span>
+          {:else if f.added || f.removed}
+            <span class="n">{#if f.added}<span class="add">+{f.added}</span>{/if} {#if f.removed}<span class="del">−{f.removed}</span>{/if}</span>
+          {/if}
+        </button>
+      {/each}
+      {#if changeRows.length > CHANGE_ROWS}
+        <button class="info-line row quiet" on:click={() => (allChanges = !allChanges)}>
+          <span class="info-v">{allChanges ? "Show fewer" : `${changeRows.length - CHANGE_ROWS} more`}</span>
+        </button>
+      {/if}
       {#if git.upstream && (git.ahead || git.behind)}
         <div class="info-line quiet"><span class="info-v">{[git.ahead ? `${git.ahead} ahead` : "", git.behind ? `${git.behind} behind` : ""].filter(Boolean).join(" · ")}</span></div>
       {/if}
@@ -307,11 +308,11 @@
   </div>
   {/if}
 
-  <div class="slot" style="order: {pos('files')}" draggable="true" on:dragstart={(e) => onDragStart('files', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('files', e)}>
+  <div class="slot" style="order: {pos('files')}" use:movable={"files"}>
   <FilesCard {folder} shown={open} current={reading} on:open={(e) => dispatch("openFile", e.detail)} />
   </div>
 
-  <div class="slot" style="order: {pos('running')}" draggable="true" on:dragstart={(e) => onDragStart('running', e)} on:dragover={(e) => e.preventDefault()} on:drop={(e) => onDrop('running', e)}>
+  <div class="slot" style="order: {pos('running')}" use:movable={"running"}>
   <RunningCard {session} {helpers} {running} {waiting} on:openSession />
   </div>
   </div>
@@ -349,26 +350,13 @@
     flex-direction: column;
     min-width: 0;
   }
-  .slot[draggable="true"] {
+  /* A card that has nothing to say renders nothing; its slot takes no gap. */
+  .slot:not(:has(*)) {
+    display: none;
+  }
+  /* Every slot is draggable (use:movable). */
+  .slot {
     cursor: grab;
-  }
-  .doc-btn {
-    flex: none;
-    width: calc(var(--space) * 6);
-    height: calc(var(--space) * 6);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .doc-btn:hover {
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    color: var(--text);
   }
   .pct {
     flex: none;
@@ -380,14 +368,40 @@
   .del {
     color: var(--bad-text);
   }
+  .fname {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space);
+    overflow: hidden;
+  }
+  .fname .info-v {
+    flex: none;
+    max-width: 100%;
+  }
+  .fdir {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+  .n {
+    flex: none;
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  .file.on {
+    background: var(--hover);
+  }
   .checks.pass :global(svg) {
     color: var(--ok-text);
   }
   .checks.fail :global(svg) {
     color: var(--bad-text);
-  }
-  .plan-item :global(.mark) {
-    width: 12px;
-    height: 12px;
   }
 </style>

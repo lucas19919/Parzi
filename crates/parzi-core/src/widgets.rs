@@ -381,32 +381,6 @@ pub fn todo_from_agent(tool: &str, input: &serde_json::Value) -> Option<serde_js
     (!items.is_empty()).then(|| serde_json::json!({"items": items}))
 }
 
-pub fn task(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
-    let text = |k: &str| {
-        args.get(k)
-            .and_then(|s| s.as_str())
-            .map(str::trim)
-            .unwrap_or("")
-            .to_string()
-    };
-    let (title, brief, project) = (text("title"), text("brief"), text("project"));
-    if title.is_empty() || brief.is_empty() {
-        return Err("a task needs a title and a brief".into());
-    }
-    if title.chars().count() > 80 {
-        return Err("the title is over 80 characters".into());
-    }
-    if brief.chars().count() > 4000 {
-        return Err("the brief is over 4000 characters".into());
-    }
-    Ok(serde_json::json!({
-        "id": uuid::Uuid::new_v4().to_string(),
-        "title": title,
-        "brief": brief,
-        "project": project,
-    }))
-}
-
 #[cfg(test)]
 mod reply_tests {
     use super::*;
@@ -495,13 +469,5 @@ mod reply_tests {
             .collect();
         assert_eq!(states, ["done", "active", "active", "pending"]);
         assert_eq!(t["items"][3]["title"], "Ship");
-    }
-
-    #[test]
-    fn a_task_needs_a_title_and_a_brief_and_gets_an_id() {
-        let t = task(&json!({"title": "Same color on the website", "brief": "Change the accent to slate in web/.", "project": "website"})).unwrap();
-        assert_eq!(t["project"], "website");
-        assert!(!t["id"].as_str().unwrap().is_empty());
-        assert!(task(&json!({"title": "No brief"})).is_err());
     }
 }

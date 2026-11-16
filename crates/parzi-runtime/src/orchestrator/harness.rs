@@ -452,13 +452,21 @@ impl HarnessBridge for Pump {
             .filter(|m| !only_subsessions || m.parent_id.as_deref() == Some(caller_id))
             .take(50)
             .map(|m| {
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "session_id": m.id,
                     "title": m.title,
                     "status": m.status.word(),
                     "parent_id": m.parent_id,
                     "model": m.model,
-                })
+                });
+                if let Some(p) = &m.plan {
+                    row["plan"] =
+                        serde_json::json!(format!("{} of {} done", p.done(), p.items.len()));
+                }
+                if let Some(b) = &m.brief {
+                    row["brief"] = serde_json::json!(b.chars().take(300).collect::<String>());
+                }
+                row
             })
             .collect();
         Ok(serde_json::Value::Array(rows).to_string())

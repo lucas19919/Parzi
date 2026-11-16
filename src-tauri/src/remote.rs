@@ -85,7 +85,6 @@ pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
     if done.brain.changed() {
         status(app, "brain", "");
     }
-    crate::plans::synced(app, &done.brain.changed);
     *st.synced_at.lock().unwrap_or_else(|p| p.into_inner()) = parzi_core::now_ms_i64();
     let summary = done.summary();
     if done.errors.is_empty() {
@@ -431,11 +430,9 @@ pub(crate) async fn send(
     effort: &str,
     attachments: Vec<parzi_core::context::AttachedFile>,
     mode: Option<String>,
-    plan_item: Option<&str>,
 ) -> Result<String, String> {
     let body = json!({
         "target": target.unwrap_or("new"),
-        "plan_item": plan_item.unwrap_or_default(),
         "message": prompt,
         "model": model,
         "effort": effort,

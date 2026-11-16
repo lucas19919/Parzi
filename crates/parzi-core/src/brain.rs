@@ -264,7 +264,7 @@ impl Vault {
     }
 
     #[must_use]
-    fn projects(&self) -> Vec<Project> {
+    pub(crate) fn projects(&self) -> Vec<Project> {
         projects_of(&self.scan())
     }
 

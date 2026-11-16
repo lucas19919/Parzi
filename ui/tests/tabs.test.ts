@@ -33,9 +33,8 @@ test("folderName takes the leaf", () => {
   assert.equal(folderName("/home/u/app/"), "app");
 });
 
-test("a composer always has quote and attachment lists", () => {
+test("a composer always has an attachment list", () => {
   const fresh = ensureComposer();
-  assert.deepEqual(fresh.quotes, []);
   assert.deepEqual(fresh.attachments, []);
   const saved = { input: "hi", mode: "work" as unknown as "build", model: "", effort: "medium", attachments: ["a.png"] };
   const partial = ensureComposer(saved);
@@ -43,13 +42,8 @@ test("a composer always has quote and attachment lists", () => {
   assert.equal(partial.input, "hi");
   assert.equal(partial.mode, "build");
   assert.deepEqual(partial.attachments, ["a.png"]);
-  assert.deepEqual(partial.quotes, []);
-  const kept = [{ project: "parzi", id: "prs", title: "PR badges" }];
-  const quoted = ensureComposer({ quotes: kept, attachments: [] });
-  assert.equal(quoted.quotes, kept);
-  const ready = ensureComposer({ input: "", mode: "build", model: "", effort: "medium", attachments: [], quotes: [] });
+  const ready = ensureComposer({ input: "", mode: "build", model: "", effort: "medium", attachments: [] });
   assert.equal(ensureComposer(ready), ready);
-  assert.deepEqual(sessionTab().composer.quotes, []);
   assert.deepEqual(sessionTab().composer.attachments, []);
 });
 

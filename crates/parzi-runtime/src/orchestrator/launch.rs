@@ -13,7 +13,7 @@ use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 use parzi_providers::display_name;
 
 use super::queue::{
-    clear_queued, run_session, set_brief_hash, set_posture, set_run_note, Posture, Pump, QueuedRun,
+    clear_queued, run_session, set_posture, set_run_note, set_run_session, Posture, Pump, QueuedRun,
 };
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
@@ -217,6 +217,27 @@ impl Orchestrator {
                 self.store.set_status(id, SessionStatus::Idle)?;
             }
         }
+        // A draft starts with this send. Its brief always reaches the agent:
+        // a message of the person's own goes after it, not instead of it.
+        let mut prompt = prompt.to_string();
+        if meta.status == SessionStatus::Draft {
+            if let Some(brief) = meta
+                .brief
+                .as_deref()
+                .map(str::trim)
+                .filter(|b| !b.is_empty())
+            {
+                if !prompt.contains(brief) {
+                    prompt = if prompt.trim().is_empty() {
+                        brief.to_string()
+                    } else {
+                        format!("{brief}\n\n{prompt}")
+                    };
+                }
+            }
+            self.store.take_brief(id)?;
+        }
+        let prompt = prompt.as_str();
         let spec = model_override
             .filter(|m| !m.trim().is_empty())
             .unwrap_or_else(|| meta.model.clone());
@@ -268,7 +289,6 @@ impl Orchestrator {
             ParziError::Store("nothing to compact yet: this thread has no conversation".into())
         })?;
         let prompt = focus.trim().to_string();
-        set_brief_hash(id, None);
         let _rx = self
             .send_as(
                 RunCause::Compact,
@@ -312,19 +332,20 @@ impl Orchestrator {
                 }
             }
         };
-        if let Some(b) = bound.filter(|b| *b != provider) {
-            return Err(ParziError::Store(format!(
-                "This thread's conversation lives on {}. Start a new thread to use {}.",
-                display_name(&b),
-                display_name(&provider)
-            )));
-        }
         let entry = cfg.provider(&provider);
         if !entry.enabled {
             return Err(ParziError::Store(format!(
                 "{} is switched off in Settings → Providers.",
                 display_name(&provider)
             )));
+        }
+        // Another agent takes the thread over: the old agent's own session
+        // can't be resumed by it, so the binding goes and the new agent starts
+        // fresh with the transcript replayed (EngineRun::history). The thread,
+        // its id and its history stay one Parzi session.
+        if let Some(b) = bound.filter(|b| *b != provider) {
+            tracing::info!(session = %session_id, from = %b, to = %provider, "agent switch: the thread carries over");
+            set_run_session(session_id, None);
         }
         let model = model.or_else(|| Some(entry.default_model).filter(|m| !m.trim().is_empty()));
         Ok((provider, model))
@@ -337,7 +358,6 @@ impl Orchestrator {
             "ui.show_artifact",
             "ui.host_site",
             "ui.offer_replies",
-            "ui.propose_task",
             "todo.write",
             "github.issue",
             "models.list",
@@ -362,6 +382,7 @@ impl Orchestrator {
             "session.send",
             "session.read",
             "session.list",
+            "session.draft",
         ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());
@@ -527,7 +548,6 @@ impl Orchestrator {
         });
         let (tx, rx) = mpsc::unbounded_channel();
         let sink = RunSink::new(&q.session_id, tx, Some(p.bus.clone()));
-        let meta = p.store.get(&q.session_id)?;
         let tally = {
             let mut t = RunTally::new(&q.session_id, q.cause, &cwd);
             t.first_event = seen;
@@ -547,21 +567,6 @@ impl Orchestrator {
                 ));
             }
         }
-        let brief = if q.cause.recorded() {
-            let item = meta.plan_item.clone().or_else(|| {
-                let parent = meta.parent_id.as_deref()?;
-                p.store.get(parent).ok()?.plan_item
-            });
-            let project = meta.project.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::plan_tools::brief_for(&project, item.as_deref())
-            })
-            .await
-            .ok()
-            .flatten()
-        } else {
-            None
-        };
         if mode == ApprovalMode::Deny && !provider.gated() {
             return Err(ParziError::Validation(format!(
                 "agents are locked to read-only in Settings, and {} cannot run read-only; pick another agent for it",
@@ -614,7 +619,6 @@ impl Orchestrator {
             seen,
             inbox_from: q.inbox_from,
             tally: tally.clone(),
-            brief,
             compact: q.cause == RunCause::Compact,
         });
         set_run_note(&q.session_id, None);

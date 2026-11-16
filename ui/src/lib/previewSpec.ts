@@ -44,6 +44,10 @@ export function tokenStyle(raw: unknown): string {
       "--faint:color-mix(in srgb, var(--muted) 62%, var(--bg))",
       "--hover:color-mix(in srgb, var(--text) 6%, transparent)",
       "--selected:color-mix(in srgb, var(--text) 10%, transparent)",
+      "--fill:color-mix(in srgb, var(--text) 8%, transparent)",
+      "--fill-hover:color-mix(in srgb, var(--text) 14%, transparent)",
+      "--surface:color-mix(in srgb, var(--panel) 52%, transparent)",
+      "--surface-raised:color-mix(in srgb, var(--panel) 72%, transparent)",
     );
   }
   if (set.space) derived.push("--gap:calc(var(--space) * 2)", "--radius-sm:calc(var(--space))");

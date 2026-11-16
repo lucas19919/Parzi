@@ -16,10 +16,9 @@ use crate::ask_text::makes_media;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     bool_arg, category, current_name, display_name, int_arg, is_brain_tool, is_browser_tool,
-    is_desk_tool, is_github_tool, is_models_tool, is_plan_tool, is_project_tool,
-    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, is_wait_tool,
-    window_tool_offered, ApprovalMode, Approver, AskRequest, Asker, CallNames, ToolCallInfo,
-    ToolDef, ToolExecutor,
+    is_desk_tool, is_github_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
+    is_session_tool, is_shell_tool, is_ui_tool, is_wait_tool, window_tool_offered, ApprovalMode,
+    Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -52,7 +51,9 @@ use calls::{
 use desk_text::{desk_state_text, page_args, page_done, page_text};
 use fetch::url_encode;
 use notes::execute_brain;
-use paths::{land, loopback_site, named_paths, show_target, worktree_relative, write_targets, SECRET_FILE};
+use paths::{
+    land, loopback_site, named_paths, show_target, worktree_relative, write_targets, SECRET_FILE,
+};
 
 pub struct ToolHost {
     p: ToolHostParts,
@@ -231,28 +232,31 @@ impl ToolHost {
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
             }
-            let mut approved = "";
             if name == "plan.write" {
-                match self.plan_review(id, args).await {
-                    Ok(note) => approved = note,
-                    Err(answer) => return answer,
+                let payload = match widgets::todo(args) {
+                    Ok(p) => p,
+                    Err(e) => return (false, format!("plan.write: {e}")),
+                };
+                let mut approved = "";
+                if bool_arg(args, "propose") == Some(true) {
+                    match self.plan_review(id, &payload).await {
+                        Ok(note) => approved = note,
+                        Err(answer) => return answer,
+                    }
                 }
+                let saved = self.save_plan(payload);
+                return (true, format!("{approved} {saved}").trim().to_string());
             }
             let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
             let (name, args) = (name.to_string(), args.clone());
-            let (ok, text) = tokio::task::spawn_blocking(move || {
+            return tokio::task::spawn_blocking(move || {
                 crate::plan_tools::execute(&store, &sid, &name, &args)
             })
             .await
             .unwrap_or_else(|e| (false, e.to_string()));
-            return if ok && !approved.is_empty() {
-                (ok, format!("{approved} {text}"))
-            } else {
-                (ok, text)
-            };
         }
         if is_session_tool(name) {
-            if !matches!(name, "session.read" | "session.list") {
+            if !matches!(name, "session.read" | "session.list" | "session.draft") {
                 if let Err(why) = self.approved(id, name, args).await {
                     return self.refused(name, why);
                 }
@@ -540,6 +544,44 @@ impl ToolHost {
                 .all(|p| Path::new(p).is_absolute() && worktree_relative(&dir, p).is_some())
     }
 
+    /// `session.draft`: work for later, in the caller's project and folder,
+    /// on the caller's model. Nothing runs.
+    fn draft_session(&self, args: &Value) -> (bool, String) {
+        let text = |k: &str| {
+            args.get(k)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string()
+        };
+        let (title, brief) = (text("title"), text("brief"));
+        if title.is_empty() || brief.is_empty() {
+            return (false, "session.draft needs a `title` and a `brief`".into());
+        }
+        let title: String = title.chars().take(80).collect();
+        let plan = args.get("plan").and_then(|p| {
+            parzi_core::store::SessionPlan::from_payload(&serde_json::json!({ "items": p }))
+        });
+        let me = match self.p.store.get(&self.p.session_id) {
+            Ok(m) => m,
+            Err(e) => return (false, e.to_string()),
+        };
+        match self
+            .p
+            .store
+            .create_draft(&title, &me.project, &me.model, &me.cwd, &brief, plan)
+        {
+            Ok(d) => (
+                true,
+                format!(
+                    "drafted \"{}\" ({}); the person sees it under Drafts and starts it when they choose",
+                    d.title, d.id
+                ),
+            ),
+            Err(e) => (false, e.to_string()),
+        }
+    }
+
     fn own_shot(&self, req: &PermissionRequest) -> bool {
         let Some(dir) = crate::desk::shots_dir(&self.p.session_id) else {
             return false;
@@ -555,6 +597,9 @@ impl ToolHost {
     }
 
     async fn execute_session_tool(&self, name: &str, args: &Value) -> (bool, String) {
+        if name == "session.draft" {
+            return self.draft_session(args);
+        }
         let Some(bridge) = &self.p.harness else {
             return (false, "session tools unavailable in this run".into());
         };
@@ -751,33 +796,25 @@ impl ToolHost {
     async fn plan_review(
         &self,
         id: &str,
-        args: &Value,
+        payload: &Value,
     ) -> std::result::Result<&'static str, (bool, String)> {
         let Some(asker) = &self.p.asker else {
             return Ok("");
         };
-        let (store, sid, raw) = (
-            self.p.store.clone(),
-            self.p.session_id.clone(),
-            args.clone(),
-        );
-        let proposal =
-            tokio::task::spawn_blocking(move || crate::plan_tools::proposal(&store, &sid, &raw))
-                .await
-                .map_err(|e| (false, e.to_string()))?
-                .map_err(|e| (false, e))?;
-        if !proposal.review {
+        let Some(plan) =
+            parzi_core::store::SessionPlan::from_payload(payload).filter(|p| !p.items.is_empty())
+        else {
             return Ok("");
-        }
+        };
         let req = AskRequest {
             id: id.into(),
-            question: proposal.text(),
+            question: crate::plan_tools::proposal_text(&plan),
             options: vec![
                 crate::plan_tools::USE_PLAN.into(),
                 crate::plan_tools::NOT_NOW.into(),
             ],
             details: vec![
-                "Save it. Agents in this project work from it.".into(),
+                "Save it as this session's plan and work from it.".into(),
                 "Nothing is saved. The agent carries on without it.".into(),
             ],
             multi: false,
@@ -1380,15 +1417,12 @@ impl ToolHost {
     /// embeds the page, so anything else could show the person a page the
     /// agent does not control.
     async fn host_site(&self, args: &Value) -> (bool, String) {
-        let raw = args
-            .get("url")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
+        let raw = args.get("url").and_then(Value::as_str).unwrap_or("").trim();
         if loopback_site(raw).is_none() {
             return (
                 false,
-                "ui.host_site needs an http(s) url on this computer (localhost, 127.0.0.1 or ::1)".into(),
+                "ui.host_site needs an http(s) url on this computer (localhost, 127.0.0.1 or ::1)"
+                    .into(),
             );
         }
         let title = args
@@ -1738,29 +1772,33 @@ impl ToolHost {
                 Err(e) => (false, e),
             },
             "todo.write" => match widgets::todo(args) {
-                Ok(payload) => {
-                    let cleared = payload["items"].as_array().is_some_and(Vec::is_empty);
-                    widget("parzi-todo", payload.clone());
-                    self.p.sink.emit(RunEvent::Todo { todo: payload });
-                    let said = if cleared {
-                        "the checklist is cleared"
-                    } else {
-                        "the checklist shows under your replies"
-                    };
-                    (true, said.into())
-                }
+                Ok(payload) => (true, self.save_plan(payload)),
                 Err(e) => (false, e),
             },
-            "ui.propose_task" => {
-                match widgets::task(args) {
-                    Ok(payload) => {
-                        widget("parzi-task", payload);
-                        (true, "the card shows under your reply; the person decides whether to start it".into())
-                    }
-                    Err(e) => (false, e),
-                }
-            }
             _ => (false, format!("unknown ui tool `{name}`")),
+        }
+    }
+
+    /// Saves a checklist payload as this session's plan: on the session, in
+    /// the transcript (so its history shows), and live in the thread.
+    fn save_plan(&self, payload: Value) -> String {
+        let cleared = payload["items"].as_array().is_some_and(Vec::is_empty);
+        let _ = self.p.store.append(
+            &self.p.session_id,
+            &Event::Widget {
+                fence: "parzi-todo".into(),
+                payload: payload.clone(),
+            },
+        );
+        let plan = parzi_core::store::SessionPlan::from_payload(&payload);
+        if let Err(e) = self.p.store.set_plan(&self.p.session_id, plan) {
+            tracing::warn!(session = %self.p.session_id, "plan not saved: {e}");
+        }
+        self.p.sink.emit(RunEvent::Todo { todo: payload });
+        if cleared {
+            "the plan is cleared".into()
+        } else {
+            "the plan is saved on this session and shows in the thread".into()
         }
     }
 

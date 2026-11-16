@@ -372,10 +372,10 @@
   .tab.dragging {
     position: relative;
     z-index: 2;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border-color: color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border-color: transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
     cursor: grabbing;
     transition: background var(--dur) ease, color var(--dur) ease;
@@ -386,10 +386,10 @@
   }
 
   .tab.active {
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border-color: color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border-color: transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     color: var(--text);
   }
   .pick {
@@ -450,10 +450,10 @@
     align-items: center;
     gap: var(--space);
     padding: calc(var(--space) / 4);
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .group .tab {
@@ -473,11 +473,11 @@
     min-width: 18px;
     height: 18px;
     padding: 0 var(--space);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    border: 1px solid transparent;
     border-radius: var(--radius-in);
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     background-clip: border-box;
     font-size: var(--fs-xs);
     font-weight: 600;
@@ -533,7 +533,7 @@
     cursor: pointer;
   }
   .new:hover {
-    background: var(--panel);
+    background: var(--hover);
     color: var(--text);
   }
 </style>

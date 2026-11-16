@@ -1,10 +1,7 @@
-import type { PlanQuote } from "./api";
-
 export interface HeldItem {
   id: string;
   tab: string;
   text: string;
-  quotes: PlanQuote[];
   files: string[];
   model: string;
   effort: string;
@@ -23,10 +20,8 @@ export function heldId(): string {
   return `h${Date.now().toString(36)}${Math.floor(Math.random() * 0xffffff).toString(36)}`;
 }
 
-export function heldLabel(item: { text: string; quotes: { title: string }[] }): string {
-  const text = item.text.trim();
-  if (text) return text;
-  return item.quotes.map((q) => q.title).filter(Boolean).join(", ");
+export function heldLabel(item: { text: string }): string {
+  return item.text.trim();
 }
 
 function write(queue: HoldQueue, sid: string, items: HeldItem[]): HoldQueue {
@@ -43,7 +38,6 @@ export function enqueue(queue: HoldQueue, sid: string, item: Omit<HeldItem, "id"
     id: item.id || heldId(),
     tab: item.tab,
     text: item.text,
-    quotes: item.quotes.map((q) => ({ ...q })),
     files: [...item.files],
     model: item.model,
     effort: item.effort,
@@ -113,18 +107,10 @@ export function moveHeld(queue: HoldQueue, from: string, to: string): HoldQueue 
 
 function cleanItem(raw: Partial<HeldItem> | null): HeldItem | null {
   if (!raw || typeof raw.id !== "string" || typeof raw.text !== "string") return null;
-  const quotes: PlanQuote[] = [];
-  if (Array.isArray(raw.quotes)) {
-    for (const q of raw.quotes) {
-      if (!q || typeof q.id !== "string" || typeof q.project !== "string") continue;
-      quotes.push({ id: q.id, project: q.project, title: typeof q.title === "string" ? q.title : q.id });
-    }
-  }
   return {
     id: raw.id,
     tab: typeof raw.tab === "string" ? raw.tab : "",
     text: raw.text,
-    quotes,
     files: Array.isArray(raw.files) ? raw.files.filter((f): f is string => typeof f === "string") : [],
     model: typeof raw.model === "string" ? raw.model : "",
     effort: typeof raw.effort === "string" ? raw.effort : "medium",

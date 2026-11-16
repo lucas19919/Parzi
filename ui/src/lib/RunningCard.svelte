@@ -5,7 +5,7 @@
   import ThinkingFace from "./ThinkingFace.svelte";
   import { api, onRunEvent, type SessionMeta, type ShellJob } from "./api";
   import { activity } from "./activity";
-  import { sessionTone, TONE_WORDS } from "./planModel";
+  import { sessionTone, TONE_WORDS } from "./sessionTone";
   import { tooltip } from "./tooltip";
 
   /** Everything working beside this session: other sessions it started, and its commands. */
@@ -35,6 +35,7 @@
   $: activeJobs = jobs.filter((j) => j.running);
   $: doneJobs = jobs.filter((j) => !j.running).reverse();
   $: busy = helpers.filter((h) => running.has(h.id)).length + activeJobs.length;
+  $: needy = helpers.some((h) => waiting.has(h.id));
 
   const took = (j: ShellJob) => (j.running ? Math.max(j.ms, now - j.started) : j.ms);
   function span(ms: number) {
@@ -73,11 +74,10 @@
   });
 </script>
 
+<!-- Only while something is working or waiting on you; idle, the card is gone. -->
+{#if busy || needy}
 <InfoCard id="running" title="Running">
   <svelte:fragment slot="aside">{busy ? `${busy} running` : ""}</svelte:fragment>
-  {#if !helpers.length && !jobs.length}
-    <div class="info-line"><span class="info-v quiet">Nothing running</span></div>
-  {/if}
   {#each helpers as h (h.id)}
     {@const tone = sessionTone(h, running, waiting)}
     <button class="info-line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
@@ -119,6 +119,7 @@
     {/if}
   {/if}
 </InfoCard>
+{/if}
 
 <style>
   .helper {

@@ -143,14 +143,14 @@
     right: 2px;
     min-width: 14px;
     height: 14px;
-    padding: 0 3px;
+    padding: 0 var(--space);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: var(--accent);
-    border-radius: 7px;
+    border-radius: var(--radius);
     color: var(--bg);
-    font-size: 9px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     pointer-events: none;
@@ -202,7 +202,7 @@
   }
   .icon-btn:hover,
   .icon-btn.active {
-    background: var(--panel);
+    background: var(--selected);
     color: var(--text);
   }
   .panel-btn {
@@ -216,8 +216,8 @@
     color: var(--text);
   }
   .panel-btn.active {
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border-color: color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    background: var(--surface);
+    border-color: transparent;
     color: var(--text);
   }
 </style>

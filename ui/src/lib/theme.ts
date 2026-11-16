@@ -55,7 +55,9 @@ function syncArt() {
   const fill = css.getPropertyValue("--art-fill").trim();
   const cards = css.getPropertyValue("--art-cards").trim();
   root.dataset.artFill = fill === "full" ? "full" : "band";
-  root.dataset.artCards = cards === "glass" || cards === "solid" ? cards : "clear";
+  // Cards are always glass now; the attribute stays for the CSS that keys on it.
+  void cards;
+  root.dataset.artCards = "glass";
   // A light theme with the picture filling the window shows Home as a dark
   // scene: white text and dark glass over the picture, like a lock screen.
   // The rest of the app stays light. data-tone is the tone over the picture.

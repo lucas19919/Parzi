@@ -58,6 +58,6 @@
     transition: background 120ms ease;
   }
   .grip:hover::after {
-    background: color-mix(in srgb, var(--text) 18%, transparent);
+    background: var(--fill-hover);
   }
 </style>

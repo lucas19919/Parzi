@@ -26,6 +26,9 @@
   import { fade } from "svelte/transition";
 
   export let bg = "";
+  /** Away from Home (a session, Settings): the same picture, blurred and
+   *  veiled so text reads over it, so the whole app keeps one look. */
+  export let dim = false;
   const noise = noiseTile();
 
   /* Leaving Home, the picture fades out by a CSS transition rather than a
@@ -60,11 +63,13 @@
     <div
       class="art"
       class:leaving
+      class:dim
       in:fade={{ duration: 220 }}
-      on:transitionend={(e) => e.target === e.currentTarget && gone()}
+      on:transitionend={(e) => e.target === e.currentTarget && e.propertyName === "opacity" && gone()}
     >
       <img src={shown} alt="" />
       <div class="shade" />
+      <div class="veil" />
       <div class="grain" aria-hidden="true" style:background-image={noise ? `url(${noise})` : undefined} />
     </div>
   {/if}
@@ -108,6 +113,29 @@
     height: 100%;
     object-fit: cover;
     object-position: center var(--bg-y, 50%);
+    transition: filter 520ms var(--ease-even), transform 520ms var(--ease-even);
+  }
+  /* Dimmed: blurred past recognition into colour, under a veil of the
+     page colour. The veil eases in, so Home to a session is one motion. */
+  .veil {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--bg) 60%, transparent);
+    opacity: 0;
+    transition: opacity 520ms var(--ease-even);
+  }
+  .dim img {
+    filter: blur(24px) saturate(1.3);
+    transform: scale(1.08);
+  }
+  .dim .veil {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    img,
+    .veil {
+      transition-duration: 1ms;
+    }
   }
   .shade {
     position: absolute;
@@ -118,7 +146,10 @@
   }
   /* Full window: the picture fills Home, with an even shade so the tabs,
      the composer and the cards stay readable over it. */
-  :global(html[data-art-fill="full"]) .art {
+  /* Full window, and always behind a session: glass needs something to
+     frost, or a card over the bare ground reads as a solid panel. */
+  :global(html[data-art-fill="full"]) .art,
+  .art.dim {
     height: 100%;
     -webkit-mask-image: none;
     mask-image: none;

@@ -6,6 +6,12 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Each session has its own plan: the agent's checklist is kept on the session, survives a restart or a switch to another agent, and shows in the thread as one Plan card; the session manager shows "3 of 7". For a bigger piece of work an agent can ask first (Use this plan / Not now). Project-wide plans, plan items and quote chips are gone.
+- Work for later is a draft: an agent writes it down (a title, a brief and a rough plan) instead of a suggestion card, it waits under Drafts in the session manager, and Start runs it on the same session. Old project plans turn into drafts once, on the first start after this update (the old note is kept as plan.archived.md).
+- Switching to another agent keeps the thread: at a usage limit, Switch model picks another model and resends your last message on the same session, and the new agent gets the conversation so far instead of a fresh, empty session.
+- A rebuilt session manager: Needs you and Working first (with what each agent is doing), then Drafts, then sessions by day. Type to find, arrows and Enter to open, project chips to filter.
+- One look across the app: everything is the frosted glass of Home (cards, the composer, menus, tooltips, toasts), buttons are one filled style with no outlines, and the dimmed picture sits behind sessions too. The Cards setting (Clear, Glass, Solid) is gone. The usage-limit card and the Plan card are calmer, and question cards lose their divider lines.
+
 ## 1.4.1 (2026-11-13)
 
 - Files live in the side bar now: one button, one bar. A Files card sits with the others (search, changed files, the folder as a tree), and opening a file, from the card, the thread or an agent, grows the side bar a second column beside the cards to read it in, resizable, with copy, save, show in folder and close. Closing it folds the bar back; the thread is never squeezed into a third column.

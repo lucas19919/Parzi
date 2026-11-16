@@ -8,7 +8,7 @@ export interface SessionMeta {
   pinned: boolean;
   project: string;
   model: string;
-  status: "active" | "idle" | "done" | "killed" | "queued";
+  status: "active" | "idle" | "done" | "killed" | "queued" | "draft";
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
@@ -20,6 +20,10 @@ export interface SessionMeta {
   updated: string;
   last_run?: RunOutcome | null;
   plan_item?: string | null;
+  /** The session's plan: its checklist, kept on the session. */
+  plan?: { items: { title: string; state: "pending" | "active" | "done" }[] } | null;
+  /** A draft's brief: sent as the first message when it starts. */
+  brief?: string | null;
   branch?: string;
   effort?: string;
 }
@@ -188,7 +192,6 @@ interface SendArgs {
   attachments: string[];
   mode: string;
   remote?: boolean;
-  quotes?: { project: string; id: string }[];
   parent?: string | null;
   worktree?: string;
 }
@@ -205,6 +208,7 @@ export const api = {
   onUpdateProgress: (fn: (p: { chunk: number; total: number | null }) => void) =>
     listen<{ chunk: number; total: number | null }>("parzi://update-progress", (e) => fn(e.payload)),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
+  urlListening: (url: string) => invoke<boolean>("url_listening", { url }),
   openFilePath: (path: string) => invoke<void>("open_file_path", { path }),
 
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
@@ -219,7 +223,6 @@ export const api = {
       attachments: a.attachments,
       mode: a.mode,
       remote: a.remote ?? false,
-      quotes: a.quotes ?? [],
       parent: a.parent ?? null,
       worktree: a.worktree || null,
     }),
@@ -242,6 +245,8 @@ export const api = {
   gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
   gitBranches: (cwd: string) => invoke<{ current: string; all: string[] }>("git_branches", { cwd }),
   gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
+  gitDiff: (cwd: string, path: string) => invoke<string>("git_diff", { cwd, path }),
+  branchPrs: (cwd: string) => invoke<PrInfo[]>("branch_prs", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   artifactFrame: (html: string) => invoke<string>("artifact_frame", { html }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
@@ -334,6 +339,8 @@ export interface GitStatus {
   files?: string[];
   /** The repository's root folder. */
   top?: string;
+  /** Lines added and removed per tracked file, against HEAD. */
+  stats?: { path: string; added: number; removed: number }[];
 }
 
 export interface NoteMeta {
@@ -588,36 +595,7 @@ export function onDesk(cb: (cmd: DeskCmd) => void) {
   return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
 }
 
-export type PlanState = "planned" | "active" | "done" | "dropped";
-
-export interface PlanItem {
-  id: string;
-  title: string;
-  detail: string;
-  phase: string;
-  needs: string[];
-  state: PlanState;
-  branch: string;
-  note: string;
-}
-
-export interface Plan {
-  version: 1;
-  title: string;
-  goal: string;
-  phases: string[];
-  items: PlanItem[];
-  updated: number;
-  by: string;
-}
-
-export interface PlanView {
-  project: string;
-  path: string;
-  plan: Plan | null;
-  error: string | null;
-}
-
+/** An open pull request for a folder's repository (`branch_prs`). */
 export interface PrInfo {
   number: number;
   title: string;
@@ -628,17 +606,3 @@ export interface PrInfo {
   checks: "pass" | "fail" | "pending" | "none";
 }
 
-export interface PlanQuote {
-  project: string;
-  id: string;
-  title: string;
-}
-
-export const planApi = {
-  view: (project: string) => invoke<PlanView>("plan_view", { project }),
-  prs: (cwd: string) => invoke<PrInfo[]>("plan_prs", { cwd }),
-};
-
-export function onPlan(cb: (e: { project: string }) => void) {
-  return listen<{ project: string }>("parzi://plan", (ev) => cb(ev.payload));
-}

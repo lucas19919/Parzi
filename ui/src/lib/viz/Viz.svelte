@@ -138,7 +138,7 @@
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    background: var(--panel);
+    background: var(--fill);
   }
   /* Rows of lists, tables and timelines rise in turn the first time the
      chart is in view. Reduced motion skips it (theme.css). */
@@ -205,7 +205,7 @@
     margin: var(--space) 0 0;
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
     overflow: auto;
-    background: var(--bg);
+    background: var(--fill);
     border-radius: var(--radius);
     font-family: var(--mono);
     font-size: var(--fs-xs);

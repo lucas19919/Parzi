@@ -26,8 +26,6 @@ struct RunSidecar {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<VendorSession>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    brief_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     report_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last: Option<Posture>,
@@ -58,7 +56,6 @@ impl RunSidecar {
         self.queued.is_none()
             && self.note.is_none()
             && self.session.is_none()
-            && self.brief_hash.is_none()
             && self.report_to.is_none()
             && self.last.is_none()
     }
@@ -171,14 +168,6 @@ fn edit_sidecar<R>(session_id: &str, f: impl FnOnce(&mut RunSidecar) -> R) -> R 
         save_sidecar(session_id, &sidecar);
     }
     out
-}
-
-pub(crate) fn brief_hash(session_id: &str) -> Option<String> {
-    load_sidecar(session_id).brief_hash
-}
-
-pub(crate) fn set_brief_hash(session_id: &str, hash: Option<&str>) {
-    edit_sidecar(session_id, |s| s.brief_hash = hash.map(str::to_string));
 }
 
 pub(crate) fn set_report_to(session_id: &str, parent: &str) {

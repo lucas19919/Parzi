@@ -289,13 +289,11 @@ pub async fn sync_notes(
                     continue;
                 };
                 let full = local(path)?;
-                let plan_lock = parzi_core::plan::lock_if_plan(path);
                 if !untouched(path, &full) {
                     continue;
                 }
                 parzi_core::atomic_write(&full, text.as_bytes())
                     .map_err(|e| format!("{path}: {e}"))?;
-                drop(plan_lock);
                 agreed.insert(path.clone(), fnv(text.as_bytes()));
                 report.pulled += 1;
                 report.changed.push(path.clone());
@@ -316,7 +314,6 @@ pub async fn sync_notes(
             }
             Act::DeleteHere => {
                 let full = local(path)?;
-                let _plan = parzi_core::plan::lock_if_plan(path);
                 if !untouched(path, &full) {
                     continue;
                 }
@@ -334,7 +331,6 @@ pub async fn sync_notes(
                     continue;
                 };
                 let full = local(path)?;
-                let plan_lock = parzi_core::plan::lock_if_plan(path);
                 let mine = std::fs::read(&full).map_err(|e| format!("{path}: {e}"))?;
                 let taken = |p: &str| here.contains_key(p) || there.contains_key(p);
                 let aside = conflict_path(path, &device, &taken);
@@ -342,7 +338,6 @@ pub async fn sync_notes(
                     .map_err(|e| format!("{aside}: {e}"))?;
                 parzi_core::atomic_write(&full, theirs.as_bytes())
                     .map_err(|e| format!("{path}: {e}"))?;
-                drop(plan_lock);
                 agreed.insert(path.clone(), fnv(theirs.as_bytes()));
                 puts.push(Put {
                     path: aside.clone(),

@@ -353,6 +353,41 @@ pub struct GitStatus {
     pub files: Vec<String>,
     /// The repository's root folder.
     pub top: String,
+    /// Lines added and removed per tracked file, against HEAD.
+    pub stats: Vec<FileStat>,
+}
+
+#[derive(serde::Serialize, Default, Debug, PartialEq)]
+pub struct FileStat {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// Per-file counts from `git diff --numstat`; binaries count as 0/0, and
+/// a rename's `old => new` path keeps its new side.
+fn file_stats(out: &str) -> Vec<FileStat> {
+    out.lines()
+        .filter_map(|line| {
+            let mut cols = line.splitn(3, '\t');
+            let added = cols.next()?.parse().unwrap_or(0);
+            let removed = cols.next()?.parse().unwrap_or(0);
+            let path = cols.next()?;
+            let path = match path.split_once(" => ") {
+                Some((head, tail)) => match (head.rsplit_once('{'), tail.split_once('}')) {
+                    (Some((pre, _)), Some((new, post))) => format!("{pre}{new}{post}"),
+                    _ => tail.to_string(),
+                },
+                None => path.to_string(),
+            };
+            Some(FileStat {
+                path,
+                added,
+                removed,
+            })
+        })
+        .take(CHANGED_MAX)
+        .collect()
 }
 
 /// How many changed files git status lists by name.
@@ -439,6 +474,7 @@ pub async fn git_status(
     }
     if let Some(stat) = git_out(&cwd, &["diff", "HEAD", "--numstat"]).await {
         (s.added, s.removed) = sum_numstat(&stat);
+        s.stats = file_stats(&stat);
     }
     if let Some(log) = git_out(&cwd, &["log", "-1", "--format=%ct%x1f%s"]).await {
         if let Some((time, subject)) = log.trim().split_once('\u{1f}') {
@@ -447,6 +483,61 @@ pub async fn git_status(
         }
     }
     Ok(Some(s))
+}
+
+/// The diff of one changed file against HEAD, for the Changes card. A new
+/// file shows as all added. Capped so a huge file can't flood the reader.
+#[tauri::command]
+pub async fn git_diff(
+    state: State<'_, AppState>,
+    cwd: String,
+    path: String,
+) -> Result<String, String> {
+    const DIFF_MAX: usize = 400 * 1024;
+    if cwd.is_empty() || path.is_empty() {
+        return Err("no file".into());
+    }
+    // A path inside the repository only: `--no-index` would read any file.
+    let rel = Path::new(&path);
+    if rel.is_absolute()
+        || path.starts_with(['/', '\\'])
+        || rel
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("that path is outside the repository".into());
+    }
+    let orch = state.orch.clone();
+    let cwd = off_thread(move || confined_path(orch.store(), &cwd)).await?;
+    let top = git_out(&cwd, &["rev-parse", "--show-toplevel"])
+        .await
+        .map(|t| std::path::PathBuf::from(t.trim()))
+        .ok_or("not a git repository")?;
+    let mut out = git_out(&top, &["diff", "HEAD", "--", &path])
+        .await
+        .unwrap_or_default();
+    if out.trim().is_empty() {
+        // Untracked: `diff --no-index` exits 1 when files differ, so read
+        // its output whatever the status.
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.args(["diff", "--no-index", "--", "/dev/null", &path])
+            .current_dir(&top)
+            .stdin(Stdio::null());
+        #[cfg(windows)]
+        cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
+        if let Ok(o) = cmd.output().await {
+            out = String::from_utf8_lossy(&o.stdout).into_owned();
+        }
+    }
+    if out.len() > DIFF_MAX {
+        let mut end = DIFF_MAX;
+        while !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+        out.push_str("\n… diff cut short\n");
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -795,6 +886,82 @@ pub async fn open_confirmed_url(url: String) -> Result<(), String> {
     off_thread(move || launch(&open_with_default(url.into()))).await
 }
 
+/// Whether something listens behind a local http(s) URL, for the hosted
+/// card's dot. Only loopback hosts are probed; anything else reads as up.
+#[tauri::command]
+pub async fn url_listening(url: String) -> bool {
+    let Some(addr) = loopback_addr(&url) else {
+        return true;
+    };
+    matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(800),
+            tokio::net::TcpStream::connect(addr.as_str())
+        )
+        .await,
+        Ok(Ok(_))
+    )
+}
+
+/// `host:port` of a loopback http(s) URL, or None for anything else.
+fn loopback_addr(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let default = match scheme.to_ascii_lowercase().as_str() {
+        "http" => 80,
+        "https" => 443,
+        _ => return None,
+    };
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit('@').next()?;
+    let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
+        let (h, tail) = v6.split_once(']')?;
+        (h, tail.strip_prefix(':'))
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        }
+    };
+    let port: u16 = match port {
+        Some(p) => p.parse().ok()?,
+        None => default,
+    };
+    let host = host.to_ascii_lowercase();
+    match host.as_str() {
+        "localhost" | "127.0.0.1" => Some(format!("127.0.0.1:{port}")),
+        "::1" => Some(format!("[::1]:{port}")),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod listening_tests {
+    use super::loopback_addr;
+
+    #[test]
+    fn only_loopback_urls_get_a_probe_address() {
+        assert_eq!(
+            loopback_addr("http://localhost:5173/app").as_deref(),
+            Some("127.0.0.1:5173")
+        );
+        assert_eq!(
+            loopback_addr("http://127.0.0.1").as_deref(),
+            Some("127.0.0.1:80")
+        );
+        assert_eq!(
+            loopback_addr("https://LOCALHOST").as_deref(),
+            Some("127.0.0.1:443")
+        );
+        assert_eq!(
+            loopback_addr("http://[::1]:3000/").as_deref(),
+            Some("[::1]:3000")
+        );
+        assert_eq!(loopback_addr("https://example.com:5173"), None);
+        assert_eq!(loopback_addr("file:///C:/x"), None);
+        assert_eq!(loopback_addr("http://localhost:notaport"), None);
+    }
+}
+
 const RUNS_CODE: &[&str] = &[
     "exe",
     "bat",
@@ -1087,6 +1254,26 @@ mod tests {
         assert_eq!(
             (fresh.upstream, fresh.changed, fresh.untracked),
             (false, 0, 0)
+        );
+    }
+
+    #[test]
+    fn file_stats_keep_each_file_and_a_renames_new_path() {
+        let s = file_stats(
+            "3\t1\tsrc/a.rs\n-\t-\tlogo.png\n2\t2\tui/{old => new}/x.ts\n1\t0\ta.txt => b.txt\n",
+        );
+        let got: Vec<_> = s
+            .iter()
+            .map(|f| (f.path.as_str(), f.added, f.removed))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("src/a.rs", 3, 1),
+                ("logo.png", 0, 0),
+                ("ui/new/x.ts", 2, 2),
+                ("b.txt", 1, 0)
+            ]
         );
     }
 

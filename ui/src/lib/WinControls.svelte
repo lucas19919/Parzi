@@ -60,7 +60,7 @@
     cursor: pointer;
   }
   .win-btn:hover {
-    background: var(--panel);
+    background: var(--hover);
     color: var(--text);
   }
   .win-btn.close:hover {

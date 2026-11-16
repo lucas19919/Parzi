@@ -10,6 +10,9 @@ pub enum SessionStatus {
     Done,
     Killed,
     Queued,
+    /// Work written down for later: a title, a brief and a plan, never run.
+    /// Sending to it starts it.
+    Draft,
 }
 
 impl SessionStatus {
@@ -25,6 +28,7 @@ impl SessionStatus {
             Self::Idle => "idle",
             Self::Done => "done",
             Self::Killed => "stopped",
+            Self::Draft => "draft",
         }
     }
 }
@@ -58,14 +62,73 @@ pub struct SessionMeta {
     pub cwd: String,
     #[serde(default)]
     pub last_run: Option<RunOutcome>,
-    #[serde(default)]
-    pub plan_item: Option<String>,
+    /// The session's plan: its checklist, written once and ticked off as it
+    /// works. Lives on the session, so it survives restarts and agent switches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<SessionPlan>,
+    /// A draft's brief: what to do, sent as the first message when it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
     #[serde(default)]
     pub branch: String,
     #[serde(default)]
     pub effort: String,
     pub created: DateTime<Utc>,
     pub updated: DateTime<Utc>,
+}
+
+/// A session's plan: an ordered checklist.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionPlan {
+    #[serde(default)]
+    pub items: Vec<PlanStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub title: String,
+    #[serde(default)]
+    pub state: StepState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepState {
+    #[default]
+    Pending,
+    Active,
+    Done,
+}
+
+impl SessionPlan {
+    /// From a checklist payload (`{items: [{title, state}]}`, as
+    /// `widgets::todo` and `widgets::todo_from_agent` build it).
+    pub fn from_payload(payload: &serde_json::Value) -> Option<Self> {
+        let items = payload.get("items")?.as_array()?;
+        let items = items
+            .iter()
+            .filter_map(|it| {
+                let title = it.get("title")?.as_str()?.trim();
+                let state = match it.get("state").and_then(|s| s.as_str()).unwrap_or("") {
+                    "active" => StepState::Active,
+                    "done" => StepState::Done,
+                    _ => StepState::Pending,
+                };
+                (!title.is_empty()).then(|| PlanStep {
+                    title: title.to_string(),
+                    state,
+                })
+            })
+            .collect();
+        Some(Self { items })
+    }
+
+    pub fn done(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| i.state == StepState::Done)
+            .count()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -332,7 +395,7 @@ mod tests {
             r#"{"id": "x", "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z"}"#,
         )
         .unwrap();
-        assert!(m.last_run.is_none() && m.plan_item.is_none());
+        assert!(m.last_run.is_none() && m.plan.is_none());
         assert_eq!((m.branch.as_str(), m.effort.as_str()), ("", ""));
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["last_run"], serde_json::Value::Null);

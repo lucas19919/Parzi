@@ -44,10 +44,10 @@
     gap: calc(var(--space) * 2);
     margin: calc(var(--space) * 2) 0;
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .head {
@@ -110,7 +110,7 @@
     overflow: auto;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    background: var(--bg);
+    background: var(--fill);
     border-radius: var(--radius);
     color: var(--muted);
     font-family: var(--mono);

@@ -1,15 +1,19 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from "svelte";
+  import { createEventDispatcher, onMount, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Page from "./Page.svelte";
-  import { sessionMarks } from "./activity";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { activity, sessionMarks } from "./activity";
   import { brain, type Project, type SessionMeta } from "./api";
+  import { hasMark } from "./providerMarks";
+  import { nameOf } from "./providerRows";
   import { folderName } from "./tabs";
-  import { byDay } from "./time";
+  import { byDay, formatTime } from "./time";
   import { tooltip } from "./tooltip";
-  import { toast } from "./toast";
-  import { invoke } from "@tauri-apps/api/core";
 
+  /** Sessions, by the questions a person brings here: what needs me, what is
+   *  working, and where is the one from earlier. Type to find, arrows and
+   *  Enter to open. */
   export let threads: SessionMeta[] = [];
 
   const dispatch = createEventDispatcher<{
@@ -20,220 +24,222 @@
 
   let query = "";
   let field: HTMLInputElement | null = null;
-  let projectFilter: string | null = null;
+  let list: HTMLElement | null = null;
+  let only: string | null = null;
   let projects: Project[] = [];
-  let projectsError = "";
-  let adding = false;
-  let newTitle = "";
-  let newFolder = "";
-  let saving = false;
-
-  async function loadProjects() {
-    projectsError = "";
-    try {
-      projects = (await brain.projects()) ?? [];
-    } catch (e) {
-      projects = [];
-      projectsError = String(e);
-      void invoke("ui_error", { message: `projects did not load: ${e}` }).catch(() => {});
-    }
-  }
-
-  async function addProject() {
-    const title = newTitle.trim();
-    if (!title || saving) return;
-    saving = true;
-    try {
-      await brain.upsertProject(title, newFolder.trim());
-      newTitle = "";
-      newFolder = "";
-      adding = false;
-      await loadProjects();
-    } catch (e) {
-      toast(`Could not add the project: ${e}`, true);
-    } finally {
-      saving = false;
-    }
-  }
+  let pick = 0;
 
   onMount(() => {
     field?.focus();
-    void loadProjects();
+    brain
+      .projects()
+      .then((p) => (projects = p ?? []))
+      .catch(() => {});
   });
 
-  const projectOf = (slug: string): Project | undefined => projects.find((p) => p.slug === slug);
+  type Mark = "waiting" | "running" | "draft" | "";
+  const ownMark = (s: SessionMeta, marks: Record<string, string>): Mark =>
+    marks[s.id] === "waiting" ? "waiting" : marks[s.id] === "running" || s.status === "active" ? "running" : s.status === "draft" ? "draft" : "";
+
+  // Helpers (subagents) live under the session that started them; their
+  // work marks that session. One whose parent is gone stays visible.
+  $: byId = new Map(threads.map((t) => [t.id, t]));
+  $: tops = threads.filter((t) => !t.parent_id || !byId.has(t.parent_id));
+  $: topOf = (t: SessionMeta): SessionMeta => {
+    const seen = new Set<string>();
+    let cur = t;
+    while (cur.parent_id && byId.has(cur.parent_id) && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      cur = byId.get(cur.parent_id) as SessionMeta;
+    }
+    return cur;
+  };
+  $: marks = (() => {
+    const m = new Map<string, Mark>();
+    for (const t of threads) {
+      const own = ownMark(t, $sessionMarks);
+      if (!own) continue;
+      const top = topOf(t).id;
+      // A draft marks only itself; a helper's work marks the session above it.
+      if (own === "draft" && top !== t.id) continue;
+      if (own === "waiting" || !m.get(top) || m.get(top) === "draft") m.set(top, own);
+    }
+    return m;
+  })();
+  /** What a working session is doing now: its newest tool call, its own or a helper's. */
+  $: doing = (() => {
+    const m = new Map<string, { label: string; at: number }>();
+    for (const [id, a] of $activity) {
+      const t = byId.get(id);
+      if (!t) continue;
+      const top = topOf(t).id;
+      if ((m.get(top)?.at ?? 0) < a.at) m.set(top, a);
+    }
+    return m;
+  })();
+
   const placeOf = (t: SessionMeta): string => {
-    const p = t.project ? projectOf(t.project) : undefined;
+    const p = t.project ? projects.find((x) => x.slug === t.project) : undefined;
     if (p) return p.title;
     const leaf = folderName(t.cwd ?? "");
     return leaf && !/scratch/i.test(t.cwd ?? "") ? leaf : "";
   };
-  const initialOf = (t: SessionMeta): string => {
-    const label = placeOf(t) || t.title || "?";
-    return label.trim().charAt(0).toUpperCase() || "?";
-  };
-  const hueOf = (key: string): number => {
-    let h = 0;
-    for (const c of key) h = (h * 31 + c.charCodeAt(0)) % 360;
-    return h;
-  };
+  const agentOf = (t: SessionMeta) => t.model.split("/")[0] ?? "";
 
-  // What the tab bar shows, from the same marks; the saved status covers a session that
-  // was already running before this window opened.
-  type Mark = "running" | "waiting" | "queued" | "";
-  const ownMark = (s: SessionMeta, marks: Record<string, string>): Mark => {
-    const m = marks[s.id];
-    if (m === "waiting") return "waiting";
-    if (m === "running" || s.status === "active") return "running";
-    return s.status === "queued" ? "queued" : "";
-  };
-  const markWord: Record<string, string> = { running: "Working", waiting: "Waiting for you", queued: "Queued" };
-
-  // Subagent sessions live under the session that spawned them, not in this list. Their
-  // work still shows: a helper that is running or waiting marks the session it belongs to.
-  // A child whose parent is gone stays visible so it can't get lost.
-  $: byId = new Map(threads.map((t) => [t.id, t]));
-  $: tops = threads.filter((t) => !t.parent_id || !byId.has(t.parent_id));
-  $: below = (() => {
-    const rank: Record<Mark, number> = { "": 0, queued: 1, running: 2, waiting: 3 };
-    const m = new Map<string, Mark>();
-    for (const t of threads) {
-      const mark = ownMark(t, $sessionMarks);
-      if (!mark) continue;
-      const seen = new Set<string>();
-      let cur = t.parent_id ? byId.get(t.parent_id) : undefined;
-      while (cur && !seen.has(cur.id)) {
-        seen.add(cur.id);
-        if (rank[mark] > rank[m.get(cur.id) ?? ""]) m.set(cur.id, mark);
-        cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
-      }
-    }
-    return m;
-  })();
-  $: markOf = (s: SessionMeta): Mark => {
-    const own = ownMark(s, $sessionMarks);
-    const kid = below.get(s.id) ?? "";
-    // a queued helper is not news; a running or waiting one is
-    return own === "waiting" || kid === "waiting" ? "waiting" : own === "running" || kid === "running" ? "running" : own;
-  };
-  $: runningIn = (() => {
+  $: places = (() => {
     const m = new Map<string, number>();
-    for (const t of tops) if (markOf(t) === "running") m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
-    return m;
+    for (const t of tops) {
+      const p = placeOf(t);
+      if (p) m.set(p, (m.get(p) ?? 0) + 1);
+    }
+    return [...m].sort((a, b) => b[1] - a[1]);
   })();
 
   $: q = query.trim().toLowerCase();
-  $: hits = tops
-    .filter((t) => !projectFilter || t.project === projectFilter)
-    .filter((t) => {
-      if (!q) return true;
-      const p = t.project ? projectOf(t.project) : undefined;
-      return (
-        t.title.toLowerCase().includes(q) ||
-        (p?.title ?? "").toLowerCase().includes(q) ||
-        (t.cwd ?? "").toLowerCase().includes(q)
-      );
-    })
-    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }))
+  $: shown = tops
+    .filter((t) => !only || placeOf(t) === only)
+    .filter((t) => !q || t.title.toLowerCase().includes(q) || placeOf(t).toLowerCase().includes(q) || (t.cwd ?? "").toLowerCase().includes(q))
+    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0, mark: marks.get(t.id) ?? ("" as Mark) }))
     .sort((a, b) => b.at - a.at);
-  $: days = byDay(hits);
-  $: counts = (() => {
-    const m = new Map<string, number>();
-    for (const t of tops) m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
-    return m;
-  })();
+  $: groups = [
+    { label: "Needs you", items: shown.filter((t) => t.mark === "waiting") },
+    { label: "Working", items: shown.filter((t) => t.mark === "running") },
+    { label: "Drafts", items: shown.filter((t) => t.mark === "draft") },
+    ...byDay(shown.filter((t) => !t.mark)),
+  ].filter((g) => g.items.length);
+  $: flat = groups.flatMap((g) => g.items);
+  $: if (pick >= flat.length) pick = Math.max(0, flat.length - 1);
+  // A new search starts at the top.
+  $: q, only, (pick = 0);
 
-  function toggleProject(slug: string) {
-    projectFilter = projectFilter === slug ? null : slug;
+  function lineOf(t: (typeof shown)[number]): string {
+    const where = placeOf(t);
+    const what =
+      t.mark === "waiting" ? "Waiting for you" : t.mark === "running" ? doing.get(t.id)?.label || "Working" : t.mark === "draft" ? (t.brief ?? "").split("\n")[0].slice(0, 90) : "";
+    const steps = t.plan?.items ?? [];
+    const left = steps.some((i) => i.state !== "done");
+    const progress = steps.length && left ? `${steps.filter((i) => i.state === "done").length} of ${steps.length}` : "";
+    return [where, what, progress].filter(Boolean).join(" · ");
+  }
+
+  function whenOf(t: (typeof shown)[number]): string {
+    if (t.mark === "waiting" || t.mark === "running") return "";
+    return Date.now() - t.at < 86_400_000 * 2 ? formatTime(t.at) : new Date(t.at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  async function onKey(e: KeyboardEvent) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      pick = Math.max(0, Math.min(flat.length - 1, pick + (e.key === "ArrowDown" ? 1 : -1)));
+      await tick();
+      list?.querySelector(".sess.on")?.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && flat[pick]) {
+      e.preventDefault();
+      dispatch("openSession", { id: flat[pick].id });
+    }
   }
 </script>
 
 <Page>
-  <svelte:fragment slot="tools">
-    <div class="page-search">
-      <Icon name="search" />
-      <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
-    </div>
-    <button class="btn" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
-  </svelte:fragment>
+  <div slot="bar" class="page-tabs"><span class="page-title">Sessions</span></div>
 
-  <div slot="rail" class="rows">
-    <div class="row row-title">
-      <span>Projects</span>
-      <span class="row-ctl"><button class="icon-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}><Icon name="plus" /></button></span>
-    </div>
-    {#if adding}
-      <div class="row stack">
-        <input class="tin" bind:value={newTitle} placeholder="Project name" aria-label="Project name" spellcheck="false" />
-        <input class="tin" bind:value={newFolder} placeholder="Folder (optional)" aria-label="Project folder" spellcheck="false" />
-        <span class="row-ctl auto">
-          <button class="btn" on:click={() => (adding = false)}>Cancel</button>
-          <button class="btn primary" disabled={saving || !newTitle.trim()} on:click={addProject}>{saving ? "Adding…" : "Add"}</button>
-        </span>
-      </div>
-    {/if}
-    {#if projectsError}
-      <div class="row">
-        <span class="t-hint" title={projectsError}>Couldn't load projects</span>
-        <button class="btn" on:click={loadProjects}>Retry</button>
-      </div>
-    {:else}
-      {#each projects as p (p.slug)}
-        <button
-          class="row proj"
-          class:on={projectFilter === p.slug}
-          title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
-          on:click={() => toggleProject(p.slug)}
-        >
-          <span class="badge-wrap">
-            <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
-            {#if runningIn.get(p.slug)}<span class="mark running" role="img" aria-label={`${runningIn.get(p.slug)} working`} title={`${runningIn.get(p.slug)} working`} />{/if}
-          </span>
-          <span class="row-label">{p.title}</span>
-          {#if counts.get(p.slug)}<span class="t-hint">{counts.get(p.slug)}</span>{/if}
-        </button>
-      {:else}
-        <div class="row"><span class="t-hint">No projects yet</span></div>
-      {/each}
-    {/if}
+  <div class="page-search">
+    <Icon name="search" />
+    <input
+      bind:this={field}
+      bind:value={query}
+      on:keydown={onKey}
+      placeholder="Find a session"
+      aria-label="Find a session"
+      spellcheck="false"
+    />
   </div>
 
-  {#each days as day (day.label)}
-    <div class="rows">
-      <div class="row row-title"><span>{day.label}</span></div>
-      {#each day.items as s (s.id)}
-        {@const place = placeOf(s)}
-        {@const mark = markOf(s)}
-        <div class="row sess">
-          <button class="row-main" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-            <span class="badge-wrap">
-              <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
-              {#if mark}<span class="mark {mark}" role="img" aria-label={markWord[mark]} title={markWord[mark]} />{/if}
-            </span>
-            <span class="row-label">{s.title || "Untitled session"}</span>
-            {#if place}<span class="t-hint">{place}</span>{/if}
-          </button>
-          <button class="icon-btn x" use:tooltip={"Delete session"} aria-label={`Delete ${s.title || "session"}`} on:click={() => dispatch("deleteSession", { id: s.id })}>
-            <Icon name="trash" size={12} />
-          </button>
-        </div>
+  {#if places.length > 1}
+    <div class="chips" role="group" aria-label="Project">
+      <button class="chip" class:on={!only} aria-pressed={!only} on:click={() => (only = null)}>All</button>
+      {#each places as [p, n] (p)}
+        <button class="chip" class:on={only === p} aria-pressed={only === p} on:click={() => (only = only === p ? null : p)}>{p}<span class="n">{n}</span></button>
       {/each}
     </div>
-  {:else}
-    <p class="empty t-hint">{q || projectFilter ? "Nothing matches." : "No sessions yet. Start one above."}</p>
-  {/each}
+  {/if}
+
+  <div class="groups" bind:this={list}>
+    {#each groups as g (g.label)}
+      <div class="rows">
+        <div class="row row-title"><span>{g.label}</span>{#if g.label === "Needs you" || g.label === "Working" || g.label === "Drafts"}<span class="t-hint">{g.items.length}</span>{/if}</div>
+        {#each g.items as s (s.id)}
+          {@const agent = agentOf(s)}
+          <div class="row sess" class:on={flat[pick]?.id === s.id}>
+            <button class="row-main" title={s.title} on:click={() => dispatch("openSession", { id: s.id })} on:mouseenter={() => (pick = flat.indexOf(s))}>
+              <span class="agent" use:tooltip={nameOf(agent)}>
+                {#if hasMark(agent)}<ProviderLogo provider={agent} size={14} mono />{:else}<Icon name="chat" size={14} />{/if}
+                {#if s.mark === "waiting" || s.mark === "running"}<span class="mark {s.mark}" aria-label={s.mark === "waiting" ? "Waiting for you" : "Working"} role="img" />{/if}
+              </span>
+              <span class="row-label">
+                {s.title || "Untitled session"}
+                {#if lineOf(s)}<small class:warn={s.mark === "waiting"}>{lineOf(s)}</small>{/if}
+              </span>
+              {#if whenOf(s)}<span class="when">{whenOf(s)}</span>{/if}
+            </button>
+            <button class="icon-btn x" use:tooltip={"Delete session"} aria-label={`Delete ${s.title || "session"}`} on:click={() => dispatch("deleteSession", { id: s.id })}>
+              <Icon name="trash" size={12} />
+            </button>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <p class="empty t-hint">{q || only ? "Nothing matches." : "No sessions yet. Start one with + in the tab bar."}</p>
+    {/each}
+  </div>
 </Page>
 
 <style>
-  .stack {
-    flex-direction: column;
-    align-items: stretch;
+  .page-search {
+    flex: none;
+    height: var(--h-field);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
     gap: calc(var(--space) * 2);
   }
-  .proj.on {
-    background: var(--selected);
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    height: var(--h);
+    padding: 0 calc(var(--space) * 3);
+    background: var(--fill);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    cursor: pointer;
   }
-  .badge {
+  .chip:hover {
+    color: var(--text);
+  }
+  .chip.on {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .n {
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+  }
+  .groups {
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+  }
+  .sess.on {
+    background: var(--hover);
+  }
+  .agent {
+    position: relative;
     flex: none;
     width: 28px;
     height: 28px;
@@ -241,33 +247,21 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--radius);
-    background: hsl(var(--badge-h, 210) 40% 36%);
-    color: var(--on-badge);
-    font-size: var(--fs-sm);
-    font-weight: 600;
+    background: var(--fill);
+    color: var(--text);
   }
-  .page-search {
-    height: auto;
-  }
-  /* The tab bar's marks, on the corner of the letter badge: they take no room, so the
-     list never shifts when something starts or stops. */
-  .badge-wrap {
-    position: relative;
-    flex: none;
-    display: inline-flex;
-  }
+  /* The tab bar's marks, on the corner of the agent: they take no room, so
+     the list never shifts when something starts or stops. */
   .mark {
     position: absolute;
-    right: -4px;
-    top: -4px;
+    right: -3px;
+    top: -3px;
     box-sizing: border-box;
     border-radius: 50%;
-    background: var(--panel);
-    box-shadow: 0 0 0 2px var(--panel);
   }
   .mark.running {
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
     border: 1.6px solid var(--line);
     border-top-color: var(--accent);
     animation: spin 0.8s linear infinite;
@@ -277,15 +271,19 @@
     height: 9px;
     background: var(--warn);
   }
-  .mark.queued {
-    width: 9px;
-    height: 9px;
-    border: 1.6px solid var(--muted);
-  }
   @media (prefers-reduced-motion: reduce) {
     .mark.running {
       animation: none;
     }
+  }
+  small.warn {
+    color: var(--warn-text);
+  }
+  .when {
+    flex: none;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
   .x {
     opacity: 0;

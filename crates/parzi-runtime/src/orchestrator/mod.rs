@@ -4,10 +4,8 @@ pub use launch::ContextParts;
 mod queue;
 mod wake;
 
-pub(crate) use queue::{
-    brief_hash, run_session, set_brief_hash, set_run_note, set_run_session, VendorSession,
-};
 pub use queue::{run_note, BUDGET_NOTE};
+pub(crate) use queue::{run_session, set_run_note, set_run_session, VendorSession};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

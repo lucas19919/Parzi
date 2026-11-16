@@ -2,9 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { draftKey, sameDraft, withDraft, type Drafts } from "../src/lib/drafts.ts";
 
-const d = (input: string, extra: Partial<{ quotes: { id: string; project: string; title: string }[]; attachments: string[] }> = {}) => ({
+const d = (input: string, extra: Partial<{ attachments: string[] }> = {}) => ({
   input,
-  quotes: (extra.quotes ?? []) as never[],
   attachments: extra.attachments ?? [],
 });
 

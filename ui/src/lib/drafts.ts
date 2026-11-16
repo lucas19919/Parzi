@@ -1,8 +1,5 @@
-import type { PlanQuote } from "./api";
-
 export interface Draft {
   input: string;
-  quotes: PlanQuote[];
   attachments: string[];
   at: number;
 }
@@ -16,12 +13,12 @@ export function draftKey(tab: { id: string; sessionId?: string | null }): string
   return tab.sessionId ? `s:${tab.sessionId}` : `t:${tab.id}`;
 }
 
-const empty = (d: Pick<Draft, "input" | "quotes" | "attachments">) => !d.input.trim() && !d.quotes.length && !d.attachments.length;
+const empty = (d: Pick<Draft, "input" | "attachments">) => !d.input.trim() && !d.attachments.length;
 
-export function withDraft(all: Drafts, key: string, d: Pick<Draft, "input" | "quotes" | "attachments">, now = Date.now()): Drafts {
+export function withDraft(all: Drafts, key: string, d: Pick<Draft, "input" | "attachments">, now = Date.now()): Drafts {
   const next = { ...all };
   if (empty(d)) delete next[key];
-  else next[key] = { input: d.input, quotes: [...d.quotes], attachments: [...d.attachments], at: now };
+  else next[key] = { input: d.input, attachments: [...d.attachments], at: now };
   const keys = Object.keys(next);
   if (keys.length > MAX) {
     for (const k of keys.sort((a, b) => next[a].at - next[b].at).slice(0, keys.length - MAX)) delete next[k];
@@ -29,14 +26,12 @@ export function withDraft(all: Drafts, key: string, d: Pick<Draft, "input" | "qu
   return next;
 }
 
-export function sameDraft(a: Draft | undefined, b: Pick<Draft, "input" | "quotes" | "attachments">): boolean {
+export function sameDraft(a: Draft | undefined, b: Pick<Draft, "input" | "attachments">): boolean {
   if (!a) return empty(b);
   return (
     a.input === b.input &&
     a.attachments.length === b.attachments.length &&
-    a.attachments.every((x, i) => x === b.attachments[i]) &&
-    a.quotes.length === b.quotes.length &&
-    a.quotes.every((q, i) => q.id === b.quotes[i]?.id && q.project === b.quotes[i]?.project)
+    a.attachments.every((x, i) => x === b.attachments[i])
   );
 }
 
@@ -49,7 +44,6 @@ export function loadDrafts(): Drafts {
       if (!d || typeof d.input !== "string") continue;
       out[k] = {
         input: d.input,
-        quotes: Array.isArray(d.quotes) ? d.quotes : [],
         attachments: Array.isArray(d.attachments) ? d.attachments.filter((a) => typeof a === "string") : [],
         at: typeof d.at === "number" ? d.at : 0,
       };

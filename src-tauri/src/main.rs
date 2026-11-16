@@ -28,7 +28,7 @@ mod files;
 mod job;
 mod onboard;
 mod pagectl;
-mod plans;
+mod prs;
 mod remote;
 mod search;
 mod sessions;
@@ -694,7 +694,19 @@ fn main() {
                 app: app.handle().clone(),
                 pending: app.state::<AppState>().pending.clone(),
             }));
-            plans::watch(app.handle());
+            // Project plans became drafts (docs/plans/session-plans.md): an
+            // old plan.md is moved once, then archived.
+            {
+                let store = o.store().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Ok(vault) = parzi_core::brain::Vault::open() {
+                        let made = parzi_core::plan::to_drafts(&vault, &store);
+                        if made > 0 {
+                            tracing::info!("old project plans moved to {made} drafts");
+                        }
+                    }
+                });
+            }
             let ctl_app = app.handle().clone();
             let ctl_orch = o.clone();
             let ctl_pending = app.state::<AppState>().pending.clone();
@@ -826,12 +838,12 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
-            plans::plan_view,
-            plans::plan_prs,
+            prs::branch_prs,
             files::pick_folder,
             files::list_files,
             files::git_branch,
             files::git_status,
+            files::git_diff,
             files::read_image_data_url,
             files::read_text_file,
             files::pick_text_file,
@@ -840,6 +852,7 @@ fn main() {
             files::save_as,
             files::reveal_saved,
             files::open_confirmed_url,
+            files::url_listening,
             files::open_file_path,
             settings::get_config,
             settings::save_config,

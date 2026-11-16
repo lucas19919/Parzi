@@ -292,10 +292,10 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
 
@@ -339,7 +339,7 @@
   .reader .code :global(.codeblock) {
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    background: var(--bg);
+    background: var(--fill);
   }
   .art.bad {
     border-color: color-mix(in srgb, var(--bad) 50%, var(--line));
@@ -502,7 +502,7 @@
     margin: calc(var(--space) * 2) calc(var(--space) * 4) calc(var(--space) * 4);
     padding: calc(var(--space) * 2);
     overflow: auto;
-    background: var(--bg);
+    background: var(--fill);
     border-radius: var(--radius);
     font-size: var(--fs-xs);
   }

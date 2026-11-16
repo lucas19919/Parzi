@@ -4,10 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use common::*;
-use parzi_core::brain::Vault;
 use parzi_core::config::ParziConfig;
-use parzi_core::plan::{self, PlanState};
-use parzi_core::store::SessionStore;
+use parzi_core::store::{SessionStore, StepState};
 use parzi_runtime::handler::RunSink;
 use parzi_runtime::mcp::McpManager;
 use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
@@ -43,18 +41,18 @@ impl Asker for Person {
     }
 }
 
-fn host(project: &str, asker: Option<Arc<dyn Asker>>) -> ToolHost {
+fn host(project: &str, asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String) {
     home("plan-review");
     let store = SessionStore::open().unwrap();
     let sid = store.create("planning", project, "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    ToolHost::new(ToolHostParts {
+    let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: true,
         cfg: ParziConfig::default(),
-        store,
+        store: store.clone(),
         tools: Arc::new(ToolExecutor {
             cwd: std::env::temp_dir().display().to_string(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
@@ -66,123 +64,90 @@ fn host(project: &str, asker: Option<Arc<dyn Asker>>) -> ToolHost {
         harness: None,
         sink: RunSink::new(&sid, tx, None),
         cancel: CancellationToken::new(),
-    })
+    });
+    (host, store, sid)
 }
 
-fn saved(project: &str) -> Option<plan::Plan> {
-    plan::load(&Vault::open().unwrap(), project).plan
-}
-
-fn release() -> serde_json::Value {
+fn steps() -> serde_json::Value {
     json!({
-        "title": "Release",
-        "phases": ["Now", "Next"],
+        "propose": true,
         "items": [
-            {"id": "names", "title": "Session names", "phase": "Now"},
-            {"id": "panel", "title": "Plan panel", "phase": "Next"},
+            {"title": "Find the stall", "state": "pending"},
+            {"title": "Cache the head", "state": "pending"},
         ],
     })
 }
 
+/// A proposed plan waits for the person's yes; a no or a change request
+/// saves nothing and goes back to the agent.
 #[tokio::test]
-async fn a_new_plan_waits_for_the_persons_yes() {
-    let person = Person::says(&["Not now", "Ship names alone first", "Use this plan"]);
-    let h = host("review-yes", Some(person.clone()));
+async fn a_proposed_plan_waits_for_the_persons_yes() {
+    let person = Person::says(&["Not now", "Drop the cache step", "Use this plan"]);
+    let (h, store, sid) = host("review-yes", Some(person.clone()));
+    let saved = || store.get(&sid).unwrap().plan;
 
-    let (ok, out) = h.call("plan.write", &release()).await;
+    let (ok, out) = h.call("plan.write", &steps()).await;
     assert!(ok, "a no is an answer, not a failure: {out}");
     assert!(
         out.contains("not now") && out.contains("nothing was saved"),
         "{out}"
     );
-    assert!(saved("review-yes").is_none());
+    assert!(saved().is_none());
 
-    let (ok, out) = h.call("plan.write", &release()).await;
+    let (ok, out) = h.call("plan.write", &steps()).await;
     assert!(ok, "{out}");
     assert!(
-        out.contains("\"Ship names alone first\"") && out.contains("call plan.write again"),
+        out.contains("\"Drop the cache step\"") && out.contains("propose: true"),
         "{out}"
     );
-    assert!(saved("review-yes").is_none());
+    assert!(saved().is_none());
 
-    let (ok, out) = h.call("plan.write", &release()).await;
+    let (ok, out) = h.call("plan.write", &steps()).await;
     assert!(ok, "{out}");
-    assert!(
-        out.starts_with("The person approved this plan. Saved"),
-        "{out}"
-    );
-    assert_eq!(saved("review-yes").unwrap().items.len(), 2);
-
+    assert!(out.contains("approved"), "{out}");
+    let plan = saved().expect("saved on yes");
+    assert_eq!(plan.items.len(), 2);
     let asked = person.asked();
     assert_eq!(asked.len(), 3);
-    assert_eq!(
-        asked[0].question,
-        "Start the plan \"Release\" for review-yes?\nNow\n+ Session names\nNext\n+ Plan panel"
+    assert!(
+        asked[0].question.contains(
+            "1. Find the stall
+2. Cache the head"
+        ),
+        "{}",
+        asked[0].question
     );
-    assert_eq!(asked[0].options, vec!["Use this plan", "Not now"]);
+    assert_eq!(asked[0].options, ["Use this plan", "Not now"]);
 }
 
+/// Progress updates are not proposals: they save at once, without asking.
 #[tokio::test]
-async fn progress_is_saved_without_asking_and_new_work_is_asked_for() {
-    let person = Person::says(&["Use this plan", "Use this plan"]);
-    let h = host("review-progress", Some(person.clone()));
-    h.call("plan.write", &release()).await;
-    assert_eq!(person.asked().len(), 1);
-
+async fn a_plain_write_saves_without_asking_and_reads_back() {
+    let person = Person::says(&[]);
+    let (h, store, sid) = host("review-plain", Some(person.clone()));
     let (ok, out) = h
         .call(
             "plan.write",
-            &json!({"items": [{"id": "names", "state": "done", "note": "shipped in 1.3"}]}),
-        )
-        .await;
-    assert!(ok && out.starts_with("Saved"), "{out}");
-    assert_eq!(person.asked().len(), 1, "progress needs no yes");
-    assert_eq!(
-        saved("review-progress")
-            .unwrap()
-            .item("names")
-            .unwrap()
-            .state,
-        PlanState::Done
-    );
-
-    let (ok, out) = h
-        .call(
-            "plan.write",
-            &json!({"project": "review-progress", "items": [{"id": "history", "title": "Plan history", "phase": "Next"}]}),
+            &json!({"items": [{"title": "Find the stall", "state": "done"}, {"title": "Cache the head", "state": "active"}]}),
         )
         .await;
     assert!(ok, "{out}");
-    let asked = person.asked();
-    assert_eq!(asked.len(), 2);
-    assert_eq!(
-        asked[1].question,
-        "Change the plan \"Release\"?\n+ Plan history (Next)"
+    assert!(person.asked().is_empty(), "no question for a plain write");
+    let plan = store.get(&sid).unwrap().plan.unwrap();
+    assert_eq!(plan.items[1].state, StepState::Active);
+    let (ok, read) = h.call("plan.read", &json!({})).await;
+    assert!(ok, "{read}");
+    assert!(
+        read.contains("1 of 2 done") && read.contains("[>] Cache the head"),
+        "{read}"
     );
 }
 
+/// With nobody to ask (a background helper), a proposal saves as written.
 #[tokio::test]
-async fn a_bad_write_fails_before_anyone_is_asked_and_another_project_is_refused() {
-    let person = Person::says(&[]);
-    let h = host("review-bad", Some(person.clone()));
-    let (ok, out) = h
-        .call(
-            "plan.write",
-            &json!({"title": "X", "items": [{"id": "a", "title": "A", "needs": ["ghost"]}]}),
-        )
-        .await;
-    assert!(!ok, "{out}");
-    let (ok, out) = h
-        .call("plan.write", &json!({"project": "elsewhere", "title": "X"}))
-        .await;
-    assert!(!ok && out.contains("project.switch"), "{out}");
-    assert!(person.asked().is_empty());
-}
-
-#[tokio::test]
-async fn with_no_one_to_ask_the_plan_is_saved() {
-    let h = host("review-alone", None);
-    let (ok, out) = h.call("plan.write", &release()).await;
-    assert!(ok && out.starts_with("Saved"), "{out}");
-    assert!(saved("review-alone").is_some());
+async fn with_nobody_to_ask_a_proposal_saves() {
+    let (h, store, sid) = host("review-none", None);
+    let (ok, out) = h.call("plan.write", &steps()).await;
+    assert!(ok, "{out}");
+    assert!(store.get(&sid).unwrap().plan.is_some());
 }

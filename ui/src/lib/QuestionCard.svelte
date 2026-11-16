@@ -112,17 +112,16 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     font-size: var(--fs-md);
     color: var(--text);
   }
   .head {
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    border-bottom: 1px solid var(--line);
+    padding: calc(var(--space) * 3) calc(var(--space) * 4) var(--space);
   }
   .weigh {
     display: flex;
@@ -133,7 +132,6 @@
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     overflow-y: auto;
     list-style: none;
-    border-bottom: 1px solid var(--line);
   }
   .weigh .t-group {
     margin-top: calc(var(--space) * 2);
@@ -163,19 +161,21 @@
     color: var(--muted);
     text-decoration: line-through;
   }
+  /* Options are rows inset in the card, a fill under the pointer: no rules between them. */
   .list {
     display: flex;
     flex-direction: column;
+    padding: 0 var(--space);
   }
   .choice {
     display: flex;
     align-items: flex-start;
     gap: calc(var(--space) * 3);
     width: 100%;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    padding: calc(var(--space) * 2.5) calc(var(--space) * 3);
     background: none;
     border: none;
-    border-bottom: 1px solid var(--line);
+    border-radius: var(--radius-in);
     color: var(--text);
     font: inherit;
     text-align: left;
@@ -247,8 +247,8 @@
     min-height: 56px;
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
     resize: vertical;
-    background: var(--bg);
-    border: 1px solid var(--line);
+    background: var(--fill);
+    border: 1px solid transparent;
     border-radius: var(--radius);
     color: var(--text);
     font: inherit;

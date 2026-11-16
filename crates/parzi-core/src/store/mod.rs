@@ -17,7 +17,8 @@ use cache::{IndexEntry, StoreCache};
 
 pub use cache::io_counts;
 pub use model::{
-    Check, Event, FileTouch, RunCause, RunEndKind, RunOutcome, SessionMeta, SessionStatus, Via,
+    Check, Event, FileTouch, PlanStep, RunCause, RunEndKind, RunOutcome, SessionMeta, SessionPlan,
+    SessionStatus, StepState, Via,
 };
 pub use tree::{cascade_kill_ids, subtree_ids};
 
@@ -88,7 +89,8 @@ impl SessionStore {
             context_limit: 0,
             cwd: String::new(),
             last_run: None,
-            plan_item: None,
+            plan: None,
+            brief: None,
             branch: String::new(),
             effort: String::new(),
             created: now,
@@ -236,14 +238,6 @@ impl SessionStore {
     pub fn set_effort(&self, id: &str, effort: &str) -> Result<()> {
         if self.get(id)?.effort != effort {
             self.update_meta(id, |m| m.effort = effort.to_string())?;
-        }
-        Ok(())
-    }
-
-    pub fn set_plan_item(&self, id: &str, item: Option<&str>) -> Result<()> {
-        let item = item.map(str::trim).filter(|i| !i.is_empty());
-        if self.get(id)?.plan_item.as_deref() != item {
-            self.update_meta(id, |m| m.plan_item = item.map(str::to_string))?;
         }
         Ok(())
     }
@@ -396,6 +390,54 @@ impl SessionStore {
     pub fn set_model(&self, id: &str, model: &str) -> Result<()> {
         self.update_meta(id, |m| {
             m.model = model.to_string();
+            m.updated = Utc::now();
+        })?;
+        self.mark_md_dirty(id);
+        Ok(())
+    }
+
+    /// A draft: work written down for later in a project, with its brief and
+    /// plan. It never runs until something is sent to it.
+    pub fn create_draft(
+        &self,
+        title: &str,
+        project: &str,
+        model: &str,
+        cwd: &str,
+        brief: &str,
+        plan: Option<SessionPlan>,
+    ) -> Result<SessionMeta> {
+        let meta = self.create(title, project, model)?;
+        let (brief, plan) = (
+            brief.trim().to_string(),
+            plan.filter(|p| !p.items.is_empty()),
+        );
+        self.update_meta(&meta.id, |m| {
+            m.status = SessionStatus::Draft;
+            m.cwd = cwd.to_string();
+            m.brief = (!brief.is_empty()).then_some(brief);
+            m.plan = plan;
+        })?;
+        self.mark_md_dirty(&meta.id);
+        self.get(&meta.id)
+    }
+
+    /// Clears a draft's brief once it has been sent.
+    pub fn take_brief(&self, id: &str) -> Result<()> {
+        if self.get(id)?.brief.is_some() {
+            self.update_meta(id, |m| m.brief = None)?;
+        }
+        Ok(())
+    }
+
+    /// Sets the session's plan; an empty list clears it.
+    pub fn set_plan(&self, id: &str, plan: Option<SessionPlan>) -> Result<()> {
+        let plan = plan.filter(|p| !p.items.is_empty());
+        if self.get(id)?.plan == plan {
+            return Ok(());
+        }
+        self.update_meta(id, |m| {
+            m.plan = plan;
             m.updated = Utc::now();
         })?;
         self.mark_md_dirty(id);

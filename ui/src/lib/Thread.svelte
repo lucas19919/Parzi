@@ -11,18 +11,17 @@
   import Viz from "./viz/Viz.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type AgentRequest, type ChatEvent, type PlanQuote, type ProviderStatus, type Question } from "./api";
+  import { api, type AgentRequest, type ChatEvent, type ProviderStatus, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
-  import { splitQuotes } from "./planModel";
+  import { splitQuotes } from "./oldQuotes";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
   import { formatTime } from "./time";
   import { viewImage } from "./imageViewer";
   import ReplyButtons from "./ReplyButtons.svelte";
-  import TaskCard from "./TaskCard.svelte";
   import LiveActivity from "./LiveActivity.svelte";
   import TodoList from "./TodoList.svelte";
-  import { dockedTodos, setTodoDocked } from "./todoDock";
+  import DraftCard from "./DraftCard.svelte";
   import QuestionCard from "./QuestionCard.svelte";
   import ToolPictures, { picturesIn } from "./ToolPictures.svelte";
   import TestCard from "./TestCard.svelte";
@@ -50,7 +49,12 @@
   export let session = "";
   export let liveTodo: unknown = null;
   export let liveArtifacts: { id: string; title: string; artifact_kind: string; version: number; payload: unknown }[] = [];
-  export let todo: unknown = null;
+  /** The session's saved plan (SessionMeta.plan). */
+  export let plan: unknown = null;
+  /** Set when this session is a draft: it has not run yet. */
+  export let draft: { title: string; brief: string } | null = null;
+  export let draftStarting = false;
+  let todo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
   export let request: AgentRequest | null = null;
@@ -65,14 +69,15 @@
   const dispatch = createEventDispatcher<{
     voted: { key: string };
     answered: { key: string; session?: string; text?: string };
-    edited: { text: string; quotes: PlanQuote[] };
+    edited: { text: string };
     forked: void;
+    startDraft: void;
+    removeDraft: void;
     retry: void;
     compact: void;
     reply: { text: string };
-    startTask: { task: { id: string; title: string; brief: string; project?: string }; done: (session: string | null) => void };
     openSession: { id: string };
-    rewind: { nth: number; text: string; quotes: PlanQuote[] };
+    rewind: { nth: number; text: string };
     pickModel: void;
   }>();
 
@@ -108,9 +113,6 @@
     if (before) return `Conversation compacted · was ${k(before)} tokens`;
     return "Conversation compacted";
   }
-  const ERROR_HINT: Record<string, string> = {
-    rate_limit: "Your message is kept. Nothing was lost.",
-  };
 
   function shortErr(message: string): string {
     const cut = message.search(/\s*\{[\s"]*"errorName"|\s*\{"errorName"|\s*\{"code"/);
@@ -236,8 +238,11 @@
     });
     return m;
   })();
+  // Live while the agent writes it, then the plan saved on the session;
+  // the transcript only for sessions from before plans were kept.
   $: todo =
     liveTodo ??
+    plan ??
     [...items].reverse().find((i): i is Extract<typeof i, { kind: "widget" }> => i.kind === "widget" && i.fence === "parzi-todo")?.payload ??
     null;
   $: replyAt = (() => {
@@ -604,6 +609,9 @@ ${e.text}` : e.text;
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="thread-col" on:click={onClick}>
+  {#if draft}
+    <DraftCard title={draft.title} brief={draft.brief} starting={draftStarting} on:start={() => dispatch("startDraft")} on:remove={() => dispatch("removeDraft")} />
+  {/if}
   {#each items as item, i (item.key)}
     {@const fold = folds.before.get(item.key)}
     {@const hidden = shut(item.key, openFolds)}
@@ -628,14 +636,14 @@ ${e.text}` : e.text;
                 <Icon name={copied === item.key ? "check" : "copy"} />
               </button>
             {/if}
-            <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text, quotes: said.quotes })}>
+            <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text })}>
               <Icon name="pencil" />
             </button>
             {#if userNth.has(item.key)}
               <button
                 class="copy"
                 use:tooltip={"Rewind: go on from before this message"}
-                on:click={() => dispatch("rewind", { nth: userNth.get(item.key) ?? 0, text: said.text, quotes: said.quotes })}
+                on:click={() => dispatch("rewind", { nth: userNth.get(item.key) ?? 0, text: said.text })}
               >
                 <Icon name="rewind" />
               </button>
@@ -643,11 +651,11 @@ ${e.text}` : e.text;
             {#if said.text}
               <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
             {:else}
-              <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{q.title}</span></span>{/each}</div>
+              <div class="quotes">{#each said.titles as t, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{t}</span></span>{/each}</div>
             {/if}
           </div>
-          {#if said.text && said.quotes.length}
-            <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{q.title}</span></span>{/each}</div>
+          {#if said.text && said.titles.length}
+            <div class="quotes">{#each said.titles as t, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{t}</span></span>{/each}</div>
           {/if}
           {#if images.length}
             <div class="sent">
@@ -710,14 +718,17 @@ ${e.text}` : e.text;
         </div>
       {:else if item.kind === "error"}
         {@const msg = errLead(item.message)}
+        {@const reset = item.class === "rate_limit" ? resetLine(provider, $board) : ""}
         <div class="turn-error" role="alert" title={whenTitle(item.at)}>
-          <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
+          <div class="err-head">
+            <span class="err-dot" aria-hidden="true" />
+            <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
+            {#if reset}<span class="err-when">{reset.replace(/\.$/, "")}</span>{/if}
+          </div>
           <span class="err-msg">{msg.lead}</span>
           {#if msg.more}
             <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
           {/if}
-          {#if item.class === "rate_limit" && resetLine(provider, $board)}<span class="err-hint">{resetLine(provider, $board)}</span>{/if}
-          {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
           {#if item.key === lastError && !streaming}
             {#if fix || fixWait}
               <div class="err-fix">
@@ -734,8 +745,8 @@ ${e.text}` : e.text;
               <span class="err-hint">Start a new session to go on.</span>
             {:else if item.class === "rate_limit"}
               <div class="err-fix">
-                <button class="btn" on:click={() => dispatch("pickModel")}>Change model</button>
-                <button class="btn" on:click={() => dispatch("retry")}>Try again</button>
+                <button class="btn sm primary" use:tooltip={"Pick another model; it carries on this thread"} on:click={() => dispatch("pickModel")}>Switch model</button>
+                <button class="btn sm" on:click={() => dispatch("retry")}>Try again</button>
               </div>
             {:else if RETRYABLE.has(item.class)}
               <div class="err-fix"><button class="btn" on:click={() => dispatch("retry")}>Try again</button></div>
@@ -743,13 +754,12 @@ ${e.text}` : e.text;
           {/if}
         </div>
       {:else if item.kind === "widget"}
-        {#if item.fence === "parzi-task"}
-          <TaskCard payload={item.payload} on:start={(e) => dispatch("startTask", e.detail)} on:open={(e) => dispatch("openSession", e.detail)} />
-        {:else if item.fence === "parzi-widget"}
+        {#if item.fence === "parzi-widget"}
           <Widget data={item.payload} />
         {:else if item.fence === "viz"}
           <Viz spec={item.payload} />
-        {:else if item.fence !== "parzi-replies" && item.fence !== "parzi-todo"}
+        <!-- parzi-task is an old suggested-session card (drafts replaced it): not shown. -->
+        {:else if item.fence !== "parzi-replies" && item.fence !== "parzi-todo" && item.fence !== "parzi-task"}
           <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
         {/if}
     {:else if item.kind === "artifact"}
@@ -813,7 +823,7 @@ ${e.text}` : e.text;
     {/key}
   {/each}
 
-  {#if todo && !$dockedTodos.has(session)}<TodoList {todo} working={streaming} on:dock={() => setTodoDocked(session, true)} />{/if}
+  {#if todo}<TodoList {todo} working={streaming} />{/if}
   <!-- Folds away rather than vanishing, so the reply above glides the last
        few pixels as the saved message's actions take its place. -->
   {#if streaming}<div class="live-slot" out:foldAway|local><LiveLine text={lineText} tokens={lineTokens} /></div>{/if}
@@ -946,8 +956,9 @@ ${e.text}` : e.text;
     min-width: 0;
     max-width: 100%;
     padding: calc(var(--space) * 4);
-    background: color-mix(in srgb, var(--text) 5%, var(--bg));
-    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     color: var(--text);
     font-size: var(--fs-base);
@@ -1087,7 +1098,9 @@ ${e.text}` : e.text;
     flex-direction: column;
     gap: var(--space);
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     font-size: var(--fs-sm);
   }
@@ -1099,19 +1112,39 @@ ${e.text}` : e.text;
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* A failed turn is a card like the rest: the surface, no red frame. A
+     dot carries the colour; the reset time sits on the title row. */
   .turn-error {
     display: flex;
     flex-direction: column;
     gap: var(--space);
-    padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    background: transparent;
-    border: 1px solid var(--bad);
+    padding: calc(var(--space) * 3);
+    background: var(--surface);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     font-size: var(--fs-sm);
   }
+  .err-head {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+  }
+  .err-dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--bad);
+  }
   .err-class {
+    font-size: var(--fs-md);
     font-weight: 600;
-    color: var(--bad-text);
+  }
+  .err-when {
+    margin-left: auto;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
   .err-msg {
     color: var(--muted);
@@ -1139,8 +1172,11 @@ ${e.text}` : e.text;
   .err-fix {
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 3);
-    margin-top: var(--space);
+    gap: calc(var(--space) * 2);
+    margin-top: calc(var(--space) * 2);
+  }
+  .err-fix .btn.sm {
+    align-self: auto;
   }
 
   .approval {
@@ -1148,8 +1184,9 @@ ${e.text}` : e.text;
     flex-direction: column;
     gap: calc(var(--space) * 3);
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     font-size: var(--fs-md);
     color: var(--text);
@@ -1165,7 +1202,7 @@ ${e.text}` : e.text;
     max-height: 7.5em;
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
     overflow: auto;
-    background: var(--bg);
+    background: var(--fill);
     border-radius: var(--radius);
     color: var(--text);
     white-space: pre-wrap;
@@ -1185,7 +1222,7 @@ ${e.text}` : e.text;
     margin: 0;
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
     overflow: auto;
-    background: var(--bg);
+    background: var(--fill);
     border-radius: var(--radius);
     font-family: var(--mono);
     font-size: var(--fs-xs);
@@ -1225,8 +1262,8 @@ ${e.text}` : e.text;
     flex: 1;
     min-width: 0;
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    background: var(--bg);
-    border: 1px solid var(--line);
+    background: var(--fill);
+    border: 1px solid transparent;
     border-radius: var(--radius);
     color: var(--text);
     font: inherit;

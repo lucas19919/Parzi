@@ -95,7 +95,6 @@ pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
             Ok(_) => continue,
             Err(e) => return fail(e.to_string()),
         };
-        let _plan = parzi_core::plan::lock_if_plan(path);
         if !as_expected(&full, n.get("expect").and_then(Value::as_str)) {
             stale.push(path.to_string());
             continue;
@@ -114,7 +113,6 @@ pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
     {
         let Some(path) = p.as_str() else { continue };
         if let Ok(full) = vault.resolve(path) {
-            let _plan = parzi_core::plan::lock_if_plan(path);
             let expect = expected.and_then(|m| m.get(path)).and_then(Value::as_str);
             if !full.is_file() {
                 continue;

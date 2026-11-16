@@ -5,7 +5,6 @@ import { dropId, enqueue, heldLabel, moveHeld, moveId, putFront, stillWorking, t
 const item = (text: string, extra: Partial<HeldItem> = {}): Omit<HeldItem, "id"> & { id?: string } => ({
   tab: "tab",
   text,
-  quotes: [],
   files: [],
   model: "grok/grok-4.7",
   effort: "medium",
@@ -82,9 +81,8 @@ test("a session that is still working is told apart from any other failure", () 
   assert.equal(stillWorking("run s1 is active; kill it first"), false);
 });
 
-test("a message that is only quoted plan items still has a label", () => {
-  assert.equal(heldLabel({ text: "  ", quotes: [{ title: "Ship the queue" }, { title: "Add a test" }] }), "Ship the queue, Add a test");
-  assert.equal(heldLabel({ text: "Fix the omnibar", quotes: [{ title: "ignored" }] }), "Fix the omnibar");
+test("a queued message is labelled by its text", () => {
+  assert.equal(heldLabel({ text: "  Fix the omnibar " }), "Fix the omnibar");
 });
 
 test("dropping one queued message leaves the rest in order", () => {

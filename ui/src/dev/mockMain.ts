@@ -90,9 +90,9 @@ if (mockQuestion === "plan") {
     kind: "question",
     key: "q1",
     session: "s1",
-    question: 'Change the plan "0.1.28"?\nGoal: A calmer sidebar driven by plans\n~ Short session names (was Session names)\n~ Plan panel waits for names\n- Work view (dropped)\n+ Plan history (Next)\n+ Plan sign-off (Now)',
+    question: "Use this plan for this session?\n\n1. Find where typing stalls\n2. Cache the markdown head\n3. Run the UI tests",
     options: ["Use this plan", "Not now"],
-    details: ["Save it. Agents in this project work from it.", "Nothing is saved. The agent carries on without it."],
+    details: ["Save it as this session's plan and work from it.", "Nothing is saved. The agent carries on without it."],
     multi: false,
   });
 } else if (mockQuestion) {
@@ -113,7 +113,7 @@ await new Promise((r) => setTimeout(r, 50));
 (await import("../lib/toast")).toasts.set([]);
 if (mockLive) {
   const LIVE: [string, string[]][] = [
-    ["s3", ["Editing D:\\Repos\\Parzi\\ui\\src\\lib\\SessionInfo.svelte", "Running `npm run check`", "Reading ui/src/lib/planModel.ts"]],
+    ["s3", ["Editing D:\\Repos\\Parzi\\ui\\src\\lib\\SessionInfo.svelte", "Running `npm run check`", "Reading ui/src/lib/TodoList.svelte"]],
     ["s6", ["Editing ui/src/lib/SessionInfo.svelte", "Running `npm test`"]],
     ["s2", ["Running `cargo test -p parzi-core plan`", "Reading crates/parzi-core/src/plan.rs"]],
   ];

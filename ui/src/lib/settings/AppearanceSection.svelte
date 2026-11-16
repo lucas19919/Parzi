@@ -33,11 +33,6 @@
     { value: "band", label: "Band" },
     { value: "full", label: "Full window" },
   ];
-  const CARDS = [
-    { value: "clear", label: "Clear" },
-    { value: "glass", label: "Glass" },
-    { value: "solid", label: "Solid" },
-  ];
   const COLOR_KEYS = ["stage", "accent", "text"] as const;
   type ColorKey = (typeof COLOR_KEYS)[number] | "panel";
 
@@ -287,12 +282,6 @@
     touch();
   }
 
-  function setCards(v: string) {
-    if (!theme) return;
-    theme.background.cards = v === "glass" || v === "solid" ? v : "clear";
-    touch();
-  }
-
   function setSize(key: "size" | "mono_size", v: string) {
     if (!theme) return;
     theme.font[key] = Number(v);
@@ -405,10 +394,6 @@
           {/each}
           <button class="thumb add" on:click={pickFile} use:tooltip={"Add image"} aria-label="Add image"><Icon name="plus" size={12} /></button>
         </div>
-      </div>
-      <div class="row ctl-row">
-        <span class="row-label">Cards</span>
-        <SegControl label="Cards" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
       </div>
       {#if theme.background.image}
         <div class="row ctl-row">

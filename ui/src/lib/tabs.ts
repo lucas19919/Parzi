@@ -1,4 +1,4 @@
-import type { ComposerMode, PlanQuote } from "./api";
+import type { ComposerMode } from "./api";
 import { readJSON, readStrings, writeJSON } from "./storage.ts";
 
 type TabKind = "session" | "page" | "artifact";
@@ -9,7 +9,6 @@ export interface TabComposerState {
   model: string;
   effort: string;
   attachments: string[];
-  quotes?: PlanQuote[];
   remote?: boolean;
   remoteCwd?: string;
   worktree?: string;
@@ -40,7 +39,8 @@ export function rememberModel(model: string, effort: string) {
 
 export function ensureComposer(c?: Partial<TabComposerState> | null): TabComposerState {
   const full = c as TabComposerState | null | undefined;
-  if (full && Array.isArray(full.attachments) && Array.isArray(full.quotes)) {
+  // Already whole: an attachment list, text and a mode it knows.
+  if (full && Array.isArray(full.attachments) && typeof full.input === "string" && (full.mode === "build" || full.mode === "search")) {
     if (!full.model) Object.assign(full, lastModel());
     return full;
   }
@@ -53,7 +53,6 @@ export function ensureComposer(c?: Partial<TabComposerState> | null): TabCompose
     remote: c?.remote,
     remoteCwd: c?.remoteCwd,
     attachments: Array.isArray(c?.attachments) ? c.attachments : [],
-    quotes: Array.isArray(c?.quotes) ? c.quotes : [],
   };
   if (c) {
     Object.assign(c, next);

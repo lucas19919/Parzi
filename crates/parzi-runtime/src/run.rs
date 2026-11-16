@@ -64,7 +64,6 @@ pub struct EngineRunParts {
     pub seen: usize,
     pub inbox_from: Option<usize>,
     pub(crate) tally: Tally,
-    pub brief: Option<String>,
     pub compact: bool,
 }
 
@@ -75,7 +74,6 @@ pub struct EngineRun {
     cost_seen: AtomicBool,
     usage_seen: AtomicBool,
     est_tokens: std::sync::Mutex<u64>,
-    brief_sent: std::sync::Mutex<Option<String>>,
     captured: std::sync::Mutex<Option<String>>,
     compacted: std::sync::Mutex<Option<(Option<u64>, Option<u64>)>>,
 }
@@ -117,7 +115,6 @@ impl EngineRun {
             cost_seen: AtomicBool::new(false),
             usage_seen: AtomicBool::new(false),
             est_tokens: std::sync::Mutex::new(0),
-            brief_sent: std::sync::Mutex::new(None),
             captured: std::sync::Mutex::new(None),
             compacted: std::sync::Mutex::new(None),
         }
@@ -154,7 +151,7 @@ impl EngineRun {
                 return Ok(());
             }
             match self.turn(&text, false).await {
-                Outcome::Completed => self.brief_seen(),
+                Outcome::Completed => {}
                 Outcome::Interrupted => {
                     self.stopped(None).await;
                     return Ok(());
@@ -415,12 +412,12 @@ impl EngineRun {
     fn opening(&self, prompt: &str) -> String {
         let mut parts = vec![];
         let fresh_session = self.resume.lock().map(|r| r.is_none()).unwrap_or(true);
-        if let Some(b) = self.brief(fresh_session) {
-            parts.push(b);
-        }
         if fresh_session {
             if let Some(h) = self.history(prompt) {
                 parts.push(h);
+            }
+            if let Some(p) = self.plan_note() {
+                parts.push(p);
             }
         }
         for a in self.p.attachments.iter().filter(|a| !a.is_image()) {
@@ -433,24 +430,28 @@ impl EngineRun {
         parts.join("\n\n")
     }
 
-    fn brief(&self, fresh: bool) -> Option<String> {
-        let text = self.p.brief.as_ref()?;
-        let hash = parzi_core::hash::fnv_hex(text.as_bytes());
-        let sid = &self.p.session_id;
-        if !fresh && crate::orchestrator::brief_hash(sid).as_deref() == Some(hash.as_str()) {
-            return None;
-        }
-        if let Ok(mut sent) = self.brief_sent.lock() {
-            *sent = Some(hash);
-        }
-        Some(text.clone())
-    }
-
-    fn brief_seen(&self) {
-        let sent = self.brief_sent.lock().ok().and_then(|mut s| s.take());
-        if let Some(hash) = sent {
-            crate::orchestrator::set_brief_hash(&self.p.session_id, Some(&hash));
-        }
+    /// The session's plan, for an agent that starts on the thread fresh (a
+    /// new agent after a switch, or a lost vendor session): where the work is.
+    fn plan_note(&self) -> Option<String> {
+        let plan = self.p.store.get(&self.p.session_id).ok()?.plan?;
+        let lines: Vec<String> = plan
+            .items
+            .iter()
+            .map(|i| {
+                let mark = match i.state {
+                    parzi_core::store::StepState::Done => "[x]",
+                    parzi_core::store::StepState::Active => "[>]",
+                    parzi_core::store::StepState::Pending => "[ ]",
+                };
+                format!("{mark} {}", i.title)
+            })
+            .collect();
+        Some(format!(
+            "<session-plan>\nThis session's plan so far ({} of {} done). Keep it current with todo.write.\n{}\n</session-plan>",
+            plan.done(),
+            plan.items.len(),
+            lines.join("\n")
+        ))
     }
 
     fn history(&self, prompt: &str) -> Option<String> {
@@ -767,6 +768,10 @@ impl EngineRun {
                             payload: todo.clone(),
                         },
                     );
+                    let _ = self
+                        .p
+                        .store
+                        .set_plan(sid, parzi_core::store::SessionPlan::from_payload(&todo));
                     self.p.sink.emit(RunEvent::Todo { todo });
                 }
                 let _ = self.p.store.append(

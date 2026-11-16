@@ -8,8 +8,8 @@
   import { tooltip } from "./tooltip";
   import type { ArtifactDoc } from "./tabs";
 
-  /** The session's files, in the side bar: a search, the files changed in
-   *  the working tree, and the folder as a tree. A file opens beside the
+  /** The session's files, in the side bar: a search and the folder as a
+   *  tree (what changed lives in the Changes card). A file opens beside the
    *  cards, in the side bar's second column (FileReader). */
   export let folder = "";
   /** The side bar is open: lists only then. */
@@ -21,7 +21,7 @@
 
   let picker: HTMLInputElement | null = null;
 
-  // The project as a tree, its changed files on top, and a search.
+  // The project as a tree, and a search.
   let query = "";
   let files: string[] = [];
   // The folder as a tree: what each opened folder holds, and which are open.
@@ -29,7 +29,6 @@
   let kids: Record<string, Entry[]> = {};
   let open = new Set<string>();
   let treeOf = "";
-  let changed: { path: string; label: string }[] = [];
   let listed = "";
   let listing: ReturnType<typeof setTimeout> | null = null;
 
@@ -68,7 +67,6 @@
     const at = folder;
     if (!at) {
       files = [];
-      changed = [];
       return;
     }
     if (treeOf !== at) {
@@ -77,25 +75,12 @@
       open = new Set();
     }
     const q = query.trim();
-    const [all, git] = await Promise.all([
+    const [all] = await Promise.all([
       q ? api.listFiles(at, q).catch(() => [] as string[]) : Promise.resolve([] as string[]),
-      api.gitStatus(at).catch(() => null),
       load(at),
     ]);
     if (at !== folder) return;
     files = all;
-    // Changed files show relative to the folder when they are inside it.
-    const top = git?.top || at;
-    const inside = norm(at).startsWith(norm(top)) ? norm(at).slice(norm(top).length).replace(/^\//, "") : "";
-    const ql = q.toLowerCase();
-    changed = (git?.files ?? [])
-      .map((rel) => {
-        const path = join(top, rel);
-        const r = rel.replace(/\\/g, "/");
-        const label = inside && r.toLowerCase().startsWith(`${inside}/`) ? r.slice(inside.length + 1) : r;
-        return { path, label };
-      })
-      .filter((f) => !ql || f.label.toLowerCase().includes(ql));
   }
 
   // Lists again when the folder or the search changes, and when the side
@@ -159,19 +144,8 @@
       <Icon name="search" size={12} />
       <input bind:value={query} placeholder="Find a file" aria-label="Find a file in {nameOf(folder)}" spellcheck="false" autocomplete="off" />
     </label>
-    {#if changed.length}
-      <div class="group">Changed</div>
-      {#each changed as f (f.path)}
-        <button class="info-line row" class:on={norm(f.path) === norm(current)} use:tooltip={f.label} on:click={() => openPath(f.path)}>
-          <Icon name="file" size={12} />
-          <span class="info-v">{nameOf(f.label)}</span>
-          {#if dirOf(f.label)}<span class="dir">{dirOf(f.label)}</span>{/if}
-        </button>
-      {/each}
-    {/if}
     {#if query.trim()}
       {#if files.length}
-        {#if changed.length}<div class="group">Matches</div>{/if}
         {#each files as rel (rel)}
           <button class="info-line row" class:on={norm(join(folder, rel)) === norm(current)} use:tooltip={rel} on:click={() => openPath(join(folder, rel))}>
             <Icon name="file" size={12} />
@@ -179,11 +153,10 @@
             {#if dirOf(rel)}<span class="dir">{dirOf(rel)}</span>{/if}
           </button>
         {/each}
-      {:else if !changed.length}
+      {:else}
         <div class="info-line quiet">Nothing matches "{query.trim()}"</div>
       {/if}
     {:else}
-      {#if changed.length}<div class="group">All files</div>{/if}
       {#each tree as r (r.path)}
         <button
           class="info-line row node"
@@ -254,15 +227,6 @@
     color: var(--text);
     font: inherit;
     font-size: var(--fs-sm);
-  }
-  .group {
-    margin-top: calc(var(--space) * 2);
-    color: var(--muted);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-  }
-  .find + .group {
-    margin-top: 0;
   }
   /* A tree row: indented by its depth, a chevron before folders. */
   .node {

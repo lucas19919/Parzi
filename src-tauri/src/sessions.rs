@@ -74,34 +74,9 @@ pub async fn send_message(
     attachments: Option<Vec<String>>,
     mode: Option<String>,
     remote: Option<bool>,
-    quotes: Option<Vec<crate::plans::Quote>>,
     parent: Option<String>,
     worktree: Option<String>,
 ) -> Result<String, String> {
-    let quoted = match quotes.filter(|q| !q.is_empty()) {
-        Some(q) => {
-            let found = tauri::async_runtime::spawn_blocking(move || crate::plans::resolve(&q))
-                .await
-                .map_err(|e| e.to_string())?;
-            if found.is_empty() && prompt.trim().is_empty() {
-                return Err(
-                    "Nothing to send: the quoted plan items are gone from the plan.".into(),
-                );
-            }
-            found
-        }
-        None => vec![],
-    };
-    let name = quoted
-        .first()
-        .filter(|_| session_id.is_none() && crate::plans::named_after_item(&prompt))
-        .map(|(_, item)| item.title.clone());
-    let text = prompt;
-    let prompt = if quoted.is_empty() {
-        text
-    } else {
-        crate::plans::quoted_prompt(&text, &quoted, &cwd)
-    };
     let effort =
         parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
     let attached = {
@@ -121,18 +96,10 @@ pub async fn send_message(
         (None, None) => None,
     };
     if let Some(target) = far_target {
-        let item = quoted.first().map(|(_, i)| i.id.as_str());
-        let id = remote::send(
-            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, item,
+        return remote::send(
+            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode,
         )
-        .await?;
-        if let (Some(title), Some(rid)) = (name, remote_id(&id)) {
-            let renamed = json!({ "id": rid, "title": title });
-            if let Err(e) = remote::call(&state.app, &far, "session.rename", renamed).await {
-                tracing::warn!("session {id} not named after its item: {e}");
-            }
-        }
-        return Ok(id);
+        .await;
     }
     let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
         app: state.app.clone(),
@@ -194,34 +161,7 @@ pub async fn send_message(
             tracing::warn!("side task {sid} not linked to {parent}: {e}");
         }
     }
-    if !quoted.is_empty() {
-        let store = state.orch.store().clone();
-        let (sid, quoted) = (sid.clone(), quoted.clone());
-        let _ =
-            tauri::async_runtime::spawn_blocking(move || link(&store, &sid, &quoted, name)).await;
-    }
     Ok(sid)
-}
-
-fn link(
-    store: &parzi_core::store::SessionStore,
-    sid: &str,
-    quoted: &[(String, parzi_core::plan::PlanItem)],
-    name: Option<String>,
-) {
-    let Ok(meta) = store.get(sid) else {
-        return;
-    };
-    if let Some(item) = crate::plans::link_for(&meta.project, quoted) {
-        if let Err(e) = store.set_plan_item(sid, Some(item)) {
-            tracing::warn!("session {sid} not linked to its plan item: {e}");
-        }
-    }
-    if let Some(title) = name {
-        if let Err(e) = store.set_title(sid, &title) {
-            tracing::warn!("session {sid} not named after its item: {e}");
-        }
-    }
 }
 
 pub(crate) async fn project_for(cwd: &str) -> String {

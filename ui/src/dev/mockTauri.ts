@@ -41,19 +41,25 @@ const session = (id: string, title: string, ago: number, over: Record<string, un
   created: iso(ago + 2 * HOUR),
   updated: iso(ago),
   last_run: null as ReturnType<typeof outcome> | null,
-  plan_item: null as string | null,
+  plan: null as { items: { title: string; state: string }[] } | null,
+  brief: null as string | null,
   branch: "",
   effort: "medium",
   ...over,
 });
 const sessions = [
-  session("s3", "Sidebar cleanup", MIN, { status: "active", plan_item: "sidebar", branch: "plan/sidebar", model: "claude/claude-sonnet-5-5" }),
-  session("s9", "Draw the plan panel", 2 * MIN, { status: "active", plan_item: "panel", branch: "plan/panel" }),
+  session("s20", "Retry flaky sync", 25 * MIN, {
+    status: "draft",
+    brief: "Make the sync retry with backoff when the server drops the connection, after the login fix lands. Keep the retry count in Settings.",
+    plan: { items: [{ title: "Find the sync call", state: "pending" }, { title: "Add backoff", state: "pending" }, { title: "Test with a dropped connection", state: "pending" }] },
+  }),
+  session("s3", "Sidebar cleanup", MIN, { status: "active", branch: "plan/sidebar", model: "claude/claude-sonnet-5-5", plan: { items: [{ title: "Map the cards", state: "done" }, { title: "Merge Running", state: "done" }, { title: "Fold Details", state: "active" }, { title: "Check both themes", state: "pending" }] } }),
+  session("s9", "Draw the plan panel", 2 * MIN, { status: "active", branch: "plan/panel" }),
   session("s10", "Fix the flaky queue test", 40 * MIN, {
     last_run: outcome({ end: "failed", summary: "The test waits on a timer the queue doesn't own; I couldn't make it fail on demand yet.", ended: now - 40 * MIN }),
   }),
   session("s7", "Name sessions in a few words", 55 * MIN, {
-    plan_item: "names",
+   
     branch: "plan/names",
     last_run: outcome({
       summary:
@@ -68,65 +74,29 @@ const sessions = [
       ended: now - 55 * MIN,
     }),
   }),
-  session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }) }),
+  session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }), plan: params.get("plan") === "none" ? null : { items: [{ title: "Find where typing stalls", state: "done" }, { title: "Cache the markdown head", state: "done" }, { title: "Measure autosize once per key", state: "done" }, { title: "Run the UI tests", state: "active" }] } }),
   session("s2", "Lets test something", 3 * MIN, { status: "active", model: "codex/gpt-5" }),
   session("s1a", "Time autosize on long drafts", 2 * MIN, { parent_id: "s1", model: "codex/gpt-5" }),
   session("s1b", "Check the other textareas", 5 * MIN, { parent_id: "s1", last_run: outcome({ summary: "Both other textareas measure once per frame already; nothing to change.", ended: now - 4 * MIN }) }),
   session("s6", "Trim the old panel tabs", 4 * MIN, { status: "active", parent_id: "s3", model: "codex/gpt-5" }),
   session("s5", "Badges from gh pr list", 90 * MIN, {
-    plan_item: "prs",
+   
     branch: "plan/prs",
     last_run: outcome({ summary: "PR badges read `gh pr list`; the desk caches it for a minute.", checks: [{ cmd: "cargo test --bin parzi-app", ok: true }], ended: now - 90 * MIN }),
   }),
-  session("s8", "Strip the Work view", 3 * HOUR, { status: "done", plan_item: "strip", branch: "plan/strip", last_run: outcome({ ended: now - 3 * HOUR }) }),
-  session("s11", "Store run outcomes on sessions", 5 * HOUR, { plan_item: "outcomes", last_run: outcome({ ended: now - 5 * HOUR }) }),
+  session("s8", "Strip the Work view", 3 * HOUR, { status: "done", branch: "plan/strip", last_run: outcome({ ended: now - 3 * HOUR }) }),
+  session("s11", "Store run outcomes on sessions", 5 * HOUR, { last_run: outcome({ ended: now - 5 * HOUR }) }),
   session("s4", "Draft release notes", 6 * HOUR, { project: "", model: "opencode", status: "done" }),
   session("r:a1", "Update outdated crates in memory-ai", 8 * HOUR, { project: "memory-ai" }),
   session("r:a2", "Bump them and run the tests", 7 * HOUR, { project: "memory-ai", parent_id: "r:a1", status: "active", model: "claude/claude-sonnet-5-5" }),
 ];
 
-const item = (id: string, title: string, over: Record<string, unknown> = {}) => ({
-  id,
-  title,
-  detail: "",
-  phase: "Now",
-  needs: [] as string[],
-  state: "active",
-  branch: `plan/${id}`,
-  note: "",
-  ...over,
-});
-const parziPlan = {
-  version: 1,
-  title: "0.1.28",
-  goal: "A calmer sidebar driven by plans",
-  phases: ["Now", "Next"],
-  items: [
-    item("names", "Session names", { detail: "Name sessions in 3 to 5 words, and let agents rename their own session in the first turn." }),
-    item("panel", "Plan panel", { detail: "Show the project's plan in the right panel: phases, live states, needs as connectors.", needs: ["strip"] }),
-    item("sidebar", "Sidebar cleanup", { detail: "One panel instead of tabs: the plan, then what else runs.", needs: ["names"] }),
-    item("prs", "PR badges", { detail: "Read PRs with gh and badge the items whose branch has one.", needs: ["names"], note: "Keep it to one gh call a minute." }),
-    item("quotes", "Quote chips", { detail: "Click an item to quote it into the composer.", branch: "" }),
-    item("outcomes", "Run outcomes on sessions", { state: "done", branch: "" }),
-    item("strip", "Strip the Work view", { detail: "Remove the goals, the Work tab and the ledger." }),
-    item("widgets", "Movable Home widgets", { phase: "Next", state: "planned", branch: "", needs: ["panel", "quotes"], detail: "Drag Home's cards into the order you want." }),
-    item("tasks", "Task tools in the panel", { phase: "Next", state: "dropped", branch: "", note: "The plan replaces them." }),
-  ],
-  updated: now - 20 * MIN,
-  by: "s9",
-};
 const prs = [
   { number: 42, title: "Name sessions from the prompt, and let agents rename them", url: "https://github.com/lucas19919/Parzi/pull/42", head: "plan/names", state: "open", draft: false, checks: "pass" },
   { number: 44, title: "PR badges on plan items", url: "https://github.com/lucas19919/Parzi/pull/44", head: "plan/prs", state: "open", draft: false, checks: "fail" },
   { number: 39, title: "Remove the Work view", url: "https://github.com/lucas19919/Parzi/pull/39", head: "plan/strip", state: "merged", draft: false, checks: "pass" },
   { number: 31, title: "Old experiment", url: "https://github.com/lucas19919/Parzi/pull/31", head: "try/webgpu", state: "closed", draft: false, checks: "none" },
 ];
-const planView = (project: string) => ({
-  project,
-  path: `projects/${project}/plan.md`,
-  plan: project === "parzi" && params.get("plan") !== "none" ? parziPlan : null,
-  error: null,
-});
 
 const ANSWER = [
   "**Typing stalls because three things run on every keystroke; caching them takes a key from 38 ms to 4 ms.** [1](https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserver) [2](https://svelte.dev/docs/svelte/$derived)",
@@ -335,6 +305,12 @@ function transcript() {
   }
   // ?stream=1 saves what it streamed, as the engine would at turn end.
   for (const e of (globalThis as { __mockSaved?: unknown[] }).__mockSaved ?? []) out.push(e);
+  // ?error=rate_limit (or any error class) ends the thread on a failed turn.
+  const err = params.get("error");
+  if (err) {
+    out.push({ kind: "user", text: "Go on with the parser." });
+    out.push({ kind: "error", class: err, message: "You've hit your 5-hour limit · resets 2:30pm (Europe/Berlin) (HTTP 429)" });
+  }
   return out;
 }
 
@@ -421,11 +397,13 @@ const browserPrefs = {
 };
 
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-  plan_view: (a) => planView(String(a.project ?? "")),
-  plan_prs: () => (params.get("plan") === "none" ? [] : prs),
+  branch_prs: () => prs,
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,
-  get_thread: (a) => [sessions.find((s) => s.id === a.id) ?? sessions[0], transcript()],
+  get_thread: (a) => {
+    const s = sessions.find((x) => x.id === a.id) ?? sessions[0];
+    return [s, s.status === "draft" ? [] : transcript()];
+  },
   provider_statuses: () => board,
   refresh_providers: () => board,
   get_config: () => structuredClone(config),
@@ -528,7 +506,9 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
   read_text_file: (a) => `# ${String(a.path).split(/[\\/]/).pop()}\n\nA file for the mock backend. See [the sibling](./sibling.md), main.rs and github.com/parzi.\n`,
   git_branch: () => "main",
-  git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600, top: "D:\\Repos\\Parzi", files: ["ui/src/lib/FilePanel.svelte", "src-tauri/src/files.rs", "CHANGELOG.md", "docs/notes.md"] }),
+  git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600, top: "D:\\Repos\\Parzi", files: ["ui/src/lib/FilePanel.svelte", "src-tauri/src/files.rs", "CHANGELOG.md", "docs/notes.md"], stats: [{ path: "ui/src/lib/FilePanel.svelte", added: 160, removed: 41 }, { path: "src-tauri/src/files.rs", added: 48, removed: 16 }, { path: "CHANGELOG.md", added: 6, removed: 0 }] }),
+  git_diff: (a) => `diff --git a/${a.path} b/${a.path}\n--- a/${a.path}\n+++ b/${a.path}\n@@ -1,3 +1,4 @@\n context line\n-old line\n+new line\n+another new line\n`,
+  url_listening: () => true,
   list_dir: (a) => {
     const at = String(a.path).replace(/\\/g, "/");
     const tree: Record<string, { name: string; dir: boolean }[]> = {

@@ -6,7 +6,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onResync, onRunEvent,
-    type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
+    type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import { deskAnswer, downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
   import { defineActions, describeActions, runAction, type AppAction } from "./lib/actions";
@@ -21,7 +21,6 @@
   import SessionInfo from "./lib/SessionInfo.svelte";
   import FileReader, { FILE_MAX, FILE_MIN, fileDoc as diskDoc, imageDoc, isImagePath } from "./lib/FileReader.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
-  import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
   import PageView from "./lib/PageView.svelte";
   import ManagerView from "./lib/ManagerView.svelte";
@@ -40,7 +39,7 @@
   import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
-  import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
+  import { splitQuotes } from "./lib/oldQuotes";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { freshNotice, notifyLevel, notifySounds } from "./lib/notifyPrefs";
   import { effortsFor, nameOf } from "./lib/providerRows";
@@ -53,7 +52,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
-  import { watchPlan } from "./lib/planStore";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -103,7 +101,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let live = "";
   let liveReasoning = "";
   let liveTodo: unknown = null;
-  let threadTodo: unknown = null;
   let liveArtifacts: Extract<UiEvent, { kind: "artifact" }>[] = [];
   let liveTools: LiveTool[] = [];
   let pending = "";
@@ -125,7 +122,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: heldRows = (tab.kind === "session" && shown ? held[shown] ?? [] : []).map((item) => ({
     id: item.id,
     text: heldLabel(item),
-    detail: [item.files.length ? `${item.files.length} file${item.files.length === 1 ? "" : "s"}` : "", item.quotes.length ? `${item.quotes.length} quote${item.quotes.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
+    detail: item.files.length ? `${item.files.length} file${item.files.length === 1 ? "" : "s"}` : "",
   }));
   $: queueIsPaused = !!shown && queuePaused.has(shown);
   const inflight = new Set<string>();
@@ -168,15 +165,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   function fillDraft(t: Tab) {
     const c = t.composer;
-    if (t.kind !== "session" || c.input.trim() || c.attachments.length || c.quotes?.length) return;
+    if (t.kind !== "session" || c.input.trim() || c.attachments.length) return;
     const d = drafts[draftKey(t)];
     if (!d) return;
     c.input = d.input;
-    c.quotes = [...d.quotes].slice(0, MAX_QUOTES);
     c.attachments = [...d.attachments];
   }
 
-  function keepDraft(t: Tab | undefined, d: { input: string; quotes: PlanQuote[]; attachments: string[] }) {
+  function keepDraft(t: Tab | undefined, d: { input: string; attachments: string[] }) {
     if (t?.kind !== "session") return;
     const key = draftKey(t);
     if (sameDraft(drafts[key], d)) return;
@@ -185,12 +181,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function forgetDraft(t: Tab) {
-    keepDraft(t, { input: "", quotes: [], attachments: [] });
+    keepDraft(t, { input: "", attachments: [] });
   }
 
   $: keepDraft(
     tabs.find((t) => t.id === compFor && t.composer === comp),
-    { input: comp.input, quotes: comp.quotes ?? [], attachments: comp.attachments },
+    { input: comp.input, attachments: comp.attachments },
   );
 
   function hostSessionOf(id: string): string | null {
@@ -237,9 +233,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (w >= FILE_MIN && w <= FILE_MAX && w !== 264) fileWidth = w;
   } catch {}
   let innerWidth = 1280;
-  let planForced: Set<string> = new Set();
-  $: planForcedNow = !!shown && planForced.has(shown);
-  let planInline = false;
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let dockHeight = 90;
@@ -424,9 +417,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else openPageNext(last.url);
   }
 
-  $: planProject = (hasSession ? meta?.project : "") || sideMeta?.project || project?.slug || "";
-  $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
-  $: if (tab.kind === "session") watchPlan(planProject, folder);
+  $: sessionProject = (hasSession ? meta?.project : "") || sideMeta?.project || project?.slug || "";
+  $: projectTitle = project && project.slug.toLowerCase() === sessionProject.toLowerCase() ? project.title : "";
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
   // Browser tabs get the side column on their own: there is not always a
   // session behind a page, so the column shows the current context instead
@@ -436,7 +428,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: pageInfoShown = tab.kind === "page" && infoOpen && innerWidth >= 900;
   $: sideId = pageOwner ?? shown ?? "";
   $: sideMeta = pageOwnerMeta ?? meta;
-  $: if (tab.kind === "page") watchPlan(sideMeta?.project ?? "", sideMeta?.cwd ?? "");
   // A file open in the side bar takes its second column, beside the cards.
   // It gives way before the thread does: never wider than leaves the
   // thread 480px.
@@ -467,49 +458,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     try {
       localStorage.setItem("parzi.file.width", String(fileWidth));
     } catch {}
-  }
-
-  function showPlan() {
-    if (!hasSession) {
-      if (planProject) void pinNote(`projects/${planProject}/plan.md`);
-      else toast("Pick a project to see its plan");
-      return;
-    }
-    if (!shown) return;
-    const next = new Set(planForced);
-    if (next.has(shown)) next.delete(shown);
-    else next.add(shown);
-    planForced = next;
-    if (next.has(shown)) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
-  }
-
-  /** Opens the plan in a session's thread, without toggling it shut. */
-  function revealPlan(session: string) {
-    if (planForced.has(session)) return;
-    planForced = new Set(planForced).add(session);
-    if (session === shown) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
-  }
-
-  function hidePlan() {
-    if (!shown) return;
-    const next = new Set(planForced);
-    next.delete(shown);
-    planForced = next;
-  }
-
-  function quoteItem(q: PlanQuote) {
-    const list = comp.quotes ?? [];
-    const next = addQuote(list, q);
-    if (next === list && list.length >= MAX_QUOTES) toast(`A message quotes at most ${MAX_QUOTES} plan items`);
-    comp.quotes = next;
-    if (comp.mode === "search") comp.mode = "build";
-    comp = comp;
-    omnibar?.focus();
-  }
-
-  function unquoteItem(q: PlanQuote) {
-    comp.quotes = (comp.quotes ?? []).filter((x) => !(x.id === q.id && sameSlug(x.project, q.project)));
-    comp = comp;
   }
 
   async function renamed(id: string) {
@@ -1014,14 +962,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const target = tab;
     const draft = target.composer;
     const prompt = draft.input.trim();
-    const quotes = draft.mode === "search" ? [] : [...(draft.quotes ?? [])];
-    if (!prompt && !quotes.length) return;
+    if (!prompt) return;
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
       return;
     }
-    if (!quotes.length && isExplicitUrl(prompt)) {
+    if (isExplicitUrl(prompt)) {
       draft.input = "";
       comp = comp;
       browse(toAddress(prompt));
@@ -1030,11 +977,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const files = [...draft.attachments];
     const agentOf = (model: string) => model.split("/")[0];
     const sessionModel = threads.find((t) => t.id === target.sessionId)?.model ?? "";
+    // Another agent takes the same thread over (parzi-runtime route): the
+    // session and its history stay, the new agent is handed the conversation.
     const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
-    const fresh = !target.sessionId || otherAgent;
+    const fresh = !target.sessionId;
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
     if (!fresh && target.sessionId && (running.has(target.sessionId) || inflight.has(target.sessionId))) {
-      const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
+      const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
       if (!queued.ok) {
         toast(`The queue holds ${MAX_HELD} messages`);
         return;
@@ -1042,24 +991,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       held = queued.queue;
       draft.input = "";
       draft.attachments = [];
-      draft.quotes = [];
       comp = comp;
       return;
     }
     if (sendingTabs.has(target.id)) return;
-    if (target.sessionId && otherAgent) {
-      // A thread stays with the agent it started on, so switching agents
-      // forks a new session and the tab follows it: the old history is not
-      // deleted, it just lives on the earlier session. Say so every time
-      // (not deduped) with a way back, or it reads as cleared history.
-      const earlier = target.sessionId;
-      const earlierAgent = agentOf(sessionModel);
-      keyedToast(`agent-switch-${target.id}`, `New session on ${nameOf(agentOf(draft.model))}: the earlier thread stays on ${nameOf(earlierAgent)}`, {
-        action: { label: "Open earlier thread", run: () => openSession(earlier) },
-        ms: 12000,
-      });
-    }
-    const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
+    const wasDraft = threads.find((t) => t.id === target.sessionId)?.status === "draft";
+    if (target.sessionId && otherAgent && !wasDraft) toast(`${nameOf(agentOf(draft.model))} takes over this thread, with the conversation so far`);
+    const optimistic: ChatEvent = { kind: "user", text: prompt };
     sendingTabs = new Set(sendingTabs).add(target.id);
     if (!fresh && target.sessionId) {
       inflight.add(target.sessionId);
@@ -1068,7 +1006,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     forgetDraft(target);
     draft.input = "";
     draft.attachments = [];
-    draft.quotes = [];
     comp = comp;
     events = [...events, optimistic];
     void scrollToBottom(true);
@@ -1082,7 +1019,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         attachments: files,
         mode: permission,
         remote: remoteOn,
-        quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
         worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
       });
       if (target.sessionId) inflight.delete(target.sessionId);
@@ -1096,9 +1032,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       rememberModel(draft.model, draft.effort);
       draft.input = "";
       draft.attachments = [];
-      draft.quotes = [];
       comp = comp;
-      if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || quotes[0]?.title || "New session").slice(0, 40) });
+      if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || "New session").slice(0, 40) });
       else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
         shown = sid;
@@ -1113,11 +1048,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
       events = events.filter((ev) => ev !== optimistic);
       if (target.sessionId && !fresh && stillWorking(e)) {
-        const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
+        const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
         if (!queued.ok) {
           draft.input = prompt;
           draft.attachments = files;
-          draft.quotes = quotes;
           comp = comp;
           toast(`The queue holds ${MAX_HELD} messages`);
         } else {
@@ -1128,7 +1062,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
       draft.input = prompt;
       draft.attachments = files;
-      draft.quotes = quotes;
       comp = comp;
       toastError(e);
     } finally {
@@ -1144,7 +1077,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const c = t.composer;
     c.input = [h.text, c.input.trim()].filter(Boolean).join("\n\n");
     c.attachments = [...new Set([...h.files, ...c.attachments])];
-    c.quotes = [...h.quotes, ...(c.quotes ?? [])].slice(0, MAX_QUOTES);
     if (t.id === activeId) {
       syncComposer(t);
       comp = comp;
@@ -1172,7 +1104,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     inflight.add(sid);
     markLive(sid);
     if (sid === shown) await reload();
-    const optimistic: ChatEvent = { kind: "user", text: [h.text, ...h.quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
+    const optimistic: ChatEvent = { kind: "user", text: h.text };
     if (sid === shown) {
       events = [...events, optimistic];
       void scrollToBottom(true);
@@ -1187,7 +1119,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         attachments: h.files,
         mode: h.mode,
         remote: h.remote,
-        quotes: h.quotes.map((q) => ({ project: q.project, id: q.id })),
       });
       inflight.delete(sid);
       if (id !== sid) {
@@ -1336,7 +1267,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const parent = shown;
     if (!parent || tab.kind !== "session" || !tab.sessionId) return;
     let text = "";
-    let quotes: PlanQuote[] = [];
     let files: string[] = [];
     let taken: HeldItem | undefined;
     if (fromHeld) {
@@ -1344,15 +1274,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       held = next.queue;
       taken = next.item;
       if (!taken) return;
-      ({ text, quotes, files } = taken);
+      ({ text, files } = taken);
     } else {
       text = comp.input.trim();
-      quotes = [...(comp.quotes ?? [])];
       files = [...comp.attachments];
-      if (!text && !quotes.length) return;
+      if (!text) return;
       comp.input = "";
       comp.attachments = [];
-      comp.quotes = [];
       comp = comp;
     }
     const giveBack = () => {
@@ -1360,7 +1288,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       else {
         comp.input = [text, comp.input].filter(Boolean).join("\n\n");
         comp.attachments = [...files, ...comp.attachments];
-        comp.quotes = [...quotes, ...(comp.quotes ?? [])].slice(0, MAX_QUOTES);
         comp = comp;
       }
     };
@@ -1371,14 +1298,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     try {
-      await launchSide(parent, text, quotes, files);
+      await launchSide(parent, text, files);
     } catch (e) {
       giveBack();
       toastError(e);
     }
   }
 
-  async function launchSide(parent: string, text: string, quotes: PlanQuote[], files: string[]): Promise<string> {
+  async function launchSide(parent: string, text: string, files: string[]): Promise<string> {
     const aimed = await aimAt(text);
     const where = aimed.folder || (remoteOn ? (meta?.cwd ?? "") : folder);
     const prompt = [aimed.text, sideBrief(meta?.title || tab.title, events, aimed.title)].filter(Boolean).join("\n\n");
@@ -1391,7 +1318,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       attachments: files,
       mode: permission,
       remote: remoteOn,
-      quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
       parent,
     });
     running = new Set(running).add(id);
@@ -1401,38 +1327,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return id;
   }
 
-  async function startTask(task: { title: string; brief: string; project?: string }, done: (session: string | null) => void) {
-    const parent = shown;
-    if (!parent || !comp.model) {
-      if (!comp.model) {
-        toast("Pick a model first");
-        omnibar?.openModels();
-      }
-      done(null);
-      return;
-    }
-    const aim = task.project ? `@${task.project.replace(/\s+/g, "-")} ` : "";
-    try {
-      done(await launchSide(parent, `${aim}${task.title}\n\n${task.brief}`, [], []));
-    } catch (e) {
-      toastError(e);
-      done(null);
-    }
-  }
-
   async function sendReply(text: string) {
     if (sending || streaming) return;
     const draft = tab.composer;
-    const kept = { input: draft.input, attachments: [...draft.attachments], quotes: [...(draft.quotes ?? [])] };
+    const kept = { input: draft.input, attachments: [...draft.attachments] };
     draft.input = text;
     draft.attachments = [];
-    draft.quotes = [];
     comp = comp;
     await send();
-    if (kept.input || kept.attachments.length || kept.quotes.length) {
+    if (kept.input || kept.attachments.length) {
       draft.input = kept.input;
       draft.attachments = kept.attachments;
-      draft.quotes = kept.quotes;
       comp = comp;
     }
   }
@@ -1467,7 +1372,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       .join("\n");
   }
 
-  async function rewindTo(nth: number, text: string, quotes: PlanQuote[]) {
+  async function rewindTo(nth: number, text: string) {
     const from = shown;
     const target = tab;
     if (!from || target.kind !== "session") return;
@@ -1480,7 +1385,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         await reload();
       }
       comp.input = text;
-      comp.quotes = quotes.slice(0, MAX_QUOTES);
       comp = comp;
       omnibar?.focus();
       void refreshThreads();
@@ -1507,6 +1411,28 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     ].join("\n");
     const url = `https://github.com/lucas19919/Parzi/issues/new?body=${encodeURIComponent(body)}`;
     await api.openConfirmedUrl(url).catch(toastError);
+  }
+
+  // "Change model" on a failed turn (a usage limit, say): the model picked
+  // next resends the last message on the same thread, so nothing is retyped.
+  let retryPick: { tab: string; from: string } | null = null;
+  function pickAndRetry() {
+    retryPick = { tab: activeId, from: comp.model };
+    omnibar?.openModels();
+  }
+  $: if (retryPick && (retryPick.tab !== activeId || streaming)) retryPick = null;
+  $: if (retryPick && comp.model && comp.model !== retryPick.from) {
+    retryPick = null;
+    retryLast();
+  }
+
+  // Start on a draft: its brief goes as the first message, on the model in
+  // the composer; the plan it carries stays on the session.
+  function startDraft() {
+    if (!meta || meta.status !== "draft" || sending) return;
+    comp.input = meta.brief ?? comp.input;
+    comp = comp;
+    void send();
   }
 
   function retryLast() {
@@ -1914,8 +1840,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       { id: "sidebar.toggle", title: "Show or hide the session's side column", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleInfo(onOff(a.open, infoShown)); return infoOpen ? "The side column is open." : "The side column is hidden."; } },
       { id: "files.open", title: "Open a file in the side bar, beside the cards", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFileInCard(String(a.path)); return `Opened ${a.path}.`; } },
       { id: "files.close", title: "Close the file open in the side bar", run: () => { closeFile(); return "Closed the file."; } },
-      { id: "plan.show", title: "Show the project's plan in the thread", run: () => void showPlan() },
-      { id: "plan.hide", title: "Hide the plan", run: () => void hidePlan() },
       { id: "window.fullscreen", title: "Turn full screen on or off", args: [{ name: "on", type: "boolean" }], run: async (a) => { await setImmersive(onOff(a.on, immersive)); return immersive ? "Full screen is on." : "Full screen is off."; } },
       { id: "composer.model", title: "Pick the model for the next message", args: [{ name: "model", type: "string", required: true, choices: () => $board.flatMap((b) => b.models.map((m) => `${b.provider}/${m.id}`)) }], run: (a) => { comp.model = String(a.model); comp = comp; return `The next message goes to ${a.model}.`; } },
       { id: "composer.effort", title: "Set the reasoning effort", args: [{ name: "effort", type: "string", required: true, choices: () => effortsFor(comp.model, $board) }], run: (a) => { comp.effort = String(a.effort); comp = comp; return `Effort is ${a.effort}.`; } },
@@ -1937,7 +1861,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         tabs = placeTab(tabs, t, activeId);
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
-    else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
     else if (cmd.what === "home") newSession();
   }
 
@@ -2072,7 +1995,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
 <div class="shell" class:on-home={onHome} class:over-art={overArt} class:art-shift={artShift}>
-  <DefaultArt bg={showWallpaper ? bg : ""} />
+  <!-- Home shows the picture; sessions and covers keep it, dimmed. -->
+  <DefaultArt bg={tab.kind === "session" ? bg : ""} dim={!showWallpaper} />
 
   {#if !immersive}
     <TopBar
@@ -2137,8 +2061,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           {running}
           {approvals}
           questions={asks}
-          {planInline}
-          todo={null}
           width={infoWidth}
           open={pageInfoShown}
           on:resize={resizeInfo}
@@ -2149,7 +2071,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           on:openSession={(e) => openSession(e.detail.id)}
           on:openUrl={(e) => openPage(e.detail.url)}
           on:compact={compact}
-          on:plan={showPlan}
           reading={readerShown && fileDoc ? fileDoc.id : ""}
           on:openFile={(e) => putFile(e.detail)}
         />
@@ -2198,7 +2119,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   {liveReasoning}
                 {liveTodo}
                   {liveArtifacts}
-                  bind:todo={threadTodo}
+                  plan={meta?.plan ?? null}
+                  draft={meta?.status === "draft" ? { title: meta.title, brief: meta.brief ?? "" } : null}
+                  draftStarting={sending}
+                  on:startDraft={startDraft}
+                  on:removeDraft={() => shown && void remove(shown)}
                   {liveTools}
                   {liveHelpers}
                   {approval}
@@ -2212,14 +2137,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
                   sessionTitle={titleOf}
                   on:voted={(e) => settle(e.detail.key)}
-                  on:answered={(e) => {
-                    settle(e.detail.key);
-                    // An accepted plan opens in the thread (plan_tools.rs USE_PLAN).
-                    if (e.detail.text === "Use this plan" && e.detail.session) revealPlan(e.detail.session);
-                  }}
+                  on:answered={(e) => settle(e.detail.key)}
                   on:edited={(e) => {
                     comp.input = e.detail.text;
-                    if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
                     comp = comp;
                     omnibar?.focus();
                     toast("Loaded into composer. Edit and send.");
@@ -2228,26 +2148,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   on:retry={retryLast}
                   on:compact={compact}
                   on:reply={(e) => void sendReply(e.detail.text)}
-                on:rewind={(e) => void rewindTo(e.detail.nth, e.detail.text, e.detail.quotes)}
-                on:pickModel={() => omnibar?.openModels()}
-                  on:startTask={(e) => void startTask(e.detail.task, e.detail.done)}
+                on:rewind={(e) => void rewindTo(e.detail.nth, e.detail.text)}
+                on:pickModel={pickAndRetry}
                   on:openSession={(e) => openSession(e.detail.id)}
-                >
-                  <PlanInline
-                    project={planProject}
-                    session={shown ?? ""}
-                    {threads}
-                    {running}
-                    {approvals}
-                    questions={asks}
-                    quotes={comp.quotes ?? []}
-                    force={planForcedNow}
-                    bind:visible={planInline}
-                    on:quote={(e) => quoteItem(e.detail)}
-                    on:unquote={(e) => unquoteItem(e.detail)}
-                    on:close={hidePlan}
-                  />
-                </Thread>
+                />
               </div>
             </div>
             {/if}
@@ -2261,8 +2165,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           {/if}
           <SessionInfo
             session={shown ?? ""}
-            project={planProject}
-            projectTitle={planTitle}
+            project={sessionProject}
+            projectTitle={projectTitle}
             {folder}
             {branch}
             remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
@@ -2274,9 +2178,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {running}
             {approvals}
             questions={asks}
-            {planInline}
-            todo={threadTodo}
-            width={infoWidth}
+              width={infoWidth}
             open={infoShown}
             on:resize={resizeInfo}
             tokensIn={meta?.tokens_in ?? 0}
@@ -2286,8 +2188,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             on:openSession={(e) => openSession(e.detail.id)}
             on:openUrl={(e) => openPage(e.detail.url)}
             on:compact={compact}
-            on:plan={showPlan}
-            reading={readerShown && fileDoc ? fileDoc.id : ""}
+              reading={readerShown && fileDoc ? fileDoc.id : ""}
             on:openFile={(e) => putFile(e.detail)}
           />
         </div>
@@ -2309,7 +2210,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           {policy}
           bind:mode={comp.mode}
           bind:attachments={comp.attachments}
-          bind:quotes={comp.quotes}
           bind:worktree={comp.worktree}
           {folder}
           folderLocked={!!tab.sessionId}
@@ -2408,7 +2308,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     border-radius: 0;
   }
   /* The card look (clear, glass or solid) is one set of values for all of
-     Parzi (theme.css, --card-fill, --card-edge, --card-blur); on Home it
+     Parzi (theme.css, --surface and --blur); on Home it
      eases as it changes. */
   .on-home :global(:is(.info .card, .reader .card, .ob .box)) {
     transition:
@@ -2427,18 +2327,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       -webkit-backdrop-filter 480ms var(--ease-even),
       transform 160ms ease;
   }
-  /* Buttons on glass are one surface with it: a faint wash of the text
-     colour that lets the picture through, no grey fill and no outline. */
-  :global(html[data-art-cards="glass"]) :global(.info .card .btn:not(.primary)),
-  :global(html[data-art-cards="glass"]) :global(.reader .card .btn:not(.primary)) {
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    border-color: transparent;
-  }
-  :global(html[data-art-cards="glass"]) :global(.info .card .btn:not(.primary):hover:not(:disabled)),
-  :global(html[data-art-cards="glass"]) :global(.reader .card .btn:not(.primary):hover:not(:disabled)) {
-    background: color-mix(in srgb, var(--text) 14%, transparent);
-    border-color: transparent;
-  }
   /* Light theme, picture filling the window: Home is a dark scene (the
      theme marks data-scene). Over the picture the theme's colours swap,
      its text colour the ground and its ground the text, so the title bar
@@ -2452,7 +2340,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     --text: var(--scene-text);
     --accent: var(--scene-accent);
   }
-  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+  :global(html[data-scene="dark"]) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     --bg: var(--scene-text);
     --text: var(--scene-bg);
     --accent: var(--theme-accent);
@@ -2460,13 +2348,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* The colours made from the pair, made again wherever it changes. */
   :global(html[data-scene="dark"]) .over-art,
-  :global(html[data-scene="dark"]:not([data-art-cards="clear"])) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+  :global(html[data-scene="dark"]) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
     --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
     --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
     --line: color-mix(in srgb, var(--text) 12%, var(--bg));
     --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
     --hover: color-mix(in srgb, var(--text) 6%, transparent);
+    --fill: color-mix(in srgb, var(--text) 8%, transparent);
     --selected: color-mix(in srgb, var(--text) 10%, transparent);
+    --fill-hover: color-mix(in srgb, var(--text) 14%, transparent);
+    --surface: color-mix(in srgb, var(--panel) 52%, transparent);
+    --surface-raised: color-mix(in srgb, var(--panel) 72%, transparent);
     --link: color-mix(in srgb, var(--accent) 70%, var(--text));
     --ok-text: color-mix(in srgb, var(--ok) 40%, var(--text));
     --warn-text: color-mix(in srgb, var(--warn) 35%, var(--text));
@@ -2479,10 +2371,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   /* Light glass holds more of its own colour than dark glass: at half
      strength it turns grey over a dimmed picture. */
-  :global(html[data-scene="dark"][data-art-cards="glass"]) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
-    background: color-mix(in srgb, var(--panel) 80%, transparent);
-    -webkit-backdrop-filter: blur(24px) saturate(1.4);
-    backdrop-filter: blur(24px) saturate(1.4);
+  :global(html[data-scene="dark"]) .over-art :global(:is(.info .card, .reader .card, .ob .box, .tabs .tab.active, .tabs .tab:hover, .panel-btn.active, .panel-btn:hover)) {
+    --surface: color-mix(in srgb, var(--panel) 80%, transparent);
   }
   /* Light theme, text straight on the picture: the full text colour instead
      of grey, with a hairline edge in the page colour, not a glow. */
@@ -2497,32 +2387,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html[data-tone="light"]) .over-art :global(.topbar svg) {
     filter: drop-shadow(0 0 1px color-mix(in srgb, var(--bg) 70%, transparent));
   }
-  /* Tabs over the wallpaper: a 1px ring vanishes into a busy picture, so
-     the open tab, the side-column toggles when on, and either under the
-     pointer are frosted glass (solid panel when the cards are solid), with
-     a ring light enough to catch the edge. */
+  /* Tabs over the picture: the open tab and the side-column toggle when
+     on are the cards' glass; under the pointer, a lighter frost. */
   .over-art :global(.tabs .tab:is(.active, :hover)),
   .over-art :global(.panel-btn:is(.active, :hover)) {
-    background: color-mix(in srgb, var(--panel) 55%, transparent);
-    border-color: color-mix(in srgb, var(--text) 16%, transparent);
-    -webkit-backdrop-filter: blur(18px) saturate(1.2);
-    backdrop-filter: blur(18px) saturate(1.2);
+    background: var(--surface);
+    border-color: transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
   }
   .over-art :global(.tabs .tab:hover:not(.active)),
   .over-art :global(.panel-btn:hover:not(.active)) {
-    background: color-mix(in srgb, var(--panel) 38%, transparent);
-  }
-  /* Glass tabs are the cards' glass exactly, and drop the ring like them. */
-  :global(html[data-art-cards="glass"]) .over-art :global(.tabs .tab:is(.active, :hover)),
-  :global(html[data-art-cards="glass"]) .over-art :global(.panel-btn:is(.active, :hover)) {
-    background: color-mix(in srgb, var(--panel) 52%, transparent);
-    border-color: transparent;
-  }
-  :global(html[data-art-cards="solid"]) .over-art :global(.tabs .tab:is(.active, :hover)),
-  :global(html[data-art-cards="solid"]) .over-art :global(.panel-btn:is(.active, :hover)) {
-    background: var(--panel);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+    background: var(--fill-hover);
   }
 
   main {
@@ -2545,8 +2421,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     display: flex;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    background: var(--surface);
+    border: 1px solid transparent;
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
   }
@@ -2573,8 +2449,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex-direction: column;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    background: var(--surface);
+    border: 1px solid transparent;
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
@@ -2587,8 +2463,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex-direction: column;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
+    background: var(--surface);
+    border: 1px solid transparent;
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
@@ -2686,8 +2562,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       animation: none;
     }
   }
+  /* Docked over the thread, the composer is the same glass as Home's, a
+     little denser so the text scrolling under it never competes. */
   .composer.docked :global(.box) {
-    background: var(--bg);
+    background: var(--surface-raised);
   }
   .toasts {
     position: fixed;
@@ -2702,8 +2580,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .toast {
     max-width: 360px;
     padding: calc(var(--space) * 2) calc(var(--space) * 4);
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: var(--surface-raised);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
     color: var(--text);

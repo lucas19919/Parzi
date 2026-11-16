@@ -6,7 +6,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
-  import { api, brain, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
+  import { api, brain, type ComposerMode, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
   import { effortLabel, effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
   import { permissionBlocked } from "./permission";
@@ -29,7 +29,6 @@
   export let policy = "";
   export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
-  export let quotes: PlanQuote[] = [];
   export let folder = "";
   export let folderLocked = false;
   export let started = false;
@@ -193,7 +192,6 @@
       void loadThumbs(files, folder);
     }
   }
-  $: if (!Array.isArray(quotes)) quotes = [];
   $: if (!Array.isArray(attachments)) attachments = [];
   $: if (!Array.isArray(queue)) queue = [];
 
@@ -214,7 +212,7 @@
         ? "Describe a task or ask a question"
         : "Ask anything";
   $: blind = !web && !!model && (attachments ?? []).some((a) => IMAGE.test(a)) && !seesImages(model, board);
-  $: canSubmit = !!input.trim() || ((quotes?.length ?? 0) > 0 && !web);
+  $: canSubmit = !!input.trim();
 
   function setWeb(on: boolean) {
     mode = on ? "search" : "build";
@@ -282,7 +280,7 @@
       setWeb(!web);
     } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canSide && !web) {
       e.preventDefault();
-      if (input.trim() || quotes.length) dispatch("side");
+      if (input.trim()) dispatch("side");
     } else if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (slashItems.length) runSlash(slashItems[slashIndex].name);
@@ -664,17 +662,8 @@
       </div>
     {/if}
 
-    {#if (attachments?.length ?? 0) || (quotes?.length ?? 0)}
+    {#if attachments?.length ?? 0}
       <div class="attachments" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
-        {#each quotes ?? [] as q (`${q.project}/${q.id}`)}
-          <span class="chip quote" transition:scale={{ duration: DUR, start: 0.9 }}>
-            <Icon name="plan" size={12} />
-            <span class="chip-name">{q.title}</span>
-            <button use:tooltip={`Remove ${q.title}`} on:click={() => (quotes = quotes.filter((x) => x !== q))}>
-              <Icon name="close" size={12} />
-            </button>
-          </span>
-        {/each}
         {#each attachments ?? [] as a (a)}
           <span class="chip" transition:scale={{ duration: DUR, start: 0.9 }}>
             {#if thumbs[a]}
@@ -928,10 +917,10 @@
     flex-direction: column;
     gap: calc(var(--space) * 3);
     padding: calc(var(--space) * 3);
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
     box-shadow: none;
   }
@@ -1083,7 +1072,7 @@
   .usage-bar {
     width: 28px;
     height: 3px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--line);
     overflow: hidden;
   }
@@ -1136,10 +1125,10 @@
     gap: calc(var(--space) * 2);
     min-height: var(--h-row);
     padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .queue-item.dragover {
@@ -1238,7 +1227,7 @@
     flex: none;
     margin: 0;
     padding: 0 var(--space) 0 calc(var(--space) * 3);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
+    background: var(--hover);
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -1290,10 +1279,10 @@
     height: var(--h);
     max-width: 220px;
     padding: 0 var(--space) 0 calc(var(--space) * 3);
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: 50%;
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -1364,8 +1353,10 @@
     max-height: 240px;
     padding: var(--space);
     overflow-y: auto;
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: var(--surface-raised);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .suggest button {

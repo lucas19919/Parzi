@@ -402,7 +402,7 @@ fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "todo.write".into(),
-            description: "This session's checklist, shown live under your replies: for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed; an empty list clears it. It is this session's own list; a project's long-lived plan is plan.write.".into(),
+            description: "This session's plan: its checklist, kept on the session (it survives restarts and a switch to another agent) and shown in the thread. Use it for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed; an empty list clears it. It is this session's own list; a project's long-lived plan is plan.write.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -467,26 +467,13 @@ fn ui_defs() -> Vec<ToolDef> {
                 "required": ["replies"],
             }),
         },
-        ToolDef {
-            name: "ui.propose_task".into(),
-            description: "Propose follow-up work as a card the person can start with one click as a side task: a new session beside this one that works on its own. Use it for real, independent work your answer turned up (a bug spotted in passing, the same change for a sibling project, a follow-up worth its own session), never for what you are about to do anyway. One card per piece, at most three a turn. The brief is all the new session gets: what to do, where, and what done looks like. Name a project slug to run it in that project's folder.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "under 60 characters"},
-                    "brief": {"type": "string", "description": "what to do, where, and what done looks like"},
-                    "project": {"type": "string", "description": "a project slug, to work in its folder"},
-                },
-                "required": ["title", "brief"],
-            }),
-        },
     ]
 }
 
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_artifact" | "ui.show_file" | "ui.host_site" | "ui.offer_replies" | "ui.propose_task" | "todo.write"
+        "ui.show_artifact" | "ui.show_file" | "ui.host_site" | "ui.offer_replies" | "todo.write"
     )
 }
 
@@ -1014,44 +1001,37 @@ pub fn is_plan_tool(name: &str) -> bool {
 }
 
 fn plan_defs() -> Vec<ToolDef> {
+    let items = serde_json::json!({
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "a short imperative"},
+                "state": {"type": "string", "enum": ["pending", "active", "done"]},
+            },
+            "required": ["title"],
+        },
+    });
     vec![
         ToolDef {
             name: "plan.read".into(),
-            description: "Read a project's plan: its items with their state, needs, branch, detail and note, and the sessions working on each (with their branches). project is a project slug; default: this session's project. Read-only.".into(),
+            description: "Read a session's plan: its steps marked done, active or pending. Leave session out for this session's own plan; pass another session's id to read one in this project. Read-only.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {"project": {"type": "string"}},
+                "properties": {"session": {"type": "string"}},
             }),
         },
         ToolDef {
             name: "plan.write".into(),
-            description: "Change this project's plan. Every field is optional and what you leave out stays: title, goal, phases (ordered names such as Now and Next), and items, merged by id: [{id, title?, detail?, phase?, needs?, state?, branch?, note?}]. An id is 1 to 24 of a-z, 0-9 and -; a new item needs a title. needs names other items of the plan, never in a circle. state is planned, active, done or dropped; marking an item active links this session to it. Limits: 40 items, title 80 chars, detail and note 400. remove: true on an item takes out a mistake (finished or abandoned work is done or dropped). replace: true starts a new plan and keeps the old one in the brain as history. The plan is the person's: a write that adds, drops or rewords work is shown to them and saved only when they approve it, and their answer is the result (a change they ask for means nothing was saved yet). Progress (state, note, branch) is saved at once.".into(),
+            description: "Set this session's plan: its checklist for work of three steps or more, kept on the session (it survives restarts and a switch to another agent) and shown in the thread. Send the whole list each time; it replaces the last one. Each step a short imperative and a state: pending, active or done. Keep one step active while you work and mark each done as it is; an empty list clears it. propose: true asks the person first (Use this plan / Not now) and saves only on their yes; use it once, for the plan of a larger piece of work before you start. Progress updates never propose. Work for later, outside this session, is session.draft.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string"},
-                    "goal": {"type": "string"},
-                    "phases": {"type": "array", "items": {"type": "string"}},
-                    "items": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string", "description": "a-z, 0-9 and -, at most 24"},
-                                "title": {"type": "string"},
-                                "detail": {"type": "string"},
-                                "phase": {"type": "string"},
-                                "needs": {"type": "array", "items": {"type": "string"}},
-                                "state": {"type": "string", "enum": ["planned", "active", "done", "dropped"]},
-                                "branch": {"type": "string"},
-                                "note": {"type": "string"},
-                                "remove": {"type": "boolean"},
-                            },
-                            "required": ["id"],
-                        },
-                    },
-                    "replace": {"type": "boolean"},
+                    "items": items,
+                    "propose": {"type": "boolean"},
                 },
+                "required": ["items"],
             }),
         },
     ]
@@ -1120,7 +1100,12 @@ fn team_defs() -> Vec<ToolDef> {
 pub fn is_session_tool(name: &str) -> bool {
     matches!(
         name,
-        "session.spawn" | "session.send" | "session.read" | "session.list" | "session.rename"
+        "session.spawn"
+            | "session.send"
+            | "session.read"
+            | "session.list"
+            | "session.rename"
+            | "session.draft"
     )
 }
 
@@ -1179,8 +1164,25 @@ fn session_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "session.draft".into(),
+            description: "Write down work for later as a draft session in this project: a short title, a brief (what to do and why, written as the first message to the agent that will do it, with any ordering such as \"after the login fix lands\") and optionally a rough plan. Nothing runs: the person sees it under Drafts and starts it or deletes it. Use it for follow-ups you notice but should not do now, instead of describing them in prose.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "A few words, like a session title."},
+                    "brief": {"type": "string"},
+                    "plan": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]},
+                    },
+                },
+                "required": ["title", "brief"],
+            }),
+        },
+        ToolDef {
             name: "session.list".into(),
-            description: "List this project's sessions with their status (check what is running before staffing, so work is not done twice). only_subsessions=true shows only the subsessions of the calling session.".into(),
+            description: "List this project's sessions with their status (running, queued, idle, done, stopped or draft) and plan progress; check what is running or drafted before staffing, so work is not done twice. only_subsessions=true shows only the subsessions of the calling session.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"only_subsessions": {"type": "boolean"}},
@@ -1280,22 +1282,21 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "session.read" => "Checking on a helper".into(),
         "session.list" => "Listing helpers".into(),
+        "session.draft" => format!(
+            "Drafting a session: {}",
+            one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 60)
+        ),
         "session.rename" => "Naming this session".into(),
         "plan.read" => "Reading the plan".into(),
-        "plan.write" => {
+        "plan.write" | "todo.write" => {
             let items = args
                 .get("items")
                 .and_then(serde_json::Value::as_array)
                 .map_or(0, Vec::len);
-            let replace = args.get("replace").and_then(serde_json::Value::as_bool) == Some(true);
-            let count = match items {
-                1 => "1 item".to_string(),
-                n => format!("{n} items"),
-            };
-            match (replace, items) {
-                (true, _) => format!("Writing a new plan: {count}"),
-                (false, 0) => "Updating the plan".into(),
-                (false, _) => format!("Updating the plan: {count}"),
+            if args.get("propose").and_then(serde_json::Value::as_bool) == Some(true) {
+                format!("Proposing a plan: {items} steps")
+            } else {
+                "Updating the plan".into()
             }
         }
         "browser.open" => format!(
@@ -1692,7 +1693,7 @@ mod tests {
                 d.name
             );
         }
-        assert_eq!(display_name("parzi__ui_propose_task"), "ui.propose_task");
+        assert_eq!(display_name("parzi__ui_offer_replies"), "ui.offer_replies");
         assert_eq!(display_name("search_tool"), "search_tool");
     }
 
@@ -1743,25 +1744,25 @@ mod tests {
     #[test]
     fn plan_tools_read_as_what_they_do() {
         let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
-        let three = r#"{"items": [{"id":"a"},{"id":"b"},{"id":"c"}]}"#;
+        let three = r#"{"items": [{"title":"a"},{"title":"b"},{"title":"c"}]}"#;
         assert_eq!(
             humanize_tool_call("plan.write", &j(three)),
-            "Updating the plan: 3 items"
+            "Updating the plan"
         );
         assert_eq!(
             humanize_tool_call("mcp__parzi__plan_write", &j(three)),
-            "Updating the plan: 3 items",
+            "Updating the plan",
             "an MCP name reads the same"
         );
         assert_eq!(
             humanize_tool_call(
                 "plan.write",
-                &j(r#"{"items": [{"id":"a"}], "replace": true}"#)
+                &j(r#"{"items": [{"title":"a"},{"title":"b"}], "propose": true}"#)
             ),
-            "Writing a new plan: 1 item"
+            "Proposing a plan: 2 steps"
         );
         assert_eq!(
-            humanize_tool_call("plan.write", &j(r#"{"title": "x"}"#)),
+            humanize_tool_call("todo.write", &j(three)),
             "Updating the plan"
         );
         assert_eq!(

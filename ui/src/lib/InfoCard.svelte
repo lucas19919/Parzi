@@ -38,7 +38,7 @@
 <section class="card" class:open>
   <div class="bar">
     <button class="head" aria-expanded={open} on:click={toggle}>
-      <span class="title t-section">{title}</span>
+      <span class="title t-section" title={title}>{title}</span>
       <span class="aside">{#if !open || !foldedAside}<slot name="aside" />{/if}</span>
       <span class="chev"><Icon name="chevDown" size={12} /></span>
     </button>
@@ -52,10 +52,10 @@
 <style>
   .card {
     flex: none;
-    background: color-mix(in srgb, var(--panel) var(--card-fill), transparent);
-    border: 1px solid color-mix(in srgb, var(--line) var(--card-edge), transparent);
-    -webkit-backdrop-filter: var(--card-blur);
-    backdrop-filter: var(--card-blur);
+    background: var(--surface);
+    border: 1px solid transparent;
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .bar {
@@ -95,8 +95,14 @@
     text-align: left;
     cursor: pointer;
   }
+  /* A long title (an old plan's) ends in an ellipsis instead of pushing
+     the count and the chevron out of the card. */
   .title {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .aside {
     flex: 1;

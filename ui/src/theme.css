@@ -26,8 +26,21 @@
   --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
   --line: color-mix(in srgb, var(--text) 12%, var(--bg));
   --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
+  /* Fills, a wash of the text colour on whatever is behind. Four strengths,
+     nothing in between: --hover under the pointer, --fill a control at
+     rest, --selected what is picked, --fill-hover a control under the
+     pointer. */
   --hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --fill: color-mix(in srgb, var(--text) 8%, transparent);
   --selected: color-mix(in srgb, var(--text) 10%, transparent);
+  --fill-hover: color-mix(in srgb, var(--text) 14%, transparent);
+  /* The one surface: every card, the composer, popups. Glass: over the
+     picture it frosts it, over a plain ground it reads as a soft fill. A
+     surface is a fill, never a frame. */
+  --surface: color-mix(in srgb, var(--panel) 52%, transparent);
+  /* Denser glass for what sits on surfaces: popups, the composer over a thread. */
+  --surface-raised: color-mix(in srgb, var(--panel) 72%, transparent);
+  --blur: blur(18px) saturate(1.2);
   --link: color-mix(in srgb, var(--accent) 70%, var(--text));
   --scrim: rgba(0, 0, 0, 0.6);
   --ok: #22c55e;
@@ -37,8 +50,6 @@
   --ok-text: color-mix(in srgb, var(--ok) 40%, var(--text));
   --warn-text: color-mix(in srgb, var(--warn) 35%, var(--text));
   --bad-text: color-mix(in srgb, var(--bad) 62%, var(--text));
-  /* On a saturated dark badge, whatever the theme's text colour is. */
-  --on-badge: #ffffff;
 
   --space: 4px;
   --radius: 12px;
@@ -50,15 +61,6 @@
      two curves run parallel. Boxes that hold rows pad by --space. */
   --inset: calc(var(--space) + 1px);
   --radius-in: max(0px, calc(var(--radius) - var(--inset)));
-  /* One card look across Parzi (Settings, Appearance, Cards): how much of
-     the panel colour fills a card, how much of the line colour edges it,
-     and the frost behind it. Clear is an outline; Glass a tinted frost
-     with no outline; Solid the panel with an outline. Each surface mixes
-     its own --panel and --line with these, so a scene that changes those
-     colours carries the look along. */
-  --card-fill: 0%;
-  --card-edge: 100%;
-  --card-blur: none;
 
   --font: "Inter";
   --font-size: 14px;
@@ -140,30 +142,21 @@ input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color:
 input[type="checkbox"], input[type="radio"] { width: 15px; height: 15px; margin: 0; cursor: pointer; }
 input[type="color"] { background: transparent; border: 1px solid var(--line); border-radius: var(--radius); width: 44px; height: 30px; padding: var(--space); }
 
-html[data-art-cards="glass"] { --card-fill: 52%; --card-edge: 0%; --card-blur: blur(18px) saturate(1.2); }
-html[data-art-cards="solid"] { --card-fill: 100%; --card-edge: 100%; }
 
 .truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Popups (model, effort, project and branch menus) sit on surfaces. */
 .pop {
   position: fixed; z-index: var(--z-pop); max-width: calc(100vw - 16px);
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface-raised);
+  border: 1px solid transparent; border-radius: var(--radius);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
   overflow: hidden;
-}
-/* With glass cards, popups (model, effort, project and branch menus) are
-   glass too, a little denser than the cards since they sit on them; light
-   glass when a light theme dims the picture on Home. */
-html[data-art-cards="glass"] .pop {
-  background: color-mix(in srgb, var(--panel) 64%, transparent);
-  border-color: transparent;
-  -webkit-backdrop-filter: blur(24px) saturate(1.3);
-  backdrop-filter: blur(24px) saturate(1.3);
-}
-html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
-  background: color-mix(in srgb, var(--panel) 84%, transparent);
 }
 .tip {
   position: fixed; z-index: var(--z-tip); max-width: 280px; padding: var(--space) calc(var(--space) * 2); pointer-events: none;
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface-raised); border: 1px solid transparent; border-radius: var(--radius);
+  -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
 }
 .tip[hidden] { display: none; }
@@ -174,16 +167,17 @@ html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
 .viz-tip-row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .viz-tip-row span { color: var(--muted); }
 
+/* Buttons are a wash of the text colour on whatever surface they sit on:
+   filled, never outlined, so a row of them reads as one family. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: calc(var(--space) * 2);
-  background: transparent;
-  border: 1px solid var(--line);
+  background: var(--fill);
+  border: 1px solid transparent;
   border-radius: var(--radius); color: var(--text); padding: calc(var(--space) * 2) calc(var(--space) * 3); cursor: pointer;
   font: inherit; font-size: var(--fs-md); font-weight: 500; white-space: nowrap;
 }
 .btn:hover:not(:disabled) {
-  background: var(--hover);
-  border-color: color-mix(in srgb, var(--text) 26%, var(--bg));
+  background: var(--fill-hover);
 }
 .btn.primary {
   background: var(--accent); color: var(--bg); border-color: transparent; font-weight: 600;
@@ -191,8 +185,8 @@ html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
 .btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
 }
-.btn.danger { border-color: var(--bad); color: var(--bad-text); }
-.btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
+.btn.danger { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad-text); }
+.btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 22%, transparent); }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: var(--dur-fast); }
 .btn:disabled { opacity: var(--disabled); cursor: default; box-shadow: none; }
 
@@ -204,7 +198,8 @@ html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
   color: var(--muted);
   font-size: var(--fs-sm);
 }
-.btn.sm:hover:not(:disabled) { color: var(--text); border-color: var(--line); }
+.btn.sm:hover:not(:disabled) { color: var(--text); }
+.btn.sm.primary { color: var(--bg); }
 
 .icon-btn {
   position: relative;
@@ -221,7 +216,7 @@ html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
 @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 .tin {
-  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--fill); border: 1px solid transparent; border-radius: var(--radius);
   color: var(--text); font: inherit; font-size: var(--fs-md);
   padding: var(--space) calc(var(--space) * 2); outline: none; min-width: 0;
 }
@@ -253,11 +248,12 @@ html[data-over-art][data-scene="dark"][data-art-cards="glass"] .pop {
   gap: calc(var(--space) * 2);
   height: var(--h);
   padding: 0 calc(var(--space) * 3);
-  background: transparent;
-  border: 1px solid var(--line);
+  background: var(--fill);
+  border: 1px solid transparent;
   border-radius: var(--radius);
   color: var(--muted);
 }
+.page-search:focus-within { background: var(--selected); }
 .page-search input {
   flex: 1;
   min-width: 0;
@@ -340,8 +336,7 @@ button.info-line.row:hover { background: var(--hover); }
 
 /* Cards inside a Page: a title row, then divided rows. */
 .page .rows {
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: var(--surface); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -411,14 +406,14 @@ a:hover { color: var(--link); }
   padding: 0 calc(var(--space) * 2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
+  background: var(--hover);
   color: var(--text);
   font-family: var(--mono);
   font-size: var(--fs-sm);
   text-decoration: none;
 }
 .msg a.file-ref:hover {
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: var(--fill);
   color: var(--text);
 }
 .msg :not(pre) > code { background: var(--line); border-radius: var(--radius-sm); padding: var(--space) var(--space); font-family: var(--mono); font-size: 0.92em; }
@@ -428,8 +423,8 @@ a:hover { color: var(--link); }
 .md-math { margin: 1em 0; text-align: center; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
 
 .codeblock {
-  position: relative; margin: 1em 0; background: var(--bg);
-  border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+  position: relative; margin: 1em 0; background: var(--surface); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border-radius: var(--radius); overflow: hidden;
 }
 .hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--text); font-weight: 700; }
 .hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--text); font-weight: 400; }
@@ -482,14 +477,14 @@ a:hover { color: var(--link); }
 }
 .code-expand:hover { color: var(--text); background: var(--panel); }
 
-.msg .md-table { width: 100%; margin: 1em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.msg .md-table { width: 100%; margin: 1em 0; overflow-x: auto; background: var(--surface); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border-radius: var(--radius); }
 .msg table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-base); }
 .msg th, .msg td { padding: calc(var(--space) * 2) calc(var(--space) * 4); text-align: left; white-space: nowrap; border-right: 1px solid var(--line); }
 
 .msg td:not(.num) { white-space: normal; min-width: 10ch; overflow-wrap: break-word; vertical-align: top; }
 .msg th:last-child, .msg td:last-child { border-right: none; }
 .msg td { border-top: 1px solid var(--line); }
-.msg th { vertical-align: bottom; font-weight: 500; color: var(--text); background: color-mix(in srgb, var(--text) 3%, transparent); }
+.msg th { vertical-align: bottom; font-weight: 500; color: var(--text); background: var(--hover); }
 .msg th .th-sub { display: inline; margin-left: var(--space); font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
 .msg th.num, .msg td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .msg td.na { color: var(--muted); opacity: 0.7; }
@@ -504,7 +499,7 @@ a:hover { color: var(--link); }
   font-size: var(--fs-xs); font-weight: 600; line-height: 1; text-decoration: none;
 }
 .msg a.cite:hover { background: color-mix(in srgb, var(--link) 28%, transparent); color: var(--link); }
-.msg blockquote { margin: 1em 0; padding: calc(var(--space) * 2) calc(var(--space) * 3); border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); }
+.msg blockquote { margin: 1em 0; padding: calc(var(--space) * 2) calc(var(--space) * 3); border-left: 3px solid var(--accent); background: var(--fill); border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); }
 .msg ul, .msg ol { margin: 0.75em 0; padding-left: calc(var(--space) * 6); }
 .msg li { margin: 0.4em 0; }
 .msg li::marker { color: var(--muted); }

@@ -60,8 +60,12 @@ pub(crate) fn report(child: &SessionMeta, stopped: bool, cap: usize) -> String {
         one_line(&child.title, 100),
         end.map_or("ended", RunEndKind::word)
     );
-    if let Some(item) = &child.plan_item {
-        out.push_str(&format!(" It works on plan item {item}."));
+    if let Some(p) = child.plan.as_ref().filter(|p| !p.items.is_empty()) {
+        out.push_str(&format!(
+            " Its plan: {} of {} done.",
+            p.done(),
+            p.items.len()
+        ));
     }
     if let Some(sum) = o.map(|o| o.summary.trim()).filter(|s| !s.is_empty()) {
         out.push('\n');
@@ -281,7 +285,13 @@ mod tests {
             context_limit: 0,
             cwd: String::new(),
             last_run: Some(o),
-            plan_item: Some("parser".into()),
+            plan: Some(parzi_core::store::SessionPlan {
+                items: vec![parzi_core::store::PlanStep {
+                    title: "Write the parser".into(),
+                    state: parzi_core::store::StepState::Done,
+                }],
+            }),
+            brief: None,
             branch: "plan/parser".into(),
             effort: String::new(),
             created: now,
@@ -300,7 +310,7 @@ mod tests {
         );
         assert!(
             text.starts_with(
-                "Session \"Write the parser\" finished. It works on plan item parser.\nWrote the parser."
+                "Session \"Write the parser\" finished. Its plan: 1 of 1 done.\nWrote the parser."
             ),
             "{text}"
         );
@@ -313,7 +323,7 @@ mod tests {
         assert!(stopped.starts_with("Session \"Write the parser\" was stopped."));
         let mut bare = c;
         bare.last_run = None;
-        bare.plan_item = None;
+        bare.plan = None;
         bare.branch.clear();
         assert_eq!(
             report(&bare, false, REPORT_CAP),
