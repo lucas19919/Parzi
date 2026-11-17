@@ -113,6 +113,7 @@ export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
   | { kind: "todo"; session: string; todo: unknown }
+  | { kind: "refreshed"; session: string }
   | { kind: "artifact"; session: string; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
   | { kind: "tool_call"; session: string; id: string; name: string; label: string }
   | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
@@ -151,6 +152,8 @@ export interface ParziConfig {
   routing: { order: string[] };
   budget?: { max_cost_usd: number | null; max_tokens: number | null };
   favorite_models: string[];
+  /** The small model for quick side jobs, then a fallback: "agent/model", "" for automatic. */
+  quick?: { model: string; fallback: string };
 }
 
 export interface Theme {

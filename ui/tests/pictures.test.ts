@@ -14,3 +14,12 @@ test("pictures named in plain text are found, pages are not", () => {
 test("a saved image path wins and repeats show once", () => {
   assert.deepEqual(picturesIn([JSON.stringify({ path: "/tmp/x.webp" }), "/tmp/x.webp"]), ["/tmp/x.webp"]);
 });
+
+test("a picture a tool only mentions is not shown", () => {
+  const listing = "src/logo.png\nC:\\Users\\me\\Pictures\\holiday.jpg\n/home/me/shots/old.png";
+  assert.deepEqual(picturesIn([listing, "grep: D:\\repo\\docs\\home.png:12: matched"]), []);
+});
+
+test("a screenshot tool's saved path is shown", () => {
+  assert.deepEqual(picturesIn(["saved C:\\Users\\me\\.parzi\\shots\\s1\\desk-1.jpg (210 KiB). Open it with your Read tool"]), ["C:\\Users\\me\\.parzi\\shots\\s1\\desk-1.jpg"]);
+});

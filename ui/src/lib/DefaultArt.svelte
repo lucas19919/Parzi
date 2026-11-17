@@ -146,10 +146,9 @@
   }
   /* Full window: the picture fills Home, with an even shade so the tabs,
      the composer and the cards stay readable over it. */
-  /* Full window, and always behind a session: glass needs something to
-     frost, or a card over the bare ground reads as a solid panel. */
-  :global(html[data-art-fill="full"]) .art,
-  .art.dim {
+  /* Full window, on Home and behind sessions alike; as a band it stays a
+     band everywhere, as Appearance says. */
+  :global(html[data-art-fill="full"]) .art {
     height: 100%;
     -webkit-mask-image: none;
     mask-image: none;

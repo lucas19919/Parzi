@@ -2,6 +2,7 @@ mod harness;
 mod launch;
 pub use launch::ContextParts;
 mod queue;
+mod quick;
 mod wake;
 
 pub use queue::{run_note, BUDGET_NOTE};

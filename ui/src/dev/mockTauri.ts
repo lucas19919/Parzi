@@ -305,6 +305,32 @@ function transcript() {
   }
   // ?stream=1 saves what it streamed, as the engine would at turn end.
   for (const e of (globalThis as { __mockSaved?: unknown[] }).__mockSaved ?? []) out.push(e);
+  // ?tidy=1 ends on a math question a small model set for display.
+  if (params.get("tidy")) {
+    const typed = "Help me understand how to derive the energy equation. So pDe/Dt, e = u + 1/2v^2, e = u + 1/2 vivi. Energy transfers are then the integrals pfvivi dV, qjnj dA, nj sigma ij dA, right?";
+    const n = out.filter((e) => (e as { kind: string }).kind === "user").length;
+    out.push({ kind: "user", text: typed });
+    out.push({
+      kind: "widget",
+      fence: "parzi-tidy",
+      payload: {
+        n,
+        text: "Help me understand how to derive the energy equation. So $\\rho \\frac{De}{Dt}$, $e = u + \\tfrac{1}{2}v^2$, $e = u + \\tfrac{1}{2} v_i v_i$. Energy transfers are then the integrals $\\int \\rho f_i v_i \\, dV$, $\\oint q_j n_j \\, dA$, $\\oint n_j \\sigma_{ij} \\, dA$, right?",
+      },
+    });
+    out.push({
+      kind: "assistant",
+      text: "Yes. Now expand both sides using the product rule:\n\n- On the left: $\\frac{De}{Dt} = \\frac{Du}{Dt} + \\frac{D}{Dt}\\left(\\tfrac{1}{2}v_iv_i\\right) = \\frac{Du}{Dt} + v_i\\frac{Dv_i}{Dt}$.\n- On the right: $\\frac{\\partial(\\sigma_{ij}v_i)}{\\partial x_j} = \\frac{\\partial\\sigma_{ij}}{\\partial x_j}v_i + \\sigma_{ij}\\frac{\\partial v_i}{\\partial x_j}$.",
+    });
+  }
+  // ?stopped=1 ends the thread on a turn the person stopped.
+  if (params.get("stopped")) {
+    out.push({ kind: "user", text: "Try the other renderer." });
+    out.push({ kind: "tool_call", id: "ts1", name: "fs.read", args: { path: "ui/src/lib/md.ts" }, at: now - 14_000 });
+    out.push({ kind: "tool_result", id: "ts1", name: "fs.read", ok: true, output: "ok", ms: 9, at: now - 13_000 });
+    out.push({ kind: "tool_call", id: "ts2", name: "shell.exec", args: { cmd: "npm test" }, at: now - 12_000 });
+    out.push({ kind: "system", text: "Stopped", at: now - 2_000 });
+  }
   // ?error=rate_limit (or any error class) ends the thread on a failed turn.
   const err = params.get("error");
   if (err) {
@@ -401,6 +427,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,
   get_thread: (a) => {
+    if (a.id === "s-new") return [{ ...sessions[0], id: "s-new", title: "New session", status: "active" }, []];
     const s = sessions.find((x) => x.id === a.id) ?? sessions[0];
     return [s, s.status === "draft" ? [] : transcript()];
   },
@@ -550,7 +577,8 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     await emit("parzi://remote-setup", { step: "install", state: "ok", detail: "Parzi 0.1.32" });
     return { label: "box", user: "dev", host: "box.example.net", version: "0.1.32", linked_at: Date.now(), alive: true, synced_at: Date.now(), device: "pc" };
   },
-  send_message: (a) => (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : "s1"),
+  // ?late=1: a new session's run has not recorded the message yet when the app reloads.
+  send_message: (a) => (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : params.get("late") ? "s-new" : "s1"),
 };
 
 const win = (...parts: string[]) => parts.join("\\");

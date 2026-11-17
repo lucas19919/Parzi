@@ -105,6 +105,7 @@ pub async fn send_message(
         app: state.app.clone(),
         pending: state.pending.clone(),
     });
+    let fresh = session_id.is_none();
     let sid = match session_id {
         Some(id) => {
             state
@@ -156,6 +157,14 @@ pub async fn send_message(
                 .id
         }
     };
+    // Beside the run, a small model names a new session and sets the message
+    // for display (math, code); the agent already has what was typed.
+    if parent.as_deref().is_none_or(str::is_empty) {
+        if fresh {
+            state.orch.name_soon(&sid, &prompt);
+        }
+        state.orch.tidy_soon(&sid, &prompt);
+    }
     if let Some(parent) = parent.filter(|p| !p.is_empty() && *p != sid) {
         if let Err(e) = state.orch.store().set_parent(&sid, &parent) {
             tracing::warn!("side task {sid} not linked to {parent}: {e}");

@@ -145,7 +145,7 @@
 
   $: items = buildItems(events);
 
-  type Fold = { key: string; tools: number; secs: number; live: boolean; only: string };
+  type Fold = { key: string; tools: number; secs: number; live: boolean; only: string; stopped: boolean };
   let openFolds = new Set<string>();
   $: folds = foldTurns(items, streaming, liveTools.length + (liveReasoning ? 1 : 0));
 
@@ -154,6 +154,8 @@
     const inside = new Map<string, string>();
     let tail: Fold | null = null;
     let live: Fold | null = null;
+    // A stop said by its turn's fold ("Stopped after 12s") is not said again.
+    const told = new Set<string>();
     const users = items.flatMap((it, i) => (it.kind === "user" ? [i] : []));
     const starts = [-1, ...users];
     starts.forEach((u, n) => {
@@ -184,7 +186,14 @@
         secs: times.length > 1 ? Math.max(...times) - Math.min(...times) : 0,
         live: current,
         only: "",
+        stopped: false,
       };
+      for (const it of range) {
+        if (it.kind === "system" && isStop(it.text)) {
+          fold.stopped = true;
+          told.add(it.key);
+        }
+      }
       const steps = work.flatMap((it) => (it.kind === "steps" ? it.tools : []));
       if (!current && work.length === 1 && steps.length === 1) fold.only = steps[0].label.trim();
       if (current) live = fold;
@@ -192,14 +201,14 @@
       if (range.length) before.set(range[0].key, fold);
       else tail = fold;
     });
-    return { before, inside, tail: tail as Fold | null, live: live as Fold | null };
+    return { before, inside, tail: tail as Fold | null, live: live as Fold | null, told };
   }
 
   function foldLabel(f: Fold): string {
     const spent = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
-    if (f.only) return f.secs >= 1 ? `${f.only} · ${spent(f.secs)}` : f.only;
     if (f.live) return f.tools ? `${f.tools} step${f.tools === 1 ? "" : "s"} so far` : "Thinking";
-    const head = f.secs >= 1 ? `Worked for ${spent(f.secs)}` : "Worked";
+    if (f.only && !f.stopped) return f.secs >= 1 ? `${f.only} · ${spent(f.secs)}` : f.only;
+    const head = f.stopped ? (f.secs >= 1 ? `Stopped after ${spent(f.secs)}` : "Stopped") : f.secs >= 1 ? `Worked for ${spent(f.secs)}` : "Worked";
     return f.tools ? `${head} · ${f.tools} step${f.tools === 1 ? "" : "s"}` : head;
   }
 
@@ -230,6 +239,24 @@
     for (const it of items) if (it.kind === "artifact") m.set(it.id, Math.max(m.get(it.id) ?? 0, it.version ?? 1));
     return m;
   })();
+  // Messages a small model set for display (math as LaTeX): by message number.
+  // The bubble shows that version; "Show as typed" brings back the original.
+  $: tidied = (() => {
+    const m = new Map<number, string>();
+    for (const e of events) {
+      if (e.kind === "widget" && e.fence === "parzi-tidy") {
+        const p = e.payload as { n?: number; text?: string };
+        if (typeof p?.n === "number" && typeof p.text === "string" && p.text.trim()) m.set(p.n, p.text);
+      }
+    }
+    return m;
+  })();
+  let asTyped = new Set<string>();
+  function toggleTyped(key: string) {
+    asTyped = new Set(asTyped);
+    if (asTyped.has(key)) asTyped.delete(key);
+    else asTyped.add(key);
+  }
   $: userNth = (() => {
     const m = new Map<string, number>();
     let n = 0;
@@ -626,6 +653,7 @@ ${e.text}` : e.text;
       {#if item.kind === "user"}
         {@const images = attachedImages(item.text)}
         {@const said = splitQuotes(stripMarker(item.text))}
+        {@const tidyOf = tidied.get(userNth.get(item.key) ?? -1) ?? ""}
         {@const from = sideFrom(item.text)}
         <div class="row user">
           {#if from}<span class="side-from">Side session from {from}</span>{/if}
@@ -639,6 +667,11 @@ ${e.text}` : e.text;
             <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text })}>
               <Icon name="pencil" />
             </button>
+            {#if tidyOf}
+              <button class="copy" class:on={!asTyped.has(item.key)} use:tooltip={asTyped.has(item.key) ? "Show tidied" : "Show as typed"} on:click={() => toggleTyped(item.key)}>
+                <Icon name="spark" />
+              </button>
+            {/if}
             {#if userNth.has(item.key)}
               <button
                 class="copy"
@@ -649,7 +682,7 @@ ${e.text}` : e.text;
               </button>
             {/if}
             {#if said.text}
-              <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
+              <div class="bubble msg">{@html mdHtml(tidyOf && !asTyped.has(item.key) ? tidyOf : said.text, $richReady)}</div>
             {:else}
               <div class="quotes">{#each said.titles as t, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{t}</span></span>{/each}</div>
             {/if}
@@ -705,7 +738,7 @@ ${e.text}` : e.text;
         {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
       {:else if item.kind === "checkpoint"}
         <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
-      {:else if item.kind === "system"}
+      {:else if item.kind === "system" && !folds.told.has(item.key)}
         {#if sysTone(item.text) === "line"}
           <div class="sysline" class:in-fold={folded} title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
         {:else}
@@ -759,7 +792,7 @@ ${e.text}` : e.text;
         {:else if item.fence === "viz"}
           <Viz spec={item.payload} />
         <!-- parzi-task is an old suggested-session card (drafts replaced it): not shown. -->
-        {:else if item.fence !== "parzi-replies" && item.fence !== "parzi-todo" && item.fence !== "parzi-task"}
+        {:else if item.fence !== "parzi-replies" && item.fence !== "parzi-todo" && item.fence !== "parzi-task" && item.fence !== "parzi-tidy"}
           <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
         {/if}
     {:else if item.kind === "artifact"}
@@ -918,7 +951,7 @@ ${e.text}` : e.text;
     border: none;
     color: var(--muted);
     font: inherit;
-    font-size: var(--fs-md);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .fold:hover {
@@ -1088,10 +1121,14 @@ ${e.text}` : e.text;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
+  /* A turn's end said in a line ("Stopped", "Asked the user: …"): the
+     same small, quiet type as the fold above it. */
   .sysline {
+    min-height: var(--h-sm);
+    display: flex;
+    align-items: center;
     font-size: var(--fs-sm);
     color: var(--muted);
-    padding-left: var(--space);
   }
   .inter {
     display: flex;

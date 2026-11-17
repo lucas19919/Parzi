@@ -120,7 +120,6 @@
   let branchOpen = false;
   let branchStyle = "";
   let branchList: string[] = [];
-  let expanded: string | null = null;
   let dragId: string | null = null;
   let dragOver = -1;
   function queueDrop(to: number) {
@@ -546,50 +545,50 @@
 <div class="ob" class:hero data-pop-frame>
   {#if queue.length}
 
-    <div class="queue-bar" role="list" aria-label="Queued messages">
-      {#if queuePaused}
-        <div class="queue-head">
-          <button class="queue-resume" on:click={() => dispatch("resumeQueue")}>Resume</button>
-        </div>
-      {/if}
-      {#each queue as item, i (item.id)}
-        <div
-          class="queue-item"
-          class:open={expanded === item.id}
-          class:dragover={dragOver === i}
-          role="listitem"
-          transition:slide={{ duration: SLIDE, easing: cubicOut }}
-          on:dragover|preventDefault={() => (dragOver = i)}
-          on:dragleave={() => (dragOver = -1)}
-          on:drop|preventDefault={() => queueDrop(i)}
-        >
-          <span
-            class="grip"
+    <!-- One card for the queue: what waits and that it sends itself. Click a
+         message to edit it, drag a row to reorder; the actions show on hover. -->
+    <div class="queue" transition:slide={{ duration: SLIDE, easing: cubicOut }}>
+      <div class="queue-head">
+        <span class="queue-title">{queuePaused ? "Paused" : "Queued"} · {queue.length}</span>
+        <span class="queue-note">{queuePaused ? "nothing sends until you resume" : "sends when the agent is done"}</span>
+        {#if queuePaused}<button class="queue-resume" on:click={() => dispatch("resumeQueue")}>Resume</button>{/if}
+      </div>
+      <div class="queue-rows" role="list" aria-label="Queued messages">
+        {#each queue as item, i (item.id)}
+          <div
+            class="queue-item"
+            class:dragover={dragOver === i}
+            role="listitem"
             draggable="true"
-            role="button"
-            tabindex="0"
-          aria-label="Drag to reorder: {item.text}"
-          use:tooltip={"Drag to reorder"}
+            transition:slide={{ duration: SLIDE, easing: cubicOut }}
             on:dragstart={() => (dragId = item.id)}
             on:dragend={() => ((dragId = null), (dragOver = -1))}
-            on:keydown={(e) => {
-              if (e.key === "ArrowUp" && i > 0) dispatch("moveHeld", { id: item.id, to: i - 1 });
-              if (e.key === "ArrowDown" && i < queue.length - 1) dispatch("moveHeld", { id: item.id, to: i + 1 });
-            }}
-          ><Icon name="more" size={12} /></span>
-          <span class="queue-num">{i + 1}</span>
-          <button class="queue-text" class:open={expanded === item.id} title={item.text} on:click={() => (expanded = expanded === item.id ? null : item.id)}>
-            <span>{item.text}</span>
-            {#if item.detail}<span class="queue-detail">{item.detail}</span>{/if}
-          </button>
-          <span class="queue-acts">
-            <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
-            <button aria-label="Side session: {item.text}" use:tooltip={"Side session: run it now, beside this one"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
-            <button aria-label="Edit: {item.text}" use:tooltip={"Edit"} on:click={() => dispatch("unhold", { id: item.id })}><Icon name="pencil" size={12} /></button>
-            <button aria-label="Drop: {item.text}" use:tooltip={"Drop this message"} on:click={() => dispatch("dropHeld", { id: item.id })}><Icon name="close" size={12} /></button>
-          </span>
-        </div>
-      {/each}
+            on:dragover|preventDefault={() => (dragOver = i)}
+            on:dragleave={() => (dragOver = -1)}
+            on:drop|preventDefault={() => queueDrop(i)}
+          >
+            <span class="queue-num">{i + 1}</span>
+            <button
+              class="queue-text"
+              title={item.text}
+              aria-label="Edit: {item.text}"
+              on:click={() => dispatch("unhold", { id: item.id })}
+              on:keydown={(e) => {
+                if (e.altKey && e.key === "ArrowUp" && i > 0) dispatch("moveHeld", { id: item.id, to: i - 1 });
+                if (e.altKey && e.key === "ArrowDown" && i < queue.length - 1) dispatch("moveHeld", { id: item.id, to: i + 1 });
+              }}
+            >
+              <span>{item.text}</span>
+              {#if item.detail}<span class="queue-detail">{item.detail}</span>{/if}
+            </button>
+            <span class="queue-acts">
+              <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
+              <button aria-label="Side session: {item.text}" use:tooltip={"Run it now in a side session"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
+              <button aria-label="Drop: {item.text}" use:tooltip={"Drop"} on:click={() => dispatch("dropHeld", { id: item.id })}><Icon name="close" size={12} /></button>
+            </span>
+          </div>
+        {/each}
+      </div>
     </div>
   {/if}
 
@@ -1094,73 +1093,75 @@
     min-width: 0;
   }
 
-  .queue-bar {
+  .queue {
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    max-height: 220px;
     margin: 0 0 calc(var(--space) * 2);
-    overflow-y: auto;
-  }
-  .queue-head {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    min-height: var(--h);
-    padding: 0 var(--space);
-  }
-  .queue-resume {
-    padding: var(--space) calc(var(--space) * 3);
-    background: var(--text);
-    border: none;
-    border-radius: var(--radius);
-    color: var(--bg);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .queue-item {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    min-height: var(--h-row);
-    padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
+    padding: var(--space);
     background: var(--surface);
     border: 1px solid transparent;
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
-  .queue-item.dragover {
-    border-color: var(--accent);
-  }
-  .grip {
-    flex: none;
-    display: inline-flex;
+  .queue-head {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: 50%;
+    gap: calc(var(--space) * 2);
+    min-height: var(--h);
+    padding: 0 calc(var(--space) * 2);
+    font-size: var(--fs-sm);
+  }
+  .queue-title {
+    font-weight: 600;
+  }
+  .queue-note {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--muted);
+  }
+  .queue-resume {
+    flex: none;
+    height: var(--h-sm);
+    padding: 0 calc(var(--space) * 3);
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius-in);
+    color: var(--bg);
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .queue-rows {
+    display: flex;
+    flex-direction: column;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .queue-item {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    min-height: var(--h);
+    padding: 0 var(--space) 0 calc(var(--space) * 2);
+    border-radius: var(--radius-in);
     cursor: grab;
   }
-  .grip:active {
-    cursor: grabbing;
+  .queue-item:hover,
+  .queue-item:focus-within {
+    background: var(--hover);
+  }
+  .queue-item.dragover {
+    box-shadow: inset 0 2px 0 var(--accent);
   }
   .queue-num {
     flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    min-width: 16px;
-    height: 22px;
-    font-family: var(--mono);
+    min-width: 12px;
     font-size: var(--fs-xs);
-    line-height: 22px;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
@@ -1168,31 +1169,25 @@
     flex: 1;
     min-width: 0;
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: var(--space);
+    align-items: baseline;
+    gap: calc(var(--space) * 2);
     padding: 0;
     background: none;
     border: none;
     color: var(--text);
+    font: inherit;
     font-size: var(--fs-sm);
-    line-height: 22px;
     text-align: left;
     cursor: pointer;
   }
   .queue-text > span:first-child {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    line-height: 22px;
-  }
-  .queue-text.open > span:first-child {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    text-overflow: unset;
-    line-height: 1.4;
   }
   .queue-detail {
+    flex: none;
     font-size: var(--fs-xs);
     color: var(--muted);
   }
@@ -1200,23 +1195,29 @@
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
+    gap: var(--space);
+    opacity: 0;
+    transition: opacity var(--dur) ease;
+  }
+  .queue-item:hover .queue-acts,
+  .queue-item:focus-within .queue-acts {
+    opacity: 1;
   }
   .queue-acts button {
-    width: 22px;
-    height: 22px;
+    width: var(--h-sm);
+    height: var(--h-sm);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0;
     background: none;
     border: none;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     cursor: pointer;
   }
   .queue-acts button:hover {
-    background: var(--hover);
+    background: var(--fill-hover);
     color: var(--text);
   }
   .held {

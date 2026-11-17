@@ -93,6 +93,9 @@ pub(crate) enum UiEvent {
         session: String,
         todo: serde_json::Value,
     },
+    Refreshed {
+        session: String,
+    },
     Context {
         session: String,
         used: u64,
@@ -382,6 +385,7 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
         },
         RunEvent::Notice { text } => UiEvent::Notice { session, text },
         RunEvent::Todo { todo } => UiEvent::Todo { session, todo },
+        RunEvent::Refreshed => UiEvent::Refreshed { session },
         RunEvent::Artifact {
             id,
             title,

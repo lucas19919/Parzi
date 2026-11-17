@@ -41,6 +41,9 @@ pub enum RunEvent {
     Todo {
         todo: serde_json::Value,
     },
+    /// The session's name or how its messages read changed outside a run
+    /// (a small model named it or tidied a message): read it again.
+    Refreshed,
     Artifact {
         id: String,
         title: String,
@@ -192,6 +195,7 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
         }
         RunEvent::Notice { text } => json!({ "kind": "notice", "session": session, "text": text }),
         RunEvent::Todo { todo } => json!({ "kind": "todo", "session": session, "todo": todo }),
+        RunEvent::Refreshed => json!({ "kind": "refreshed", "session": session }),
         RunEvent::Artifact {
             id,
             title,

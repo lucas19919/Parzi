@@ -550,7 +550,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (fade && left > 0) await new Promise((r) => setTimeout(r, left));
       if (my !== navSeq) return;
       meta = m;
-      events = ev;
+      events = withPending(id, ev);
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
       if (m.model) {
         tab.composer.model = m.model;
@@ -564,6 +564,22 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } finally {
       if (my === navSeq) swapping = false;
     }
+  }
+
+  // A message just sent stays on screen until the store has it. The run
+  // records it when it starts, which can come after the first reload (an agent
+  // still starting, a queued run); without this the bubble vanished and only
+  // "Thinking" showed.
+  let pendingSend: { sid: string; text: string; users: number } | null = null;
+  const usersIn = (ev: ChatEvent[]) => ev.filter((e) => e.kind === "user").length;
+  function withPending(id: string, ev: ChatEvent[]): ChatEvent[] {
+    const p = pendingSend;
+    if (!p || p.sid !== id) return ev;
+    if (usersIn(ev) > p.users) {
+      pendingSend = null;
+      return ev;
+    }
+    return [...ev, { kind: "user", text: p.text }];
   }
 
   async function reload(swap?: () => void) {
@@ -580,7 +596,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const [m, ev] = got;
     if (my !== navSeq || shown !== id) return;
     meta = m;
-    events = ev;
+    events = withPending(id, ev);
     swap?.();
     context = { used: m.context_tokens ?? context.used, limit: m.context_limit ?? context.limit };
   }
@@ -1021,6 +1037,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     draft.input = "";
     draft.attachments = [];
     comp = comp;
+    const usersBefore = fresh ? 0 : usersIn(events);
     events = [...events, optimistic];
     void scrollToBottom(true);
     try {
@@ -1036,6 +1053,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
       });
       if (target.sessionId) inflight.delete(target.sessionId);
+      pendingSend = { sid, text: prompt, users: usersBefore };
       markLive(sid);
       if (target.sessionId && sid !== target.sessionId) {
         running.delete(target.sessionId);
@@ -1119,6 +1137,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     markLive(sid);
     if (sid === shown) await reload();
     const optimistic: ChatEvent = { kind: "user", text: h.text };
+    const heldUsers = sid === shown ? usersIn(events) : 0;
     if (sid === shown) {
       events = [...events, optimistic];
       void scrollToBottom(true);
@@ -1135,6 +1154,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         remote: h.remote,
       });
       inflight.delete(sid);
+      pendingSend = { sid: id, text: h.text, users: heldUsers };
       if (id !== sid) {
         running.delete(sid);
         holdLive.delete(sid);
@@ -1633,6 +1653,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running).add(e.session);
     }
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
+    // A small model named the session or tidied a message (orchestrator/quick.rs).
+    if (e.kind === "refreshed") {
+      void renamed(e.session);
+      if (e.session === shown) void reload();
+      return;
+    }
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {

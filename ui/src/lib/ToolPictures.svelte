@@ -20,17 +20,13 @@
           <img src={url} alt={name(p)} draggable="false" />
         </button>
       {:catch}
-        <span class="gone">{name(p)} is not available</span>
+        <!-- A picture that can't load (moved, deleted) is left out, not announced. -->
       {/await}
     {/each}
   </div>
 {/if}
 
 <style>
-  .gone {
-    color: var(--muted);
-    font-size: var(--fs-xs);
-  }
   .pics {
     display: flex;
     flex-wrap: wrap;

@@ -49,6 +49,8 @@ pub struct Fake {
     pub script: Script,
     pub turns: Arc<Mutex<Vec<TurnSpec>>>,
     pub gated: bool,
+    /// Models its status reports; none unless a test asks.
+    pub models: Vec<String>,
 }
 
 impl Fake {
@@ -58,6 +60,18 @@ impl Fake {
             script,
             turns: Arc::default(),
             gated: true,
+            models: vec![],
+        })
+    }
+
+    /// One whose status offers a big and a small ("-mini") model.
+    pub fn with_small(id: &'static str, script: Script) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            script,
+            turns: Arc::default(),
+            gated: true,
+            models: vec![format!("{id}-big"), format!("{id}-mini")],
         })
     }
 
@@ -67,6 +81,7 @@ impl Fake {
             script,
             turns: Arc::default(),
             gated: false,
+            models: vec![],
         })
     }
 
@@ -84,7 +99,19 @@ impl Provider for Fake {
         self.gated
     }
     async fn status(&self) -> ProviderStatus {
-        ProviderStatus::new(self.id, State::Ready, "")
+        let mut s = ProviderStatus::new(self.id, State::Ready, "");
+        s.models = self
+            .models
+            .iter()
+            .map(|m| parzi_providers::ModelInfo {
+                id: m.clone(),
+                name: m.clone(),
+                is_default: false,
+                efforts: vec![],
+                images: None,
+            })
+            .collect();
+        s
     }
     async fn run_turn(
         &self,

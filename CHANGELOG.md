@@ -6,6 +6,13 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Your message shows the moment you send it and stays: it no longer vanished (leaving only "Thinking") when the agent took a moment to start.
+- Math is big enough to read: fractions, sums and integrals in a sentence are drawn full size, all math is a touch larger, and a tidied message puts an equation with fractions on its own line. Settings, Providers, Formatting agent picks the model for naming and tidying (Main, then Fallback).
+- A small model names new sessions in a few words (the agent's own small one, such as Haiku, when it has one), instead of cutting the first words of your message.
+- Math in your messages reads properly: when a message holds formulas, a small model sets them as LaTeX for display, and the agent still gets exactly what you typed. The sparkle button beside the message shows it as typed.
+- Only pictures a tool made show in the thread (a screenshot, a diagram): a path that merely appears in a listing or a search no longer pulls in an unrelated image, and a picture that can't load is left out instead of announced.
+- The queue is one calm card: "Queued · 3 · sends when the agent is done", click a message to edit it, drag to reorder, actions on hover.
+- A stopped turn says it once: "Stopped after 12s · 3 steps", in the same quiet line as "Worked for…". The wallpaper as a band stays a band behind sessions too.
 - Switching sessions is smooth: the thread fades out, the next one loads at its bottom out of sight and fades in, instead of a jump. The composer is the same glass on Home and in a session.
 - Each session has its own plan: the agent's checklist is kept on the session, survives a restart or a switch to another agent, and shows in the thread as one Plan card; the session manager shows "3 of 7". For a bigger piece of work an agent can ask first (Use this plan / Not now). Project-wide plans, plan items and quote chips are gone.
 - Work for later is a draft: an agent writes it down (a title, a brief and a rough plan) instead of a suggestion card, it waits under Drafts in the session manager, and Start runs it on the same session. Old project plans turn into drafts once, on the first start after this update (the old note is kept as plan.archived.md).

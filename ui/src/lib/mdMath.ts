@@ -4,6 +4,16 @@ export interface MathSpan {
   next: number;
 }
 
+// Inline math draws fractions, sums and integrals in KaTeX's compact text
+// style, about two thirds size: De/Dt in a sentence is too small to read. They
+// get display size instead; an author's \tfrac (asked small) stays small.
+const TALL = /\\(?:frac|dfrac|sum|prod|int|iint|iiint|oint|lim|binom)(?![a-zA-Z])/;
+
+export function readableTex(tex: string, display: boolean): string {
+  if (display || !TALL.test(tex) || /\\(?:displaystyle|textstyle|scriptstyle)/.test(tex)) return tex;
+  return `\\displaystyle ${tex}`;
+}
+
 export function mathAt(src: string, pos: number): MathSpan | null {
   if (src[pos] !== "$" || (pos > 0 && src[pos - 1] === "\\")) return null;
   const display = src[pos + 1] === "$";

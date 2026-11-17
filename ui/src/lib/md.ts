@@ -3,7 +3,7 @@ import DOMPurify from "dompurify";
 import { writable } from "svelte/store";
 import { toast } from "./toast";
 import { reportMarkdown } from "./mdReport";
-import { mathAt } from "./mdMath";
+import { mathAt, readableTex } from "./mdMath";
 import { splitBlocks } from "./liveBlocks";
 import { chipLabel, gitRefs, vaultRefs, wholeRef } from "./linkRules";
 
@@ -121,7 +121,7 @@ md.validateLink = (url: string) => {
 function texHtml(tex: string, display: boolean): string | null {
   if (!tex.trim() || !katex) return null;
   try {
-    return katex.renderToString(tex, {
+    return katex.renderToString(readableTex(tex, display), {
       displayMode: display,
       throwOnError: true,
       output: "html",

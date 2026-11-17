@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mathAt } from "../src/lib/mdMath.ts";
+import { mathAt, readableTex } from "../src/lib/mdMath.ts";
+
+test("inline fractions, sums and integrals render full size; a \\tfrac stays small", () => {
+  assert.equal(readableTex("\\frac{De}{Dt}", false), "\\displaystyle \\frac{De}{Dt}");
+  assert.equal(readableTex("\\oint q_j n_j \\, dA", false), "\\displaystyle \\oint q_j n_j \\, dA");
+  assert.equal(readableTex("\\tfrac12 v^2", false), "\\tfrac12 v^2");
+  assert.equal(readableTex("v_i v_i", false), "v_i v_i");
+  assert.equal(readableTex("\\frac{a}{b}", true), "\\frac{a}{b}", "display math is full size already");
+  assert.equal(readableTex("\\textstyle \\frac{a}{b}", false), "\\textstyle \\frac{a}{b}", "an author's choice wins");
+});
 
 function spans(line: string): string[] {
   const out: string[] = [];
