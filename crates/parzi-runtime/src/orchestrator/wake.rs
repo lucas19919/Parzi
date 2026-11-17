@@ -289,7 +289,9 @@ mod tests {
                 items: vec![parzi_core::store::PlanStep {
                     title: "Write the parser".into(),
                     state: parzi_core::store::StepState::Done,
+                    detail: None,
                 }],
+                ..Default::default()
             }),
             brief: None,
             branch: "plan/parser".into(),

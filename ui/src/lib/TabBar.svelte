@@ -428,8 +428,8 @@
     width: 11px;
     height: 11px;
     border-radius: 50%;
-    border: 1.6px solid var(--line);
-    border-top-color: var(--accent);
+    border: 1.6px solid color-mix(in srgb, var(--muted) 30%, transparent);
+    border-top-color: var(--muted);
     animation: spin 0.8s linear infinite;
   }
   .tab.active .kind {

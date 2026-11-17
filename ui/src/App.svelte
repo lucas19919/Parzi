@@ -988,11 +988,29 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else showCover("sessions");
   }
 
+  // A plan waiting for an answer takes what you type as your answer: changes
+  // go straight to the agent instead of queueing behind it.
+  $: planAsk = openQuestion && openQuestion.options[0] === "Use this plan" ? openQuestion : null;
+
   async function send() {
     const target = tab;
     const draft = target.composer;
     const prompt = draft.input.trim();
     if (!prompt) return;
+    if (planAsk && target.sessionId === planAsk.session) {
+      const ask = planAsk;
+      draft.input = "";
+      comp = comp;
+      settle(ask.key);
+      try {
+        await api.answerQuestion(ask.key, ask.session, prompt);
+      } catch (e) {
+        draft.input = prompt;
+        comp = comp;
+        toastError(e);
+      }
+      return;
+    }
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
@@ -1649,16 +1667,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       else if (!stopped(e.error)) announce(e.session, "stopped with an error", "error", { news: "problem" });
       return;
     }
-    if (!running.has(e.session) && e.kind !== "context") {
-      running = new Set(running).add(e.session);
-    }
-    if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
     // A small model named the session or tidied a message (orchestrator/quick.rs).
     if (e.kind === "refreshed") {
       void renamed(e.session);
       if (e.session === shown) void reload();
       return;
     }
+    if (!running.has(e.session) && e.kind !== "context") {
+      running = new Set(running).add(e.session);
+    }
+    if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
@@ -2195,9 +2213,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
               </div>
             </div>
             {/if}
-            {#if hasSession && !coverOn}
-              <div class="thread-fade" style:--dock="{dockHeight}px" aria-hidden="true"></div>
-            {/if}
           </section>
           {/if}
           {#if readerShown && fileDoc}
@@ -2267,6 +2282,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             comp = comp;
           }}
           hero={!hasSession}
+          hint={planAsk ? "Say what to change, or accept the plan above" : ""}
           {project}
           queue={heldRows}
           queuePaused={queueIsPaused}
@@ -2399,6 +2415,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     --fill-hover: color-mix(in srgb, var(--text) 14%, transparent);
     --surface: color-mix(in srgb, var(--panel) 52%, transparent);
     --surface-raised: color-mix(in srgb, var(--panel) 72%, transparent);
+    --edge: color-mix(in srgb, var(--text) 9%, transparent);
     --link: color-mix(in srgb, var(--accent) 70%, var(--text));
     --ok-text: color-mix(in srgb, var(--ok) 40%, var(--text));
     --warn-text: color-mix(in srgb, var(--warn) 35%, var(--text));
@@ -2462,7 +2479,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     margin: 0 var(--gap);
     overflow: hidden;
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
   }
@@ -2480,6 +2497,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .stagerow.solo {
     justify-content: flex-end;
   }
+  /* The stage (a session, a page, an artifact) is a card inset from the
+     window, its rounded top corners and sides drawn by one faint edge: with
+     no edge, the shaded top hid half its outline and the corner read as a
+     stray strip down the left. */
   .session {
     position: relative;
     min-width: 0;
@@ -2490,7 +2511,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     margin: 0 var(--gap);
     overflow: hidden;
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
@@ -2504,7 +2525,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     margin: 0 var(--gap);
     overflow: hidden;
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     border-bottom: none;
     border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
@@ -2571,17 +2592,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     user-select: text;
   }
 
-  .thread-fade {
-    pointer-events: none;
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: calc(var(--dock, 140px) + 28px);
-    z-index: 15;
-    background: linear-gradient(to bottom, transparent, var(--bg) 55%);
-  }
-
   .composer {
     position: absolute;
     left: 50%;
@@ -2624,7 +2634,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     max-width: 360px;
     padding: calc(var(--space) * 2) calc(var(--space) * 4);
     background: var(--surface-raised);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);

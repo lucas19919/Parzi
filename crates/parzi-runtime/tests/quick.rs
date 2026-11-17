@@ -18,7 +18,7 @@ async fn a_small_model_names_the_session_and_tidies_math() {
             let asks = a.spec.instructions.clone().unwrap_or_default();
             if small && asks.starts_with("You name") {
                 a.say("Energy equation derivation");
-            } else if small && asks.starts_with("You set") {
+            } else if small && asks.starts_with("You format") {
                 a.say("Derive $\\rho \\frac{De}{Dt}$ with $e = u + \\tfrac12 v^2$");
             } else {
                 a.session("main-1");
@@ -43,8 +43,7 @@ async fn a_small_model_names_the_session_and_tidies_math() {
         )
         .await
         .unwrap();
-    orch.name_soon(&meta.id, typed);
-    orch.tidy_soon(&meta.id, typed);
+    orch.prepare_soon(&meta.id, typed, true);
     settle(&store, &meta.id).await;
 
     let mut tidy = None;
@@ -73,11 +72,29 @@ async fn a_small_model_names_the_session_and_tidies_math() {
         .find(|t| t.model.as_deref() == Some("claude-big"))
         .unwrap();
     assert!(main.prompt.contains(typed), "the agent got what was typed");
+    let quick_turns: Vec<_> = turns
+        .iter()
+        .filter(|t| t.model.as_deref() == Some("claude-mini"))
+        .collect();
+    assert_eq!(quick_turns.len(), 2);
     assert!(
-        turns
-            .iter()
-            .filter(|t| t.model.as_deref() == Some("claude-mini"))
-            .all(|t| t.tools.is_none()),
+        quick_turns[0]
+            .instructions
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("You name"),
+        "naming runs first"
+    );
+    assert!(
+        quick_turns[1]
+            .instructions
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("You format"),
+        "formatting runs after naming"
+    );
+    assert!(
+        quick_turns.iter().all(|t| t.tools.is_none()),
         "the quick turns have no tools"
     );
 }

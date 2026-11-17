@@ -110,13 +110,13 @@ async fn a_proposed_plan_waits_for_the_persons_yes() {
     let asked = person.asked();
     assert_eq!(asked.len(), 3);
     assert!(
-        asked[0].question.contains(
-            "1. Find the stall
-2. Cache the head"
-        ),
+        asked[0].question.contains("Find the stall\nCache the head"),
         "{}",
         asked[0].question
     );
+    let card: serde_json::Value = serde_json::from_str(&asked[0].details[0]).unwrap();
+    assert_eq!(card["plan"], true, "the card gets the plan as data");
+    assert_eq!(card["steps"][1]["title"], "Cache the head");
     assert_eq!(asked[0].options, ["Use this plan", "Not now"]);
 }
 

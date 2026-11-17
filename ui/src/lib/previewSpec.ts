@@ -48,6 +48,7 @@ export function tokenStyle(raw: unknown): string {
       "--fill-hover:color-mix(in srgb, var(--text) 14%, transparent)",
       "--surface:color-mix(in srgb, var(--panel) 52%, transparent)",
       "--surface-raised:color-mix(in srgb, var(--panel) 72%, transparent)",
+      "--edge:color-mix(in srgb, var(--text) 9%, transparent)",
     );
   }
   if (set.space) derived.push("--gap:calc(var(--space) * 2)", "--radius-sm:calc(var(--space))");

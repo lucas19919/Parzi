@@ -157,13 +157,10 @@ pub async fn send_message(
                 .id
         }
     };
-    // Beside the run, a small model names a new session and sets the message
-    // for display (math, code); the agent already has what was typed.
+    // Beside the run, a small model names a new session first and then sets
+    // the message for display (math, code); the agent already has what was typed.
     if parent.as_deref().is_none_or(str::is_empty) {
-        if fresh {
-            state.orch.name_soon(&sid, &prompt);
-        }
-        state.orch.tidy_soon(&sid, &prompt);
+        state.orch.prepare_soon(&sid, &prompt, fresh);
     }
     if let Some(parent) = parent.filter(|p| !p.is_empty() && *p != sid) {
         if let Err(e) = state.orch.store().set_parent(&sid, &parent) {

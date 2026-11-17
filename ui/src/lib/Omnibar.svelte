@@ -40,6 +40,8 @@
   export let canSide = false;
   export let board: ProviderStatus[] = [];
   export let hero = false;
+  /** Says what sending does now, over the usual placeholder (a plan waiting for an answer). */
+  export let hint = "";
   export let project: { slug: string; title: string; tokens: number } | null = null;
   export let remoteHost = "";
   export let remote = false;
@@ -203,7 +205,9 @@
   }
 
   $: web = mode === "search";
-  $: placeholder = streaming
+  $: placeholder = hint
+    ? hint
+    : streaming
     ? "Queue a message for when it's done"
     : web
       ? "Search the web or type an address"
@@ -917,7 +921,7 @@
     gap: calc(var(--space) * 3);
     padding: calc(var(--space) * 3);
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);
@@ -1099,7 +1103,7 @@
     margin: 0 0 calc(var(--space) * 2);
     padding: var(--space);
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);
@@ -1355,7 +1359,7 @@
     padding: var(--space);
     overflow-y: auto;
     background: var(--surface-raised);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);

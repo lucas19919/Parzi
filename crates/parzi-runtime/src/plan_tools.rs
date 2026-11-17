@@ -98,13 +98,35 @@ pub(crate) const NOT_NOW: &str = "Not now";
 
 /// The question for a proposed plan: the steps, numbered.
 pub(crate) fn proposal_text(plan: &SessionPlan) -> String {
-    let steps: Vec<String> = plan
+    let mut out = vec!["Use this plan for this session?".to_string()];
+    if let Some(s) = &plan.summary {
+        out.push(s.clone());
+    }
+    out.extend(plan.items.iter().map(|i| match &i.detail {
+        Some(d) => format!("{}: {d}", i.title),
+        None => i.title.clone(),
+    }));
+    if let Some(d) = &plan.doc {
+        out.push(format!("Full plan: {d}"));
+    }
+    out.join("\n")
+}
+
+/// The proposal as data for the card: summary, steps with their detail, and
+/// the fuller plan document.
+pub(crate) fn proposal_json(plan: &SessionPlan) -> String {
+    let steps: Vec<Value> = plan
         .items
         .iter()
-        .enumerate()
-        .map(|(n, i)| format!("{}. {}", n + 1, i.title))
+        .map(|i| serde_json::json!({ "title": i.title, "detail": i.detail }))
         .collect();
-    format!("Use this plan for this session?\n\n{}", steps.join("\n"))
+    serde_json::json!({
+        "plan": true,
+        "summary": plan.summary,
+        "steps": steps,
+        "doc": plan.doc,
+    })
+    .to_string()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -157,24 +179,32 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_reads_as_marked_lines_and_a_numbered_proposal() {
+    fn a_plan_reads_as_marked_lines_and_a_proposal_with_its_context() {
+        let step = |title: &str, state, detail: Option<&str>| PlanStep {
+            title: title.into(),
+            state,
+            detail: detail.map(str::to_string),
+        };
         let p = SessionPlan {
             items: vec![
-                PlanStep {
-                    title: "Lexer".into(),
-                    state: StepState::Done,
-                },
-                PlanStep {
-                    title: "Parser".into(),
-                    state: StepState::Active,
-                },
-                PlanStep {
-                    title: "Tests".into(),
-                    state: StepState::Pending,
-                },
+                step("Lexer", StepState::Done, None),
+                step(
+                    "Parser",
+                    StepState::Active,
+                    Some("Pratt, for the operators"),
+                ),
+                step("Tests", StepState::Pending, None),
             ],
+            summary: Some("A small parser for the config language.".into()),
+            doc: Some("/s/plan.md".into()),
         };
         assert_eq!(lines(&p), "[x] Lexer\n[>] Parser\n[ ] Tests");
-        assert!(proposal_text(&p).ends_with("1. Lexer\n2. Parser\n3. Tests"));
+        assert_eq!(
+            proposal_text(&p),
+            "Use this plan for this session?\nA small parser for the config language.\nLexer\nParser: Pratt, for the operators\nTests\nFull plan: /s/plan.md"
+        );
+        let j: Value = serde_json::from_str(&proposal_json(&p)).unwrap();
+        assert_eq!(j["steps"][1]["detail"], "Pratt, for the operators");
+        assert_eq!(j["doc"], "/s/plan.md");
     }
 }

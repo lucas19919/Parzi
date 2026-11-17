@@ -26,3 +26,12 @@ test("a dash inside a word is not a mark", () => {
     { kind: "heading", text: "+1 from me" },
   ]);
 });
+
+test("numbered and bulleted lines are a list, a dash is still a drop", () => {
+  assert.deepEqual(questionParts("Use this plan?\n\n1. Find the stall\n2) Cache the head\n• Run the tests\n- Old step").lines, [
+    { kind: "item", mark: "1.", text: "Find the stall" },
+    { kind: "item", mark: "2)", text: "Cache the head" },
+    { kind: "item", mark: "•", text: "Run the tests" },
+    { kind: "drop", text: "Old step" },
+  ]);
+});

@@ -662,6 +662,10 @@ impl Provider for Acp {
         self.agent.gated
     }
 
+    fn slow_start(&self) -> bool {
+        self.agent.slow_start
+    }
+
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
             let hint = if self.agent.id == "acp" {

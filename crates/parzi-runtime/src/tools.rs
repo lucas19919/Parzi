@@ -1009,6 +1009,7 @@ fn plan_defs() -> Vec<ToolDef> {
             "properties": {
                 "title": {"type": "string", "description": "a short imperative"},
                 "state": {"type": "string", "enum": ["pending", "active", "done"]},
+                "detail": {"type": "string", "description": "what the step involves and why, a line or two (shown when proposing)"},
             },
             "required": ["title"],
         },
@@ -1024,12 +1025,14 @@ fn plan_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "plan.write".into(),
-            description: "Set this session's plan: its checklist for work of three steps or more, kept on the session (it survives restarts and a switch to another agent) and shown in the thread. Send the whole list each time; it replaces the last one. Each step a short imperative and a state: pending, active or done. Keep one step active while you work and mark each done as it is; an empty list clears it. propose: true asks the person first (Use this plan / Not now) and saves only on their yes; use it once, for the plan of a larger piece of work before you start. Progress updates never propose. Work for later, outside this session, is session.draft.".into(),
+            description: "Set this session's plan: its checklist for work of three steps or more, kept on the session (it survives restarts and a switch to another agent) and shown in the thread. Send the whole list each time; it replaces the last one. Each step a short imperative and a state: pending, active or done. Keep one step active while you work and mark each done as it is; an empty list clears it. propose: true asks the person first and saves only when they accept; use it once, for the plan of a larger piece of work before you start, and make it worth reading: a summary (what you will do and why, two to four sentences), a detail on each step, and doc, the path of the full plan you wrote as a markdown file in your scratch folder (approach, files, risks, how you will check it). If they answer with changes instead, revise and propose again. Progress updates never propose. Work for later, outside this session, is session.draft.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "items": items,
                     "propose": {"type": "boolean"},
+                    "summary": {"type": "string", "description": "when proposing: what the plan does and why, two to four sentences"},
+                    "doc": {"type": "string", "description": "when proposing: path of the full plan, a markdown file you wrote"},
                 },
                 "required": ["items"],
             }),

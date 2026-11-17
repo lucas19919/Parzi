@@ -345,9 +345,30 @@ pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, 
             "done" | "completed" => "done",
             _ => return Err(format!("state `{said}` is not pending, active or done")),
         };
-        out.push(serde_json::json!({"title": title, "state": state}));
+        let mut item = serde_json::json!({"title": title, "state": state});
+        if let Some(d) = it
+            .get("detail")
+            .and_then(|d| d.as_str())
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
+            item["detail"] = serde_json::json!(d.chars().take(400).collect::<String>());
+        }
+        out.push(item);
     }
-    Ok(serde_json::json!({"items": out}))
+    let mut payload = serde_json::json!({"items": out});
+    // A plan's summary and the fuller plan document, when the agent gives them.
+    for (key, cap) in [("summary", 1_200), ("doc", 500)] {
+        if let Some(v) = args
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            payload[key] = serde_json::json!(v.chars().take(cap).collect::<String>());
+        }
+    }
+    Ok(payload)
 }
 
 #[must_use]

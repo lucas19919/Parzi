@@ -31,32 +31,58 @@ impl PermissionGate for NoTools {
     }
 }
 
+/// The first small model offered by a ready agent, as (agent, model id).
+fn first_small(s: &ProviderStatus) -> Option<(String, String)> {
+    s.models
+        .iter()
+        .find(|m| {
+            let both = format!("{} {}", m.id, m.name).to_ascii_lowercase();
+            SMALL.iter().any(|w| both.contains(w))
+        })
+        .map(|m| (s.provider.clone(), m.id.clone()))
+}
+
+/// Ready agents' small models ordered by preference: fast-starting agents
+/// first (session's agent before others), then slow-starting agents.
+pub(crate) fn small_models(
+    all: &[ProviderStatus],
+    prefer: &str,
+    is_slow: impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
+    let ready: Vec<&ProviderStatus> = all.iter().filter(|s| s.state == State::Ready).collect();
+    let mut out = Vec::new();
+    for slow_tier in [false, true] {
+        for prefer_tier in [true, false] {
+            for s in &ready {
+                if is_slow(&s.provider) != slow_tier || (s.provider == prefer) != prefer_tier {
+                    continue;
+                }
+                if let Some(pair) = first_small(s) {
+                    if !out.contains(&pair) {
+                        out.push(pair);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The small model to use: the preferred agent's first, then any ready
 /// agent's, as (agent, model id).
+#[cfg(test)]
 pub(crate) fn small_model(all: &[ProviderStatus], prefer: &str) -> Option<(String, String)> {
-    let small = |s: &ProviderStatus| {
-        s.models
-            .iter()
-            .find(|m| {
-                let both = format!("{} {}", m.id, m.name).to_ascii_lowercase();
-                SMALL.iter().any(|w| both.contains(w))
-            })
-            .map(|m| (s.provider.clone(), m.id.clone()))
-    };
-    let ready = all.iter().filter(|s| s.state == State::Ready);
-    ready
-        .clone()
-        .filter(|s| s.provider == prefer)
-        .find_map(small)
-        .or_else(|| ready.filter(|s| s.provider != prefer).find_map(small))
+    small_models(all, prefer, |_| false).into_iter().next()
 }
 
 /// The small models to try, in order: the one chosen in Settings, its
-/// fallback (each only when its agent is ready), then the automatic pick.
-pub(crate) fn candidates(
+/// fallback (each only when its agent is ready), then the automatic picks
+/// (fast-starting agents before slow-starting ones).
+pub(crate) fn candidates_with(
     chosen: &parzi_core::config::QuickModels,
     all: &[ProviderStatus],
     prefer: &str,
+    is_slow: impl Fn(&str) -> bool,
 ) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = vec![];
     for spec in [&chosen.model, &chosen.fallback] {
@@ -71,10 +97,21 @@ pub(crate) fn candidates(
             out.push(pair);
         }
     }
-    if let Some(auto) = small_model(all, prefer).filter(|p| !out.contains(p)) {
-        out.push(auto);
+    for auto in small_models(all, prefer, is_slow) {
+        if !out.contains(&auto) {
+            out.push(auto);
+        }
     }
     out
+}
+
+#[cfg(test)]
+pub(crate) fn candidates(
+    chosen: &parzi_core::config::QuickModels,
+    all: &[ProviderStatus],
+    prefer: &str,
+) -> Vec<(String, String)> {
+    candidates_with(chosen, all, prefer, |_| false)
 }
 
 /// Does this message hold math or code worth setting properly?
@@ -97,18 +134,98 @@ pub(crate) fn worth_tidying(text: &str) -> bool {
     has_eq && (words || marks) || (words && marks)
 }
 
+/// Non-math prose words that should never be dropped when tidying notation.
+const PROSE_KEEP: &[&str] = &[
+    "if",
+    "when",
+    "while",
+    "unless",
+    "until",
+    "because",
+    "since",
+    "although",
+    "though",
+    "whereas",
+    "suppose",
+    "assume",
+    "assuming",
+    "given",
+    "consider",
+    "prove",
+    "derive",
+    "show",
+    "explain",
+    "check",
+    "verify",
+    "find",
+    "solve",
+    "compute",
+    "calculate",
+    "evaluate",
+    "simplify",
+    "test",
+    "testing",
+    "why",
+    "how",
+    "what",
+    "which",
+    "whether",
+    "can",
+    "could",
+    "would",
+    "should",
+    "does",
+    "not",
+    "never",
+    "always",
+    "please",
+    "therefore",
+    "hence",
+    "thus",
+    "however",
+    "but",
+    "then",
+];
+
+fn ascii_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+pub(crate) fn tidy_ok(orig: &str, tidy: &str) -> bool {
+    let orig = orig.trim();
+    let tidy = tidy.trim();
+    if tidy.is_empty() || tidy == orig || tidy.len() > orig.len() * 3 + 200 {
+        return false;
+    }
+    let kept = ascii_words(tidy);
+    for w in ascii_words(orig) {
+        if PROSE_KEEP.contains(&w.as_str()) && !kept.iter().any(|k| k == &w) {
+            return false;
+        }
+    }
+    true
+}
+
 const NAMER: &str = "You name chat sessions. Reply with only a name for the conversation that starts with the message below: 2 to 5 words, sentence case, no quotes, no full stop, at most 60 characters. Name what it is about, not that it is a question.";
 
-const TIDIER: &str = "You set a person's chat message properly for display. Keep their words, meaning, order and tone exactly; fix nothing about the content. Only change notation: write mathematics as LaTeX, small expressions inline inside $...$, and any equation with a fraction, integral or sum that stands on its own as a display formula, $$...$$ on its own line, so it is large enough to read. Use \\frac, never \\tfrac or a slash for a fraction. Put names of code, files and commands in backticks, and lists as Markdown lists where they already were lists. Reply with only the rewritten message. If there is nothing to set, reply with the message unchanged.";
+const TIDIER: &str = "You format a person's chat message for display without changing any prose. Keep every non-math word, prefix, connecting word (such as 'if', 'the', 'where', 'given', 'when'), punctuation and sentence fragment verbatim, in the exact same order, even if the message is an incomplete sentence or cut off. Fix nothing about the content or grammar. Only convert mathematical notation to LaTeX: keep math inside a sentence inline in $...$ (including integrals, sums and fractions, which already render full size), and use $$...$$ on its own line only when an equation is already on its own line. Use \\frac, never \\tfrac or a slash for a fraction. Put names of code, files and commands in backticks, and keep Markdown lists only where they already were lists. Reply with only the rewritten message, or the message unchanged if nothing needs formatting.";
 
 impl Orchestrator {
     /// One tool-less turn on a small model; its reply, or None when no small
     /// model answers. Tries the model chosen in Settings, then its fallback,
-    /// then the session's agent's own small model (or any ready agent's).
+    /// then the session's agent's own small model (or any ready fast-starting
+    /// agent's).
     pub async fn quick(&self, prefer: &str, instructions: &str, prompt: &str) -> Option<String> {
         let cfg = self.config();
         let all = self.provider_statuses();
-        for (agent, model) in candidates(&cfg.quick, &all, prefer) {
+        let is_slow = |agent: &str| {
+            !cfg.provider(agent).enabled
+                || (self.source)(agent, &cfg).is_some_and(|p| p.slow_start())
+        };
+        for (agent, model) in candidates_with(&cfg.quick, &all, prefer, is_slow) {
             if !cfg.provider(&agent).enabled {
                 continue;
             }
@@ -176,28 +293,83 @@ impl Orchestrator {
         }
     }
 
+    async fn run_name(&self, id: &str, prompt: &str) {
+        let Ok(meta) = self.store.get(id) else { return };
+        let before = meta.title.clone();
+        let agent = meta.model.split('/').next().unwrap_or_default().to_string();
+        let asked: String = prompt.chars().take(2_000).collect();
+        let Some(said) = self.quick(&agent, NAMER, &asked).await else {
+            return;
+        };
+        let name = fit_name(said.trim().trim_matches(['"', '\'', '.']));
+        if name.is_empty() || name.split(' ').count() > NAME_WORDS {
+            return;
+        }
+        // The person or the agent may have named it meanwhile.
+        if self.store.get(id).map(|m| m.title).ok() != Some(before) {
+            return;
+        }
+        if self.store.set_title(id, &name).is_ok() {
+            let _ = self.bus.send((id.to_string(), RunEvent::Refreshed));
+        }
+    }
+
+    async fn run_tidy(&self, id: &str, text: &str) {
+        if !worth_tidying(text) {
+            return;
+        }
+        let Ok(meta) = self.store.get(id) else { return };
+        let agent = meta.model.split('/').next().unwrap_or_default().to_string();
+        let Some(tidy) = self.quick(&agent, TIDIER, text).await else {
+            return;
+        };
+        if !tidy_ok(text, &tidy) {
+            return;
+        }
+        let events = self.store.events(id).unwrap_or_default();
+        let Some(n) = events
+            .iter()
+            .filter(|e| matches!(e, Event::User { .. }))
+            .position(
+                |e| matches!(e, Event::User { text: t } if t.trim_start().starts_with(text.trim())),
+            )
+        else {
+            return;
+        };
+        let payload = serde_json::json!({ "n": n, "text": tidy });
+        let event = Event::Widget {
+            fence: "parzi-tidy".into(),
+            payload,
+        };
+        if self.store.append(id, &event).is_ok() {
+            let _ = self.bus.send((id.to_string(), RunEvent::Refreshed));
+        }
+    }
+
+    /// Names a new session (when `name` is true) and then tidies the message
+    /// for display, sequentially in one background task so naming finishes
+    /// before formatting runs.
+    pub fn prepare_soon(self: &Arc<Self>, id: &str, prompt: &str, name: bool) {
+        let do_tidy = worth_tidying(prompt);
+        if !name && !do_tidy {
+            return;
+        }
+        let (me, id, prompt) = (self.clone(), id.to_string(), prompt.to_string());
+        tokio::spawn(async move {
+            if name {
+                me.run_name(&id, &prompt).await;
+            }
+            if do_tidy {
+                me.run_tidy(&id, &prompt).await;
+            }
+        });
+    }
+
     /// Names a new session with a small model, unless it was renamed first.
     pub fn name_soon(self: &Arc<Self>, id: &str, prompt: &str) {
         let (me, id, prompt) = (self.clone(), id.to_string(), prompt.to_string());
         tokio::spawn(async move {
-            let Ok(meta) = me.store.get(&id) else { return };
-            let before = meta.title.clone();
-            let agent = meta.model.split('/').next().unwrap_or_default().to_string();
-            let asked: String = prompt.chars().take(2_000).collect();
-            let Some(said) = me.quick(&agent, NAMER, &asked).await else {
-                return;
-            };
-            let name = fit_name(said.trim().trim_matches(['"', '\'', '.']));
-            if name.is_empty() || name.split(' ').count() > NAME_WORDS {
-                return;
-            }
-            // The person or the agent may have named it meanwhile.
-            if me.store.get(&id).map(|m| m.title).ok() != Some(before) {
-                return;
-            }
-            if me.store.set_title(&id, &name).is_ok() {
-                let _ = me.bus.send((id, RunEvent::Refreshed));
-            }
+            me.run_name(&id, &prompt).await;
         });
     }
 
@@ -210,30 +382,7 @@ impl Orchestrator {
         }
         let (me, id, text) = (self.clone(), id.to_string(), text.to_string());
         tokio::spawn(async move {
-            let Ok(meta) = me.store.get(&id) else { return };
-            let agent = meta.model.split('/').next().unwrap_or_default().to_string();
-            let Some(tidy) = me.quick(&agent, TIDIER, &text).await else {
-                return;
-            };
-            if tidy.trim() == text.trim() || tidy.len() > text.len() * 3 + 200 {
-                return;
-            }
-            let events = me.store.events(&id).unwrap_or_default();
-            let Some(n) = events
-                .iter()
-                .filter(|e| matches!(e, Event::User { .. }))
-                .position(|e| matches!(e, Event::User { text: t } if t.trim_start().starts_with(text.trim())))
-            else {
-                return;
-            };
-            let payload = serde_json::json!({ "n": n, "text": tidy });
-            let event = Event::Widget {
-                fence: "parzi-tidy".into(),
-                payload,
-            };
-            if me.store.append(&id, &event).is_ok() {
-                let _ = me.bus.send((id, RunEvent::Refreshed));
-            }
+            me.run_tidy(&id, &text).await;
         });
     }
 }
@@ -330,7 +479,25 @@ mod tests {
         let none = parzi_core::config::QuickModels::default();
         assert_eq!(
             candidates(&none, &all, "claude"),
-            [("claude".to_string(), "claude-haiku-5-5".to_string())]
+            [
+                ("claude".to_string(), "claude-haiku-5-5".to_string()),
+                ("grok".to_string(), "grok-4.7-fast".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn fast_starting_agents_come_before_slow_starting_ones() {
+        let all = [
+            status("antigravity", State::Ready, &["gemini-flash"]),
+            status("opencode", State::Ready, &["opencode-mini"]),
+        ];
+        assert_eq!(
+            small_models(&all, "antigravity", |a| a == "antigravity"),
+            [
+                ("opencode".to_string(), "opencode-mini".to_string()),
+                ("antigravity".to_string(), "gemini-flash".to_string()),
+            ]
         );
     }
 
@@ -345,5 +512,16 @@ mod tests {
         assert!(!worth_tidying(
             "already set: $e = u + v^2/2$ and $$\\int f$$"
         ));
+    }
+
+    #[test]
+    fn tidier_rejects_dropped_prose_words() {
+        let orig = "testing... if the surface area integral of njsigmaij dA + volume integral density fv dV = integral density De/Dt dV";
+        let dropped =
+            "testing... $$\\int n_j \\sigma_{ij}\\,dA + \\int \\rho f_v\\,dV = \\int \\rho \\frac{De}{Dt}\\,dV$$";
+        let kept =
+            "testing... if the surface area integral $\\int n_j \\sigma_{ij}\\,dA + \\int \\rho f_v\\,dV = \\int \\rho \\frac{De}{Dt}\\,dV$";
+        assert!(!tidy_ok(orig, dropped));
+        assert!(tidy_ok(orig, kept));
     }
 }

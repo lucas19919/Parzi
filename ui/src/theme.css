@@ -40,6 +40,8 @@
   --surface: color-mix(in srgb, var(--panel) 52%, transparent);
   /* Denser glass for what sits on surfaces: popups, the composer over a thread. */
   --surface-raised: color-mix(in srgb, var(--panel) 72%, transparent);
+  /* The hairline that outlines every card, so its edge reads over a dark picture. */
+  --edge: color-mix(in srgb, var(--text) 9%, transparent);
   --blur: blur(18px) saturate(1.2);
   --link: color-mix(in srgb, var(--accent) 70%, var(--text));
   --scrim: rgba(0, 0, 0, 0.6);
@@ -148,14 +150,14 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
 .pop {
   position: fixed; z-index: var(--z-pop); max-width: calc(100vw - 16px);
   background: var(--surface-raised);
-  border: 1px solid transparent; border-radius: var(--radius);
+  border: 1px solid var(--edge); border-radius: var(--radius);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
   overflow: hidden;
 }
 .tip {
   position: fixed; z-index: var(--z-tip); max-width: 280px; padding: var(--space) calc(var(--space) * 2); pointer-events: none;
-  background: var(--surface-raised); border: 1px solid transparent; border-radius: var(--radius);
+  background: var(--surface-raised); border: 1px solid var(--edge); border-radius: var(--radius);
   -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
   color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
 }
@@ -337,6 +339,7 @@ button.info-line.row:hover { background: var(--hover); }
 /* Cards inside a Page: a title row, then divided rows. */
 .page .rows {
   background: var(--surface); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  border: 1px solid var(--edge);
   border-radius: var(--radius);
   overflow: hidden;
 }

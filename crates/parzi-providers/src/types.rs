@@ -301,6 +301,10 @@ pub trait Provider: Send + Sync {
 
     fn gated(&self) -> bool;
 
+    fn slow_start(&self) -> bool {
+        false
+    }
+
     async fn status(&self) -> ProviderStatus;
 
     async fn run_turn(

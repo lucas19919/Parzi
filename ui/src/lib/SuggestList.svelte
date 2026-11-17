@@ -61,7 +61,7 @@
     flex-direction: column;
     padding: var(--space);
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);

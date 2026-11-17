@@ -82,13 +82,22 @@ pub struct SessionMeta {
 pub struct SessionPlan {
     #[serde(default)]
     pub items: Vec<PlanStep>,
+    /// What the plan does and why, in a few sentences.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// The fuller plan document the agent wrote (a path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanStep {
     pub title: String,
     #[serde(default)]
     pub state: StepState,
+    /// What the step involves, a line or two.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -114,13 +123,32 @@ impl SessionPlan {
                     "done" => StepState::Done,
                     _ => StepState::Pending,
                 };
+                let detail = it
+                    .get("detail")
+                    .and_then(|d| d.as_str())
+                    .map(str::trim)
+                    .filter(|d| !d.is_empty())
+                    .map(str::to_string);
                 (!title.is_empty()).then(|| PlanStep {
                     title: title.to_string(),
                     state,
+                    detail,
                 })
             })
             .collect();
-        Some(Self { items })
+        let text = |k: &str| {
+            payload
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        Some(Self {
+            items,
+            summary: text("summary"),
+            doc: text("doc"),
+        })
     }
 
     pub fn done(&self) -> usize {

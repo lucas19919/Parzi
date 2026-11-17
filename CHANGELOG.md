@@ -6,6 +6,9 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- A proposed plan reads like a plan: what and why at full size, each step with what it involves, a link to the agent's full plan document, and one Accept. To change it, type what you want in the composer; it goes straight to the agent.
+- Questions are calm choice cards: each answer is a tile you click to answer at once (several can be picked and sent together when the agent allows it), "Something else…" takes your own words, and Skip sits quietly by the title. No radio buttons or Submit.
+- Every card (the session, the side cards, the composer, the plan, questions, menus, tooltips) shows its rounded outline in one faint hairline, so its edge reads over a dark picture and the session's corner no longer looks like a stray strip at the top left. The dark fade under the composer is gone. Working spinners are one quiet tone everywhere.
 - Your message shows the moment you send it and stays: it no longer vanished (leaving only "Thinking") when the agent took a moment to start.
 - Math is big enough to read: fractions, sums and integrals in a sentence are drawn full size, all math is a touch larger, and a tidied message puts an equation with fractions on its own line. Settings, Providers, Formatting agent picks the model for naming and tidying (Main, then Fallback).
 - A small model names new sessions in a few words (the agent's own small one, such as Haiku, when it has one), instead of cutting the first words of your message.

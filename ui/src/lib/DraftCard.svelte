@@ -28,7 +28,7 @@
     margin: var(--space) 0;
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);

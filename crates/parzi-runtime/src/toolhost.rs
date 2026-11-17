@@ -813,10 +813,8 @@ impl ToolHost {
                 crate::plan_tools::USE_PLAN.into(),
                 crate::plan_tools::NOT_NOW.into(),
             ],
-            details: vec![
-                "Save it as this session's plan and work from it.".into(),
-                "Nothing is saved. The agent carries on without it.".into(),
-            ],
+            // The card reads the plan from here (plan_tools::proposal_json).
+            details: vec![crate::plan_tools::proposal_json(&plan)],
             multi: false,
             kind: String::new(),
             session: self.p.session_id.clone(),

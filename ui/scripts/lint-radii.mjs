@@ -23,7 +23,7 @@ const VIEWS = {
 const POPOVERS = new Set(["home", "session"]);
 const CLICKS = {
   home: [".ob .where-name", '.ob .icon[aria-label="Browser"]'],
-  session: [".ob .model", ".ob .perm-btn", ".info .plan-row"],
+  session: [".ob .model", ".ob .perm-btn"],
   settings: [2, 3, 4].map((i) => `.sections > :nth-child(${i})`),
   setup: [2, 3, 4].map((i) => `header .page-tabs > :nth-child(${i})`),
 };

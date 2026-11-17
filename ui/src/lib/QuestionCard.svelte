@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
+  import Icon from "./Icon.svelte";
   import type { Question } from "./api";
   import { LINE_WORDS, questionParts } from "./questionText";
 
@@ -9,111 +10,155 @@
   const SKIPPED = "Skipped: decide yourself and say what you assumed.";
 
   let picked = new Set<number>();
-  let other = false;
   let text = "";
   let shownKey = "";
   let field: HTMLTextAreaElement | null = null;
   $: if (question.key !== shownKey) {
     shownKey = question.key;
     picked = new Set();
-    other = question.options.length === 0;
     text = "";
+    if (!question.options.length) void tick().then(() => field?.focus());
   }
 
   $: parts = questionParts(question.question);
+  // A plan to approve (plan.write with propose): the plan arrives as data in
+  // details[0] (plan_tools::proposal_json). One Accept; changes are typed in
+  // the composer, which answers this question (App.svelte).
+  type Proposal = { summary?: string | null; steps: { title: string; detail?: string | null }[]; doc?: string | null };
+  $: proposal = ((): Proposal | null => {
+    if (question.options[0] !== "Use this plan") return null;
+    try {
+      const v = JSON.parse(question.details?.[0] ?? "");
+      return v && v.plan === true && Array.isArray(v.steps) ? (v as Proposal) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const openDoc = (path: string) => document.dispatchEvent(new CustomEvent("parzi:open-file", { detail: path }));
   $: multi = !!question.multi;
   $: details = question.details ?? [];
-  $: answer = [
-    ...[...picked].sort((a, b) => a - b).map((i) => question.options[i]),
-    ...(other && text.trim() ? [text.trim()] : []),
-  ].join(", ");
+  $: chosen = [...picked].sort((a, b) => a - b).map((i) => question.options[i]);
+  $: answer = [...chosen, ...(text.trim() ? [text.trim()] : [])].join(", ");
 
+  function send(value: string) {
+    if (value.trim()) dispatch("answer", { text: value.trim() });
+  }
+
+  /** One choice answers at once; with several, a click toggles. */
   function pick(i: number) {
-    if (multi) {
-      picked = new Set(picked);
-      if (picked.has(i)) picked.delete(i);
-      else picked.add(i);
-    } else {
-      picked = new Set([i]);
-      other = false;
-    }
+    if (!multi) return send(question.options[i]);
+    picked = new Set(picked);
+    if (picked.has(i)) picked.delete(i);
+    else picked.add(i);
   }
 
-  async function chooseOther() {
-    if (multi) other = !other;
-    else {
-      other = true;
-      picked = new Set();
-    }
-    await tick();
-    if (other) field?.focus();
+  function sendText() {
+    if (multi) send(answer);
+    else send(text);
   }
 
-  function submit() {
-    if (answer) dispatch("answer", { text: answer });
+  function grow(el: HTMLTextAreaElement) {
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }
 </script>
 
+<!-- A question as a calm card: what is asked, what it is about, and the
+     answers as tiles. One choice answers with a click; several toggle and
+     send together; "Something else" is always there for your own words. -->
+{#if proposal}
+<div class="q plan" role="group" aria-label="Proposed plan">
+  <div class="head">
+    <span class="title">Proposed plan</span>
+    {#if proposal.doc}<button class="skip" on:click={() => proposal?.doc && openDoc(proposal.doc)}>Open full plan</button>{/if}
+  </div>
+  {#if proposal.summary}<p class="summary">{proposal.summary}</p>{/if}
+  <ul class="steps">
+    {#each proposal.steps as step, i (i)}
+      <li>
+        <span class="ring" aria-hidden="true" />
+        <span class="step">
+          <span class="step-title">{step.title}</span>
+          {#if step.detail}<span class="step-detail">{step.detail}</span>{/if}
+        </span>
+      </li>
+    {/each}
+  </ul>
+  <div class="accept-row">
+    <button class="btn primary accept" on:click={() => send("Use this plan")}>Accept</button>
+  </div>
+</div>
+{:else}
 <div class="q" role="group" aria-label="Question">
-  <div class="head t-section">{parts.head}</div>
+  <div class="head">
+    <span class="title">{parts.head}</span>
+    <button class="skip" on:click={() => dispatch("answer", { text: SKIPPED })}>Skip</button>
+  </div>
   {#if parts.lines.length}
-    <ul class="weigh" aria-label="What you are answering about">
+    <ul class="about" aria-label="What you are answering about">
       {#each parts.lines as line, i (i)}
         {#if line.kind === "heading"}
-          <li class="t-group">{line.text}</li>
+          <li class="group">{line.text}</li>
+        {:else if line.kind === "item"}
+          <li>{line.text}</li>
         {:else}
-          <li class="mark-line {line.kind}"><span class="sign" aria-label={LINE_WORDS[line.kind]}>{line.kind === "add" ? "+" : line.kind === "drop" ? "−" : "~"}</span><span class:struck={line.kind === "drop"}>{line.text}</span></li>
+          <li class="change {line.kind}"><span class="sign" aria-label={LINE_WORDS[line.kind]}>{line.kind === "add" ? "+" : line.kind === "drop" ? "−" : "~"}</span><span class:struck={line.kind === "drop"}>{line.text}</span></li>
         {/if}
       {/each}
     </ul>
   {/if}
-  <div class="list" role={multi ? "group" : "radiogroup"} data-ui-list>
+  <div class="tiles" role={multi ? "group" : "list"} data-ui-list>
     {#each question.options as opt, i (i)}
-      <button class="choice" class:on={picked.has(i)} role={multi ? "checkbox" : "radio"} aria-checked={picked.has(i)} on:click={() => pick(i)}>
-        <span class="mark" class:box={multi} />
+      <button
+        class="tile"
+        class:on={picked.has(i)}
+        role={multi ? "checkbox" : undefined}
+        aria-checked={multi ? picked.has(i) : undefined}
+        on:click={() => pick(i)}
+      >
         <span class="text">
           <span class="label">{opt}</span>
           {#if details[i]}<span class="desc">{details[i]}</span>{/if}
         </span>
+        <span class="go" aria-hidden="true"><Icon name={multi ? "check" : "arrowRight"} size={14} /></span>
       </button>
     {/each}
-    <div class="choice other" class:on={other}>
-      {#if question.options.length}
-        <button class="other-pick" role={multi ? "checkbox" : "radio"} aria-checked={other} on:click={chooseOther}>
-          <span class="mark" class:box={multi} />
-          <span class="label">Other</span>
-        </button>
-      {/if}
-      {#if other}
-        <textarea
-          bind:this={field}
-          bind:value={text}
-          rows="2"
-          aria-label="Your answer"
-          placeholder="Your answer… (Ctrl+Enter sends)"
-          on:keydown={(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
+    <div class="tile own" class:filled={!!text.trim()}>
+      <textarea
+        bind:this={field}
+        bind:value={text}
+        rows="1"
+        aria-label="Your answer"
+        placeholder={question.options.length ? "Something else…" : "Your answer…"}
+        on:input={(e) => grow(e.currentTarget)}
+        on:keydown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendText();
+          }
+        }}
+      />
+      {#if !multi}
+        <button class="send" aria-label="Send" disabled={!text.trim()} on:click={sendText}><Icon name="arrowUp" size={14} /></button>
       {/if}
     </div>
   </div>
-  <div class="actions">
-    <button class="btn quiet" on:click={() => dispatch("answer", { text: SKIPPED })}>Skip</button>
-    <button class="btn primary" disabled={!answer} on:click={submit}>Submit</button>
-  </div>
+  {#if multi}
+    <div class="foot">
+      <button class="btn primary" disabled={!answer} on:click={() => send(answer)}>Send</button>
+    </div>
+  {/if}
 </div>
+{/if}
 
 <style>
   .q {
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    gap: var(--space);
+    padding: var(--space);
     background: var(--surface);
-    border: 1px solid transparent;
+    border: 1px solid var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);
@@ -121,33 +166,58 @@
     color: var(--text);
   }
   .head {
-    padding: calc(var(--space) * 3) calc(var(--space) * 4) var(--space);
+    display: flex;
+    align-items: baseline;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3) 0;
   }
-  .weigh {
+  .title {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .skip {
+    flex: none;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .skip:hover {
+    color: var(--text);
+  }
+  .about {
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    max-height: 280px;
+    gap: calc(var(--space) / 2);
+    max-height: 240px;
     margin: 0;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    padding: 0 calc(var(--space) * 3) calc(var(--space) * 2);
     overflow-y: auto;
     list-style: none;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
   }
-  .weigh .t-group {
+  .about .group {
     margin-top: calc(var(--space) * 2);
+    color: var(--text);
+    font-weight: 600;
   }
-  .weigh .t-group:first-child {
+  .about .group:first-child {
     margin-top: 0;
   }
-  .mark-line {
+  .change {
     display: flex;
     gap: calc(var(--space) * 2);
-    line-height: 1.5;
   }
   .sign {
     flex: none;
     width: calc(var(--space) * 3);
-    color: var(--muted);
     font-family: var(--mono);
     text-align: center;
   }
@@ -158,57 +228,42 @@
     color: var(--bad-text);
   }
   .struck {
-    color: var(--muted);
     text-decoration: line-through;
   }
-  /* Options are rows inset in the card, a fill under the pointer: no rules between them. */
-  .list {
+  .tiles {
     display: flex;
     flex-direction: column;
-    padding: 0 var(--space);
+    gap: var(--space);
   }
-  .choice {
+  .tile {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: calc(var(--space) * 3);
     width: 100%;
-    padding: calc(var(--space) * 2.5) calc(var(--space) * 3);
-    background: none;
-    border: none;
+    min-height: var(--h-row);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
+    background: var(--fill);
+    border: 1px solid transparent;
     border-radius: var(--radius-in);
     color: var(--text);
     font: inherit;
     text-align: left;
     cursor: pointer;
+    transition: background var(--dur) ease;
   }
-  button.choice:hover,
-  .other-pick:hover {
-    background: var(--hover);
+  button.tile:hover {
+    background: var(--fill-hover);
   }
-  .choice.other {
-    flex-direction: column;
-    gap: calc(var(--space) * 2);
-    cursor: default;
-  }
-  .other-pick {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    width: calc(100% + 28px);
-    margin: calc(var(--space) * -3) calc(var(--space) * -4) 0;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
-    background: none;
-    border: none;
-    color: var(--text);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
+  .tile.on {
+    background: var(--selected);
+    border-color: var(--edge);
   }
   .text {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    min-width: 0;
+    gap: calc(var(--space) / 2);
   }
   .label {
     font-weight: 500;
@@ -216,66 +271,129 @@
   .desc {
     color: var(--muted);
     font-size: var(--fs-sm);
-    line-height: 1.5;
+    line-height: 1.45;
   }
-  .mark {
-    position: relative;
-    width: 16px;
-    height: 16px;
+  .go {
     flex: none;
-    margin-top: var(--space);
-    border: 1.5px solid var(--muted);
-    border-radius: 50%;
+    display: inline-flex;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity var(--dur) ease;
   }
-  .mark.box {
-    border-radius: var(--radius-sm);
+  button.tile:hover .go,
+  .tile.on .go {
+    opacity: 1;
   }
-  .on .mark,
-  .other-pick[aria-checked="true"] .mark {
-    border-color: var(--accent);
+  .tile.on .go {
+    color: var(--text);
   }
-  .on .mark::after,
-  .other-pick[aria-checked="true"] .mark::after {
-    content: "";
-    position: absolute;
-    inset: 3px;
-    border-radius: inherit;
-    background: var(--accent);
+  .own {
+    cursor: text;
+    background: transparent;
+    border-color: var(--edge);
+  }
+  .own:focus-within,
+  .own.filled {
+    background: var(--fill);
   }
   textarea {
-    width: 100%;
-    min-height: 56px;
-    padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    resize: vertical;
-    background: var(--fill);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    resize: none;
+    background: none;
+    border: none;
+    outline: none;
     color: var(--text);
     font: inherit;
-    font-size: var(--fs-md);
-    outline: none;
+    line-height: 1.45;
   }
-  textarea:focus {
-    border-color: var(--accent);
+  textarea::placeholder {
+    color: var(--muted);
   }
-  .actions {
+  .send {
+    flex: none;
+    width: var(--h-sm);
+    height: var(--h-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: var(--accent);
+    border: none;
+    border-radius: 50%;
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .send:disabled {
+    background: var(--fill);
+    color: var(--muted);
+    cursor: default;
+  }
+  .foot {
     display: flex;
     justify-content: flex-end;
-    gap: calc(var(--space) * 2);
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    padding: var(--space) var(--space) var(--space);
   }
-  .btn {
-    height: 30px;
+  /* A proposed plan: read at full size, one Accept. */
+  .summary {
+    margin: 0;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3) 0;
+    font-size: var(--fs-base);
+    line-height: 1.55;
+  }
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 2.5);
+    margin: 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 3) calc(var(--space) * 2);
+    list-style: none;
+  }
+  .steps li {
+    display: flex;
+    gap: calc(var(--space) * 3);
+  }
+  .ring {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    margin-top: var(--space);
+    box-sizing: border-box;
+    border: 1.5px solid var(--faint);
+    border-radius: 50%;
+  }
+  .step {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) / 2);
+    min-width: 0;
+  }
+  .step-title {
+    font-weight: 500;
+    line-height: 1.45;
+  }
+  .step-detail {
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+  }
+  .accept-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 3);
+  }
+  .accept {
+    flex: none;
+    height: var(--h);
     padding: 0 calc(var(--space) * 4);
     font-size: var(--fs-sm);
   }
-  .btn.quiet {
-    background: none;
-    border-color: transparent;
-    color: var(--muted);
-  }
-  .btn.quiet:hover:not(:disabled) {
-    background: var(--line);
-    color: var(--text);
+  .foot .btn {
+    height: var(--h);
+    padding: 0 calc(var(--space) * 4);
+    font-size: var(--fs-sm);
   }
 </style>

@@ -251,7 +251,8 @@
     color: var(--text);
   }
   /* The tab bar's marks, on the corner of the agent: they take no room, so
-     the list never shifts when something starts or stops. */
+     the list never shifts when something starts or stops. One tone, like the
+     tab bar's spinner: the arc in the muted colour, its track the same, fainter. */
   .mark {
     position: absolute;
     right: -3px;
@@ -262,8 +263,8 @@
   .mark.running {
     width: 11px;
     height: 11px;
-    border: 1.6px solid var(--line);
-    border-top-color: var(--accent);
+    border: 1.6px solid color-mix(in srgb, var(--muted) 30%, transparent);
+    border-top-color: var(--muted);
     animation: spin 0.8s linear infinite;
   }
   .mark.waiting {
