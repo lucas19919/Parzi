@@ -98,6 +98,15 @@ function tabId(): string {
   return `tab-${Date.now().toString(36)}-${seq}`;
 }
 
+const ID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function looksLikeId(title: string): boolean {
+  return ID_LIKE.test(title.trim());
+}
+export function displayTitle(title: string | null | undefined, fallback = "New session"): string {
+  const t = (title ?? "").trim();
+  if (!t || looksLikeId(t)) return fallback;
+  return t;
+}
 export function sessionTab(sessionId: string | null = null, title = "New session"): Tab {
   return { id: tabId(), kind: "session", title, sessionId, composer: defaultComposer() };
 }

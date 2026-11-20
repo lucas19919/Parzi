@@ -3,7 +3,7 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { hostOf, type Tab } from "./tabs";
+  import { displayTitle, hostOf, type Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
   import { pressDrag, tabDragStarted, tabRelease, type PressDrag } from "./gestures";
   import { sessionMarks } from "./activity";
@@ -199,7 +199,7 @@
             role="tab"
             tabindex="0"
             aria-selected={tab.id === activeTabId}
-            title={markTitle(tab.title, tab.sessionId)}
+            title={markTitle(displayTitle(tab.title), tab.sessionId)}
             on:click={() => onPick(tab.id)}
             on:keydown={(e) => onKey(e, tab.id)}
           >
@@ -212,7 +212,7 @@
                 <Icon name="bot" />
               {/if}
             </span>
-            <span class="title">{tab.title || "New session"}</span>
+            <span class="title">{displayTitle(tab.title)}</span>
             {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
           </div>
           <button
@@ -261,7 +261,7 @@
                   <Icon name="globe" />
                 {/if}
               </span>
-              <span class="title">{sub.title || (sub.kind === "session" ? "Side session" : "New page")}</span>
+              <span class="title">{displayTitle(sub.title, sub.kind === "session" ? "Side session" : "New page")}</span>
               {#if markOf(sub.sessionId) === "waiting"}<span class="waiting" />{/if}
             </div>
             <button
@@ -441,28 +441,30 @@
     min-width: 80px;
   }
   /* Connected tabs sit in one shell, so they read as one thing.
-     The shell's padding and ring add up, so the tabs inside shrink by
-     exactly that: the group lands at tab height like every lone tab. */
+     The shell has no inset, so its tabs sit flush with its outer curve
+     and land at tab height like every lone tab. */
   .group {
     flex: 0 1 auto;
     min-width: 0;
     display: inline-flex;
     align-items: center;
     gap: var(--space);
-    padding: calc(var(--space) / 4);
+    padding: 0;
     background: var(--surface);
-    border: 1px solid transparent;
+    border: none;
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);
   }
   .group .tab {
-    height: calc(var(--h) - var(--space));
-    border-radius: var(--radius-in);
+    height: var(--h);
+    border-radius: var(--radius);
   }
   .group .tab.active {
     background: var(--selected);
     border-color: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
   .group .tab:hover:not(.active) {
     background: var(--hover);

@@ -24,19 +24,6 @@ pub struct ParziConfig {
     pub budget: Budget,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favorite_models: Vec<String>,
-    /// The small model for quick side jobs (naming a session, setting math in
-    /// a message): `model`, then `fallback`, as `agent/model`; empty for the
-    /// session's agent's own small model.
-    #[serde(default)]
-    pub quick: QuickModels,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuickModels {
-    #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub fallback: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,7 +265,6 @@ impl ParziConfig {
             routing: RoutingConfig::default(),
             budget: Budget::default(),
             favorite_models: vec![],
-            quick: QuickModels::default(),
         }
     }
 

@@ -51,9 +51,7 @@ use calls::{
 use desk_text::{desk_state_text, page_args, page_done, page_text};
 use fetch::url_encode;
 use notes::execute_brain;
-use paths::{
-    land, loopback_site, named_paths, show_target, worktree_relative, write_targets, SECRET_FILE,
-};
+use paths::{land, named_paths, show_target, worktree_relative, write_targets, SECRET_FILE};
 
 pub struct ToolHost {
     p: ToolHostParts,
@@ -128,9 +126,6 @@ impl ToolHost {
         let id = uuid::Uuid::new_v4().to_string();
         if name == "ui.show_file" {
             return self.show_file(args).await;
-        }
-        if name == "ui.host_site" {
-            return self.host_site(args).await;
         }
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
@@ -227,7 +222,7 @@ impl ToolHost {
                 .await
                 .unwrap_or_else(|e| (false, e.to_string()));
         }
-        if is_plan_tool(name) || name == "session.rename" {
+        if is_plan_tool(name) || matches!(name, "session.rename" | "session.format_message") {
             let writes = name != "plan.read";
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
@@ -248,12 +243,17 @@ impl ToolHost {
                 return (true, format!("{approved} {saved}").trim().to_string());
             }
             let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
+            let is_format = name == "session.format_message";
             let (name, args) = (name.to_string(), args.clone());
-            return tokio::task::spawn_blocking(move || {
+            let res = tokio::task::spawn_blocking(move || {
                 crate::plan_tools::execute(&store, &sid, &name, &args)
             })
             .await
             .unwrap_or_else(|e| (false, e.to_string()));
+            if is_format && res.0 {
+                self.p.sink.emit(RunEvent::Refreshed);
+            }
+            return res;
         }
         if is_session_tool(name) {
             if !matches!(name, "session.read" | "session.list" | "session.draft") {
@@ -331,7 +331,11 @@ impl ToolHost {
                 return Some(self.refused(name, why));
             }
             // The plan tools refuse these in read-only mode too, without saying why.
-            if self.p.mode == ApprovalMode::Deny && matches!(name, "plan.write" | "session.rename")
+            if self.p.mode == ApprovalMode::Deny
+                && matches!(
+                    name,
+                    "plan.write" | "session.rename" | "session.format_message"
+                )
             {
                 return Some(self.refused(name, Refusal::ReadOnly));
             }
@@ -1411,47 +1415,6 @@ impl ToolHost {
         crate::desk::request(op, body).await.map_err(String::from)
     }
 
-    /// Pins a live dev server in the side bar. Loopback only: the card
-    /// embeds the page, so anything else could show the person a page the
-    /// agent does not control.
-    async fn host_site(&self, args: &Value) -> (bool, String) {
-        let raw = args.get("url").and_then(Value::as_str).unwrap_or("").trim();
-        if loopback_site(raw).is_none() {
-            return (
-                false,
-                "ui.host_site needs an http(s) url on this computer (localhost, 127.0.0.1 or ::1)"
-                    .into(),
-            );
-        }
-        let title = args
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .unwrap_or("Hosted");
-        let body = serde_json::json!({ "session": self.p.session_id, "url": raw, "title": title });
-        match self.desk_call("app.host_site", body).await {
-            Ok(v) if v.get("ok").and_then(Value::as_bool) == Some(false) => (
-                false,
-                v.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("the side bar could not host it")
-                    .to_string(),
-            ),
-            Ok(v) => (
-                true,
-                v.pointer("/result/text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("It is pinned in the side bar.")
-                    .to_string(),
-            ),
-            Err(e) => (
-                false,
-                format!("The Parzi window is not open, so nothing can be hosted: {e}"),
-            ),
-        }
-    }
-
     fn page_body(&self, args: &Value) -> Value {
         let mut body = serde_json::json!({ "session": self.p.session_id, "args": page_args(args) });
         if let Some(tab) = args
@@ -1922,23 +1885,6 @@ mod tests {
         let abs = dir.join("docs/plan.md").to_string_lossy().into_owned();
         assert_eq!(show_target("", &abs), (abs.clone(), false));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn host_site_only_takes_loopback_urls() {
-        assert!(loopback_site("http://localhost:5173").is_some());
-        assert!(loopback_site("http://localhost:5173/app?x=1#y").is_some());
-        assert!(loopback_site("https://127.0.0.1:3000").is_some());
-        assert!(loopback_site("http://127.0.0.5:8080/x").is_some());
-        assert!(loopback_site("http://[::1]:3000").is_some());
-        assert!(loopback_site("http://app.localhost:5173").is_some());
-        assert_eq!(loopback_site("https://example.com"), None);
-        assert_eq!(loopback_site("http://10.0.0.5:3000"), None);
-        assert_eq!(loopback_site("http://192.168.1.2:3000"), None);
-        assert_eq!(loopback_site("http://localhost.evil.com:3000"), None);
-        assert_eq!(loopback_site("ftp://localhost/x"), None);
-        assert_eq!(loopback_site("localhost:3000"), None);
-        assert_eq!(loopback_site(""), None);
     }
 
     #[test]

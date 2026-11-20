@@ -131,18 +131,6 @@
     }
   }
 
-  // The formatting agent: the small model for quick side jobs (naming sessions,
-  // setting math in a message), then a fallback. Automatic: the session's
-  // agent's own small model.
-  $: quickChoices = $board
-    .filter((b) => b.state === "ready" && b.models.length)
-    .map((b) => ({ id: b.provider, name: nameOf(b.provider), models: b.models }));
-  function setQuick(key: "model" | "fallback", value: string) {
-    void update((c) => {
-      c.quick = { model: c.quick?.model ?? "", fallback: c.quick?.fallback ?? "", [key]: value };
-    }, value ? "Saved" : "Back to automatic");
-  }
-
   const patchEntry = (id: string, patch: Partial<ProviderEntry>) => (c: ParziConfig) => {
     c.providers = { ...(c.providers ?? {}), [id]: { ...(c.providers?.[id] ?? { enabled: true }), ...patch } };
   };
@@ -229,43 +217,6 @@
 {:else if err}
   <div class="load-err"><span>{err}</span></div>
 {:else}
-  {#if where !== "remote"}
-    <div class="pref-section">
-      <div class="rows">
-        <div class="row row-title">
-          <!-- Parzi's glyph alone, cropped to its own bounds, so it fills the
-               same 20px as the agent logos below (the mark file adds a tile and padding). -->
-          <svg class="parzi-mark" width="20" height="20" viewBox="224 232 570 570" fill="currentColor" aria-hidden="true">
-            <path d="M536.97 268.26A24.00 24.00 0 0 1 563.24 303.10L319.54 754.40A24.00 24.00 0 0 1 298.42 767.00L248.41 767.00A24.00 24.00 0 0 1 227.30 731.60L464.26 292.78A24.00 24.00 0 0 1 480.22 280.74Z" />
-            <path d="M630.43 296.53A24.00 24.00 0 0 1 671.46 294.53L790.64 471.52A24.00 24.00 0 0 1 770.73 508.93L555.97 508.93A24.00 24.00 0 0 1 534.85 473.52L556.45 433.52A24.00 24.00 0 0 1 577.57 420.93L611.48 420.93A20.76 20.76 0 0 0 628.70 388.58L610.18 361.08A24.00 24.00 0 0 1 608.97 336.27Z" />
-          </svg>
-          <span>Formatting agent</span>
-        </div>
-        <div class="row ctl-row">
-          <span class="row-label">Main</span>
-          <select class="tin quick-pick" aria-label="Formatting agent" value={cfg?.quick?.model ?? ""} on:change={(e) => setQuick("model", e.currentTarget.value)}>
-            <option value="">Automatic</option>
-            {#each quickChoices as a (a.id)}
-              <optgroup label={a.name}>
-                {#each a.models as m (m.id)}<option value={`${a.id}/${m.id}`}>{m.name || m.id}</option>{/each}
-              </optgroup>
-            {/each}
-          </select>
-        </div>
-        <div class="row ctl-row">
-          <span class="row-label">Fallback</span>
-          <select class="tin quick-pick" aria-label="Formatting agent fallback" value={cfg?.quick?.fallback ?? ""} on:change={(e) => setQuick("fallback", e.currentTarget.value)}>
-            <option value="">Automatic</option>
-            {#each quickChoices as a (a.id)}
-              <optgroup label={a.name}>
-                {#each a.models as m (m.id)}<option value={`${a.id}/${m.id}`}>{m.name || m.id}</option>{/each}
-              </optgroup>
-            {/each}
-          </select>
-        </div>
-      </div>
-    </div>
-  {/if}
   {#if places.length}
     <div class="pref-section">
       <div class="rows">
@@ -460,16 +411,6 @@
 {/if}
 
 <style>
-  .parzi-mark {
-    flex: none;
-    color: var(--text);
-  }
-  .quick-pick {
-    flex: none;
-    width: var(--w-field);
-    height: var(--h);
-    cursor: pointer;
-  }
   /* An agent that is off dims its name, not its switch. */
   .rows.off .row:first-child > :not(.row-ctl) {
     opacity: 0.55;

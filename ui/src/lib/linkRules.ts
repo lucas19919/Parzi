@@ -203,7 +203,9 @@ export function webLink(href: string): WebLink {
   const host = m[2].replace(/^[^@]*@/, "");
   if (/[\s\u0000-\u001f\u007f]/.test(href.trim())) return { kind: "refuse", reason: "That link can't be opened." };
   if (!m[2]) return { kind: "refuse", reason: "That link can't be opened." };
-  if (m[1].toLowerCase() === "http" && LOCAL_HOST.test(host)) {
+  const bare = host.replace(/:\d+$/, "");
+  const nonPublic = LOCAL_HOST.test(host) || /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|[^/:.]+|[^/:]+\.(localhost|local|lan|internal|intranet|home|corp|localdomain))$/i.test(bare);
+  if (m[1].toLowerCase() === "http" && nonPublic) {
     const url = `http://${m[2]}${m[3]}`;
     if (url.length > MAX_LEN) return { kind: "refuse", reason: "That link can't be opened." };
     return { kind: "tab", url };
@@ -211,4 +213,54 @@ export function webLink(href: string): WebLink {
   const url = `https://${m[2]}${m[3]}`.replace(BACKEND_REJECTS, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
   if (url.length > MAX_LEN) return { kind: "refuse", reason: "That link can't be opened." };
   return { kind: "open", url };
+}
+
+
+/** Schemeless web addresses linkify-it never sees: localhost, bare IPs and
+ * dotted hosts with an unknown TLD, but only with a port, path, query or
+ * fragment. A bare name without those is a filename until proven otherwise
+ * (README.md), and host:port alone is a file:line ref (md.ts:435). */
+const BARE_WEB =
+  /(^|[\s(,;>\["“”<=])(localhost|(?:\d{1,3}\.){3}\d{1,3}|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(:\d{1,5})?([/?#][^\s<>]*)?/g;
+const BARE_TRAIL = /[.,;:!?)\]}>"*`|]/;
+
+function bareHostOk(host: string): boolean {
+  if (/^localhost$/i.test(host)) return true;
+  const ip = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (ip) return ip.slice(1).every((o) => Number(o) <= 255);
+  return host.slice(host.lastIndexOf(".") + 1).length >= 2;
+}
+
+export interface BareWebRef {
+  href: string;
+  index: number;
+  length: number;
+}
+
+export function bareWebRefs(text: string): BareWebRef[] {
+  const out: BareWebRef[] = [];
+  BARE_WEB.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let guard = 0;
+  while ((m = BARE_WEB.exec(text)) !== null && guard++ < 1000) {
+    const at = m.index + m[1].length;
+    const host = m[2];
+    const rest = `${m[3] ?? ""}${m[4] ?? ""}`;
+    if (!rest || !bareHostOk(host)) continue;
+    if (!/[/?#]/.test(rest) && !/^(localhost|(?:\d{1,3}\.){3}\d{1,3})$/.test(host)) continue;
+    let shown = host + rest;
+    while (shown.length > host.length && BARE_TRAIL.test(shown[shown.length - 1])) {
+      if (shown.endsWith(")")) {
+        const opens = shown.split("(").length - 1;
+        const closes = shown.split(")").length - 1;
+        if (closes <= opens) break;
+      }
+      shown = shown.slice(0, -1);
+    }
+    if (shown.length <= host.length) continue;
+    out.push({ href: `http://${shown}`, index: at, length: shown.length });
+    BARE_WEB.lastIndex = at + shown.length;
+  }
+  BARE_WEB.lastIndex = 0;
+  return out;
 }

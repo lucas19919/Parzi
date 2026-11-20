@@ -5,7 +5,7 @@ import { toast } from "./toast";
 import { reportMarkdown } from "./mdReport";
 import { mathAt, readableTex } from "./mdMath";
 import { splitBlocks } from "./liveBlocks";
-import { chipLabel, gitRefs, vaultRefs, wholeRef } from "./linkRules";
+import { bareWebRefs, chipLabel, gitRefs, vaultRefs, wholeRef } from "./linkRules";
 
 export const richReady = writable(false);
 
@@ -107,7 +107,49 @@ md.core.ruler.after("linkify", "parzi-bare-names", (state) => {
       if (/^[a-z][a-z0-9+.-]*:|^www\./i.test(shown) || shown.includes("@")) continue;
       const host = shown.split(/[/?#:]/)[0];
       if (WEB_ENDINGS.has(host.slice(host.lastIndexOf(".") + 1).toLowerCase())) continue;
+      // A path, query or fragment never belongs to a filename: keep it a link.
+      if (/[/?#]/.test(shown)) continue;
       kids.splice(i, 3, text);
+    }
+  }
+});
+
+// Schemeless intranet hosts, localhost and bare IPs never survive linkify,
+md.core.ruler.after("parzi-bare-names", "parzi-bare-links", (state) => {
+  for (const block of state.tokens) {
+    if (block.type !== "inline" || !block.children) continue;
+    const kids = block.children;
+    let depth = 0;
+    for (let i = 0; i < kids.length; i++) {
+      const tok = kids[i];
+      if (tok.type === "link_open") { depth++; continue; }
+      if (tok.type === "link_close") { depth = Math.max(0, depth - 1); continue; }
+      if (depth > 0 || tok.type !== "text") continue;
+      const refs = bareWebRefs(tok.content);
+      if (!refs.length) continue;
+      const nodes: typeof kids = [];
+      let at = 0;
+      for (const r of refs) {
+        if (r.index > at) {
+          const plain = new state.Token("text", "", 0);
+          plain.content = tok.content.slice(at, r.index);
+          nodes.push(plain);
+        }
+        const open = new state.Token("link_open", "a", 1);
+        open.attrs = [["href", r.href]];
+        const label = new state.Token("text", "", 0);
+        label.content = tok.content.slice(r.index, r.index + r.length);
+        const close = new state.Token("link_close", "a", -1);
+        nodes.push(open, label, close);
+        at = r.index + r.length;
+      }
+      if (at < tok.content.length) {
+        const tail = new state.Token("text", "", 0);
+        tail.content = tok.content.slice(at);
+        nodes.push(tail);
+      }
+      kids.splice(i, 1, ...nodes);
+      i += nodes.length - 1;
     }
   }
 });

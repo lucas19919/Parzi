@@ -466,10 +466,6 @@ a:hover { color: var(--link); }
 .dl-add { background: color-mix(in srgb, var(--ok) 14%, transparent); }
 .dl-del { background: color-mix(in srgb, var(--bad) 14%, transparent); }
 .codeblock.clamped pre { max-height: 420px; position: relative; }
-.codeblock.clamped pre::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 70px;
-  background: linear-gradient(transparent, var(--bg)); pointer-events: none;
-}
 
 .codeblock.diagram { container-type: inline-size; }
 .codeblock.diagram pre, .codeblock.diagram code {

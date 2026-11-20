@@ -2,7 +2,6 @@ mod harness;
 mod launch;
 pub use launch::ContextParts;
 mod queue;
-mod quick;
 mod wake;
 
 pub use queue::{run_note, BUDGET_NOTE};
@@ -170,9 +169,54 @@ impl Orchestrator {
         *self.asker.lock().await = Some(asker);
     }
 
+    fn shells_for(&self, sid: &str) -> Arc<crate::shell::ShellRegistry> {
+        let mut shells = self
+            .shells
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(reg) = shells.get(sid) {
+            return reg.clone();
+        }
+        let reg = Arc::new(crate::shell::ShellRegistry::new(sid));
+        shells.insert(sid.to_string(), reg.clone());
+        reg
+    }
+
     pub fn shell_jobs(&self, sid: &str) -> Vec<crate::shell::ShellJob> {
         let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
         reg.map(|r| r.jobs()).unwrap_or_default()
+    }
+
+    pub fn shell_hosts(&self, sid: &str) -> Vec<crate::shell::HostJob> {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        match reg {
+            Some(r) => r.hosts(),
+            None => crate::shell::ShellRegistry::hosts_saved(sid),
+        }
+    }
+
+    pub async fn shell_restart_host(
+        &self,
+        sid: &str,
+        id: &str,
+    ) -> std::result::Result<crate::shell::HostJob, String> {
+        self.shells_for(sid)
+            .restart_host(id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn shell_remove_host(&self, sid: &str, id: &str) -> bool {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        match reg {
+            Some(r) => r.remove_host(id),
+            None => crate::shell::ShellRegistry::new(sid).remove_host(id),
+        }
+    }
+
+    pub fn shell_logs(&self, sid: &str, id: &str, tail: usize) -> Option<crate::shell::LogTail> {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        reg.and_then(|r| r.logs(id, 0, tail))
     }
 
     pub fn shell_kill(&self, sid: &str, id: &str) -> bool {

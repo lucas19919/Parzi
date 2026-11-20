@@ -144,6 +144,26 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // Large sessions (hundreds of steps/messages) render the recent tail first so
+  // switching sessions stays instant; older history loads on demand.
+  const WINDOW_STEP = 80;
+  let visibleCount = WINDOW_STEP;
+  let prevSession = "";
+  $: if (session !== prevSession) {
+    prevSession = session;
+    visibleCount = WINDOW_STEP;
+  }
+  $: windowStart = (() => {
+    if (items.length <= visibleCount + 12) return 0;
+    let start = items.length - visibleCount;
+    // Align backward to the start of a turn so we never split mid-fold.
+    while (start > 0 && items[start].kind !== "user") start--;
+    return start;
+  })();
+  $: shownItems = windowStart > 0 ? items.slice(windowStart) : items;
+  function showEarlier() {
+    visibleCount += WINDOW_STEP;
+  }
 
   type Fold = { key: string; tools: number; secs: number; live: boolean; only: string; stopped: boolean };
   let openFolds = new Set<string>();
@@ -639,7 +659,12 @@ ${e.text}` : e.text;
   {#if draft}
     <DraftCard title={draft.title} brief={draft.brief} starting={draftStarting} on:start={() => dispatch("startDraft")} on:remove={() => dispatch("removeDraft")} />
   {/if}
-  {#each items as item, i (item.key)}
+  {#if windowStart > 0}
+    <button class="earlier" on:click={showEarlier}>
+      Show earlier messages ({windowStart} hidden)
+    </button>
+  {/if}
+  {#each shownItems as item (item.key)}
     {@const fold = folds.before.get(item.key)}
     {@const hidden = shut(item.key, openFolds)}
     {@const folded = folds.inside.has(item.key)}
@@ -1330,5 +1355,21 @@ ${e.text}` : e.text;
   .live-slot {
     display: flex;
     flex-direction: column;
+  }
+  .earlier {
+    align-self: center;
+    margin: calc(var(--space) * 1.5) 0;
+    padding: var(--space) calc(var(--space) * 3);
+    background: var(--fill);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .earlier:hover {
+    color: var(--text);
+    background: var(--fill-hover);
   }
 </style>

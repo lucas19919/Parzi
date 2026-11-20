@@ -552,6 +552,7 @@ struct Opened {
     sid: String,
     session: Value,
     commands: Vec<String>,
+    stalled: bool,
 }
 
 struct Reused {
@@ -805,7 +806,7 @@ impl Provider for Acp {
             ))),
             other => other,
         };
-        let reusable = matches!(outcome, Ok(TurnEnd::Completed));
+        let reusable = matches!(outcome, Ok(TurnEnd::Completed)) && !opened.stalled;
         if reusable && !opened.sid.is_empty() && can_resume(&conn.init) {
             park_live(Live {
                 id: 0,
@@ -1073,6 +1074,8 @@ struct Seen {
     last_cost: Option<f64>,
     commands: Vec<String>,
     context: Option<u64>,
+    open_tools: HashSet<String>,
+    usage_after_reply: bool,
 }
 
 fn listed_commands(u: &Value) -> Option<Vec<String>> {
@@ -1491,6 +1494,8 @@ async fn drive(
         },
         commands,
         context: None,
+        open_tools: HashSet::new(),
+        usage_after_reply: false,
     };
     for msg in held {
         if let Incoming::Notification { method, params } = msg {
@@ -1506,11 +1511,17 @@ async fn drive(
     let mut background = Background::default();
     // The prompt was answered but background subagents still work.
     let mut answered = false;
+    // Some ACP servers in long sessions stream the whole reply and usage_update
+    // with no open tools left, then never answer session/prompt. Settle cleanly
+    // after a quiet grace window and drop the wedged connection instead of
+    // hanging until the 20-minute idle cap.
+    let mut settle_by: Option<tokio::time::Instant> = None;
     loop {
         tokio::select! {
             biased;
             () = cancel.cancelled(), if !interrupting => {
                 interrupting = true;
+                settle_by = None;
                 stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
                 let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
                 answers.cancel_sent.cancel();
@@ -1518,6 +1529,18 @@ async fn drive(
             () = sleep_until(stop_by) => {
                 seen.buffers.flush(events);
                 return Ok(TurnEnd::Interrupted);
+            }
+            () = sleep_until(settle_by), if !interrupting && !answered => {
+                tracing::warn!(
+                    session = %sid,
+                    agent = agent.id,
+                    "agent replied and reported usage, then went silent without ending the prompt; settling turn cleanly"
+                );
+                seen.buffers.flush(events);
+                opened.commands.clone_from(&seen.commands);
+                opened.stalled = true;
+                let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
+                return Ok(TurnEnd::Completed);
             }
             msg = incoming.recv(), if open => {
                 let Some(msg) = msg else {
@@ -1539,10 +1562,20 @@ async fn drive(
                                     seen.buffers.flush(events);
                                     return Ok(TurnEnd::Completed);
                                 }
+                            } else if !interrupting
+                                && !background.busy()
+                                && seen.usage_after_reply
+                                && seen.open_tools.is_empty()
+                            {
+                                settle_by = Some(tokio::time::Instant::now() + POST_USAGE_SETTLE);
+                            } else {
+                                settle_by = None;
                             }
                         }
                     }
                     Incoming::Request { id, method, params } => {
+                        seen.usage_after_reply = false;
+                        settle_by = None;
                         answers.answer(id, &method, params).await;
                     }
                     Incoming::Raw(_) => {}
@@ -1695,6 +1728,7 @@ struct LoggedFailure {
     seen: Option<(String, tokio::time::Instant)>,
 }
 
+const POST_USAGE_SETTLE: Duration = Duration::from_millis(if cfg!(test) { 120 } else { 20_000 });
 const LOG_CHECK_EVERY: Duration = Duration::from_millis(if cfg!(test) { 20 } else { 15_000 });
 const LOG_STUCK_AFTER: Duration = Duration::from_millis(if cfg!(test) { 60 } else { 60_000 });
 const LOG_TAIL: u64 = 256 * 1024;
@@ -1806,16 +1840,19 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
     let last_cost = &mut seen.last_cost;
     match u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("") {
         "agent_message_chunk" => {
+            seen.usage_after_reply = false;
             let t = chunk();
             buffers.message.push_str(&t);
             let _ = events.send(ProviderEvent::TextDelta(t));
         }
         "agent_thought_chunk" => {
+            seen.usage_after_reply = false;
             let t = chunk();
             buffers.thought.push_str(&t);
             let _ = events.send(ProviderEvent::ReasoningDelta(t));
         }
         "tool_call" => {
+            seen.usage_after_reply = false;
             buffers.flush(events);
             let id = u
                 .get("toolCallId")
@@ -1836,9 +1873,12 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
                 name: name.clone(),
                 input: u.get("rawInput").cloned().unwrap_or(Value::Null),
             });
-            finish_tool(u, &id, &name, events);
+            if !finish_tool(u, &id, &name, events) && !id.is_empty() {
+                seen.open_tools.insert(id);
+            }
         }
         "tool_call_update" => {
+            seen.usage_after_reply = false;
             let id = u
                 .get("toolCallId")
                 .and_then(Value::as_str)
@@ -1850,7 +1890,9 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
                 .ok()
                 .and_then(|n| n.get(&id).cloned())
                 .unwrap_or_else(|| "tool".into());
-            finish_tool(u, &id, &name, events);
+            if finish_tool(u, &id, &name, events) {
+                seen.open_tools.remove(&id);
+            }
         }
         "usage_update" => {
             if let (Some(used), Some(limit)) = (
@@ -1875,6 +1917,9 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
                     });
                 }
             }
+            if !seen.buffers.message.trim().is_empty() && seen.open_tools.is_empty() {
+                seen.usage_after_reply = true;
+            }
         }
         "available_commands_update" => {
             if let Some(list) = listed_commands(u) {
@@ -1894,6 +1939,9 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
             if used > 0 {
                 seen.context = Some(used);
             }
+            if !seen.buffers.message.trim().is_empty() && seen.open_tools.is_empty() {
+                seen.usage_after_reply = true;
+            }
         }
         "auto_compact_completed" => {
             buffers.flush(events);
@@ -1908,10 +1956,10 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
     }
 }
 
-fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) {
+fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) -> bool {
     let status = u.get("status").and_then(Value::as_str).unwrap_or("");
-    if status != "completed" && status != "failed" {
-        return;
+    if !matches!(status, "completed" | "failed" | "cancelled" | "canceled") {
+        return false;
     }
     let mut output = u.get("content").map(text_of).unwrap_or_default();
     if output.trim().is_empty() {
@@ -1926,6 +1974,7 @@ fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) {
         ok: tool_ok(status, &output),
         output,
     });
+    true
 }
 
 fn tool_ok(status: &str, output: &str) -> bool {
@@ -3102,6 +3151,128 @@ mod tests {
 
     fn silent_log() -> Option<PathBuf> {
         Some(std::env::temp_dir().join(format!("parzi-oc-silent-{}.log", std::process::id())))
+    }
+
+    #[tokio::test]
+    async fn post_usage_stall_flushes_reply_and_marks_connection_stalled() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            let note = |u: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S0", "update": u}});
+            send(&mut w, note(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "All done."}}))).await;
+            send(
+                &mut w,
+                note(json!({"sessionUpdate": "usage_update", "used": 289000, "size": 1000000})),
+            )
+            .await;
+            // Never answer session/prompt; wait for cancel notification.
+            let cancel = read(&mut lines).await;
+            assert_eq!(cancel["method"], "session/cancel");
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut opened = Opened::default();
+        let res = drive(
+            &peer,
+            &mut incoming,
+            &json!({"agentCapabilities": {"sessionCapabilities": {"resume": {}}}}),
+            agent("antigravity").unwrap(),
+            &spec(Some(json!({"session_id": "S0"}))),
+            Arc::new(Gate(
+                PermissionDecision::Allow,
+                std::sync::Mutex::new(vec![]),
+            )),
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({}),
+                model: None,
+                commands: vec![],
+            }),
+            &mut opened,
+        )
+        .await;
+        assert!(matches!(res, Ok(TurnEnd::Completed)), "{res:?}");
+        assert!(
+            opened.stalled,
+            "stalled turn must not park connection for reuse"
+        );
+        let mut got = vec![];
+        while let Ok(e) = rx.try_recv() {
+            got.push(e);
+        }
+        assert!(
+            got.iter()
+                .any(|e| matches!(e, ProviderEvent::Message(m) if m == "All done.")),
+            "reply should be flushed: {got:?}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn post_usage_settle_waits_while_tool_is_still_running() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            let note = |u: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S0", "update": u}});
+            send(&mut w, note(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Running check."}}))).await;
+            send(&mut w, note(json!({"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "shell", "status": "in_progress"}))).await;
+            send(
+                &mut w,
+                note(json!({"sessionUpdate": "usage_update", "used": 1000, "size": 200000})),
+            )
+            .await;
+            tokio::time::sleep(POST_USAGE_SETTLE + Duration::from_millis(80)).await;
+            send(&mut w, note(json!({"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed", "rawOutput": "ok"}))).await;
+            send(&mut w, note(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Finished."}}))).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut opened = Opened::default();
+        let res = drive(
+            &peer,
+            &mut incoming,
+            &json!({"agentCapabilities": {"sessionCapabilities": {"resume": {}}}}),
+            agent("antigravity").unwrap(),
+            &spec(Some(json!({"session_id": "S0"}))),
+            Arc::new(Gate(
+                PermissionDecision::Allow,
+                std::sync::Mutex::new(vec![]),
+            )),
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({}),
+                model: None,
+                commands: vec![],
+            }),
+            &mut opened,
+        )
+        .await;
+        assert!(matches!(res, Ok(TurnEnd::Completed)), "{res:?}");
+        assert!(!opened.stalled, "open tool must prevent premature settle");
+        let mut got = vec![];
+        while let Ok(e) = rx.try_recv() {
+            got.push(e);
+        }
+        assert!(got
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Message(m) if m == "Finished.")));
+        server.await.unwrap();
     }
 
     #[tokio::test]

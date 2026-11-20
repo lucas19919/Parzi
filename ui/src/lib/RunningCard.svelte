@@ -32,8 +32,8 @@
     if (sid === session) jobs = got;
   }
 
-  $: activeJobs = jobs.filter((j) => j.running);
-  $: doneJobs = jobs.filter((j) => !j.running).reverse();
+  $: activeJobs = jobs.filter((j) => j.running && !j.host_id);
+  $: doneJobs = jobs.filter((j) => !j.running && !j.host_id).reverse();
   $: busy = helpers.filter((h) => running.has(h.id)).length + activeJobs.length;
   $: needy = helpers.some((h) => waiting.has(h.id));
 
@@ -61,7 +61,7 @@
     let tick = 0;
     const timer = setInterval(() => {
       now = Date.now();
-      if (activeJobs.length && ++tick % 3 === 0) void load();
+      if (activeJobs.length && ++tick % 2 === 0) void load();
     }, 1000);
     const un = onRunEvent((e) => {
       if (e.session !== session) return;

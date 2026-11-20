@@ -432,18 +432,6 @@ fn ui_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "ui.host_site".into(),
-            description: "Pin a live dev server in the person's side bar: it embeds in a Hosted card with reload and open-outside, so they watch while you work. Only your own loopback servers (localhost, 127.0.0.1, ::1); anything else is refused. Say in a sentence what it is and what to look at. Call again with another url to swap it.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "http(s) url of the loopback server, e.g. http://localhost:5173"},
-                    "title": {"type": "string", "description": "short label for the card"},
-                },
-                "required": ["url"],
-            }),
-        },
-        ToolDef {
             name: "ui.offer_replies".into(),
             description: "End a turn that leaves the person a decision with one to three reply buttons under your reply: a go-ahead, a choice between two ways, approve or not. Call it last, after your final text. Labels are one to four words (\"Release 0.1.36\", \"Not yet\"); your recommendation goes first. A click sends its message (or the label) as the person's reply. Optional question: the decision in one short line. Skip it when nothing waits on them, and never for questions you need answered mid-turn (that is ask.user).".into(),
             schema: serde_json::json!({
@@ -473,7 +461,7 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_artifact" | "ui.show_file" | "ui.host_site" | "ui.offer_replies" | "todo.write"
+        "ui.show_artifact" | "ui.show_file" | "ui.offer_replies" | "todo.write"
     )
 }
 
@@ -1108,6 +1096,7 @@ pub fn is_session_tool(name: &str) -> bool {
             | "session.read"
             | "session.list"
             | "session.rename"
+            | "session.format_message"
             | "session.draft"
     )
 }
@@ -1164,6 +1153,15 @@ fn session_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"title": {"type": "string"}},
                 "required": ["title"],
+            }),
+        },
+        ToolDef {
+            name: "session.format_message".into(),
+            description: "Set a cleaner display version of the person's latest message (for example raw math set as LaTeX $...$/$$...$$ or messy pasted code in fenced blocks). Only call when the message genuinely reads better formatted; keep the wording and meaning intact. Parzi keeps the original under 'Show as typed'.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "formatted markdown/LaTeX display text for the person's latest message"}},
+                "required": ["text"],
             }),
         },
         ToolDef {
@@ -1290,6 +1288,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 60)
         ),
         "session.rename" => "Naming this session".into(),
+        "session.format_message" => "Formatting message".into(),
         "plan.read" => "Reading the plan".into(),
         "plan.write" | "todo.write" => {
             let items = args
@@ -1460,10 +1459,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "ui.show_file" => format!(
             "Showing {}",
             one_line(&str_arg("path").unwrap_or_else(|| "a file".into()), 60)
-        ),
-        "ui.host_site" => format!(
-            "Hosting {}",
-            one_line(&str_arg("url").unwrap_or_else(|| "a site".into()), 60)
         ),
         "ui.show_artifact" => format!(
             "Publishing {}",

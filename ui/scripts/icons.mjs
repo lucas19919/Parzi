@@ -54,6 +54,7 @@ const MAP = {
   desktop: "monitor",
   checkCircle: "circle-check",
   xCircle: "circle-x",
+  play: "play",
 };
 
 const dir = new URL("../node_modules/lucide-static/", import.meta.url);

@@ -4,11 +4,10 @@
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
+  import HostsCard from "./HostsCard.svelte";
   import RunningCard from "./RunningCard.svelte";
   import FilesCard from "./FilesCard.svelte";
   import type { ArtifactDoc } from "./tabs";
-  import HostedCard from "./HostedCard.svelte";
-  import { hostedSites, clearHosted } from "./hosted";
   import { board, reloadBoard } from "./providerStore";
   import ResizeGrip from "./ResizeGrip.svelte";
   import { nameOf } from "./providerRows";
@@ -40,7 +39,7 @@
   // Card order: environment first. Swappable by drag,
   // persisted per machine.
   const ORDER_KEY = "parzi.info.order";
-  const DEFAULT_ORDER = ["env", "context", "usage", "changes", "files", "running"];
+  const DEFAULT_ORDER = ["env", "context", "usage", "changes", "files", "hosts", "running"];
   function loadOrder(): string[] {
     try {
       const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
@@ -125,21 +124,30 @@
 
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
 
+  const gitCache = new Map<string, { git: GitStatus | null; prs: PrInfo[] }>();
   let git: GitStatus | null = null;
   let gitFor: string | null = null;
   $: gitDir = remoteHost ? "" : folder;
   $: if (gitDir !== gitFor) {
     gitFor = gitDir;
-    git = null;
+    const cached = gitDir ? gitCache.get(gitDir) : null;
+    git = cached?.git ?? null;
+    prs = cached?.prs ?? [];
     void loadGit();
   }
   async function loadGit() {
     const dir = gitFor;
     const s = dir ? await api.gitStatus(dir).catch(() => null) : null;
-    if (dir === gitFor) git = s;
+    if (dir === gitFor) {
+      git = s;
+      if (dir) gitCache.set(dir, { git: s, prs });
+    }
     // gh is slow and cached a minute in the backend: after the status.
     const found = dir ? await api.branchPrs(dir).catch(() => []) : [];
-    if (dir === gitFor) prs = found;
+    if (dir === gitFor) {
+      prs = found;
+      if (dir) gitCache.set(dir, { git, prs: found });
+    }
   }
   // The Changes card: one row per changed file, a click shows its diff.
   const CHANGE_ROWS = 8;
@@ -186,7 +194,6 @@
   })();
 
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
-  $: site = $hostedSites[session];
 
   onMount(() => {
     const onFocus = () => void loadGit();
@@ -226,13 +233,6 @@
     {/if}
   </InfoCard>
   </div>
-
-  <!-- Pinned second: whatever the agent hosts stays one glance down. -->
-  {#if site}
-  <div class="slot" style="order: {pos('env')}">
-    <HostedCard {site} on:close={() => clearHosted(session)} on:openUrl />
-  </div>
-  {/if}
 
   {#if contextLimit > 0}
   <div class="slot" style="order: {pos('context')}" use:movable={"context"}>
@@ -310,6 +310,10 @@
 
   <div class="slot" style="order: {pos('files')}" use:movable={"files"}>
   <FilesCard {folder} shown={open} current={reading} on:open={(e) => dispatch("openFile", e.detail)} />
+  </div>
+
+  <div class="slot" style="order: {pos('hosts')}" use:movable={"hosts"}>
+  <HostsCard {session} on:openUrl on:openFile />
   </div>
 
   <div class="slot" style="order: {pos('running')}" use:movable={"running"}>

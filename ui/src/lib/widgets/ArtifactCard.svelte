@@ -441,16 +441,6 @@
     max-height: 360px;
     overflow: hidden;
   }
-  .body.folded::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 72px;
-    background: linear-gradient(transparent, var(--panel));
-    pointer-events: none;
-  }
   .doc {
     padding: calc(var(--space) * 4) calc(var(--space) * 4) calc(var(--space) * 4);
     font-size: var(--fs-base);

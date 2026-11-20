@@ -422,6 +422,31 @@ const browserPrefs = {
   ],
 };
 
+const mockHosts = [
+  {
+    id: "host-1",
+    job_id: "sh-1",
+    cmd: "npm run dev",
+    workdir: "D:\\Repos\\Parzi\\ui",
+    urls: ["http://localhost:1420"],
+    running: true,
+    exit: null as number | null,
+    started: now - 8_220_000,
+    ms: 8_220_000,
+  },
+  {
+    id: "host-2",
+    job_id: null as string | null,
+    cmd: "python -m http.server 8000",
+    workdir: "D:\\Repos\\Parzi",
+    urls: ["http://localhost:8000"],
+    running: false,
+    exit: 0 as number | null,
+    started: now - 900_000,
+    ms: 0,
+  },
+];
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   branch_prs: () => prs,
   app_version: () => "0.1.25-dev",
@@ -460,9 +485,39 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   shell_jobs: () => [
     { id: "fg-1", cmd: "cargo test -p parzi-runtime", background: false, running: false, exit: 0, started: now - 600_000, ms: 48_000 },
     { id: "fg-2", cmd: "npm run lint:ui", background: false, running: false, exit: 1, started: now - 300_000, ms: 18_000 },
-    { id: "sh-1", cmd: "npm run dev", background: true, running: true, exit: null, started: now - 8_220_000, ms: 8_220_000 },
+    { id: "sh-1", cmd: "npm run dev", background: true, running: true, exit: null, started: now - 8_220_000, ms: 8_220_000, urls: ["http://localhost:1420"], host_id: "host-1" },
   ],
-  shell_kill: () => true,
+  shell_hosts: () => mockHosts.map((h) => ({ ...h })),
+  shell_restart_host: (a) => {
+    const h = mockHosts.find((x) => x.id === a.id);
+    if (!h) throw new Error("host not found");
+    h.running = true;
+    h.exit = null;
+    h.job_id = `sh-${Date.now()}`;
+    h.started = Date.now();
+    h.ms = 0;
+    return { ...h };
+  },
+  shell_remove_host: (a) => {
+    const idx = mockHosts.findIndex((x) => x.id === a.id);
+    if (idx < 0) return false;
+    mockHosts.splice(idx, 1);
+    return true;
+  },
+  shell_logs: () => ({
+    text: "VITE v6.0.0 ready in 280 ms\n\n  ➜  Local:   http://localhost:1420/\n",
+    next_offset: 64,
+    running: true,
+    exit: null,
+  }),
+  shell_kill: (a) => {
+    const h = mockHosts.find((x) => x.job_id === a.id);
+    if (h) {
+      h.running = false;
+      h.exit = -1;
+    }
+    return true;
+  },
   git_branches: () => ({ current: "main", all: ["main", "plan/sidebar-polish", "release/0.1"] }),
   rewind_thread: () => sessions[0],
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
@@ -535,7 +590,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   git_branch: () => "main",
   git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600, top: "D:\\Repos\\Parzi", files: ["ui/src/lib/FilePanel.svelte", "src-tauri/src/files.rs", "CHANGELOG.md", "docs/notes.md"], stats: [{ path: "ui/src/lib/FilePanel.svelte", added: 160, removed: 41 }, { path: "src-tauri/src/files.rs", added: 48, removed: 16 }, { path: "CHANGELOG.md", added: 6, removed: 0 }] }),
   git_diff: (a) => `diff --git a/${a.path} b/${a.path}\n--- a/${a.path}\n+++ b/${a.path}\n@@ -1,3 +1,4 @@\n context line\n-old line\n+new line\n+another new line\n`,
-  url_listening: () => true,
   list_dir: (a) => {
     const at = String(a.path).replace(/\\/g, "/");
     const tree: Record<string, { name: string; dir: boolean }[]> = {

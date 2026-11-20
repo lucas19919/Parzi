@@ -8,9 +8,9 @@ Parzi is a chat with the agents you already pay for, and a browser in the same w
 
 A tab is a session or a web page. Home is the composer. Let's build in, just above the box, is the project and the branch. The globe turns that box into search or an address, directly under the tab.
 
-Beside a session, the column shows where it runs, how full its context is, what changed, and the side tasks it started. While an agent is working, Enter queues the next message. Ctrl+Enter starts that message as a side task.
+Beside a session, the column shows where it runs, how full its context is, what changed, the project's files, any local dev servers it started (with start, restart, stop and logs), and the side tasks running beside it. While an agent is working, Enter queues the next message. Ctrl+Enter starts that message as a side task.
 
-A project can have a plan. Ask an agent to plan the work and the thread shows the checklist. The plan is a note in the Brain, so it stays with your other notes.
+Each session can have its own plan: ask an agent to plan the work and the thread shows the checklist across restarts and agent switches, while follow-up work waits under Drafts.
 
 The Brain is markdown in `~/.parzi/brain`. A note can go to every session or to the projects you name. Pinned notes are sent in full. The rest are one line, and the agent reads a note when it needs it.
 

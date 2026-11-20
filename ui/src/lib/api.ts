@@ -152,8 +152,6 @@ export interface ParziConfig {
   routing: { order: string[] };
   budget?: { max_cost_usd: number | null; max_tokens: number | null };
   favorite_models: string[];
-  /** The small model for quick side jobs, then a fallback: "agent/model", "" for automatic. */
-  quick?: { model: string; fallback: string };
 }
 
 export interface Theme {
@@ -211,7 +209,6 @@ export const api = {
   onUpdateProgress: (fn: (p: { chunk: number; total: number | null }) => void) =>
     listen<{ chunk: number; total: number | null }>("parzi://update-progress", (e) => fn(e.payload)),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
-  urlListening: (url: string) => invoke<boolean>("url_listening", { url }),
   openFilePath: (path: string) => invoke<void>("open_file_path", { path }),
 
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
@@ -267,6 +264,10 @@ export const api = {
   setAgentKey: (provider: string, key: string | null) => invoke<void>("set_agent_key", { provider, key }),
   acpRegistry: () => invoke<RegistryAgent[]>("acp_registry"),
   shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
+  shellHosts: (session: string) => invoke<HostJob[]>("shell_hosts", { session }),
+  shellRestartHost: (session: string, id: string) => invoke<HostJob>("shell_restart_host", { session, id }),
+  shellRemoveHost: (session: string, id: string) => invoke<boolean>("shell_remove_host", { session, id }),
+  shellLogs: (session: string, id: string) => invoke<ShellLogTail | null>("shell_logs", { session, id }),
   shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),
   contextParts: (cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { cwd }),
   connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
@@ -325,6 +326,27 @@ export interface ShellJob {
   exit: number | null;
   started: number;
   ms: number;
+  urls?: string[];
+  host_id?: string | null;
+}
+
+export interface HostJob {
+  id: string;
+  job_id?: string | null;
+  cmd: string;
+  workdir: string;
+  urls: string[];
+  running: boolean;
+  exit: number | null;
+  started: number;
+  ms: number;
+}
+
+export interface ShellLogTail {
+  text: string;
+  next_offset: number;
+  running: boolean;
+  exit: number | null;
 }
 
 export interface GitStatus {

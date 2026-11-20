@@ -6,6 +6,12 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- A Hosts card in the session sidebar tracks local dev servers started by an agent: click a URL to open it in a tab, or Start, Restart, Stop, View logs, Open in browser, or Remove it directly without asking the agent. Discovered hosts persist across stops and restarts.
+- Removed the bottom fade overlays on glass code blocks and folded artifact cards.
+- Bare localhost, IP, and local/intranet addresses with a port or path now linkify and open directly in a Parzi tab.
+- Long threads stay snappy: sessions with large histories render the recent tail first with a "Show earlier messages" button, and tab-group corners align cleanly in the tab bar.
+- Agents rename sessions and tidy math or code in your messages directly with their own tools (`session_rename`, `session_format_message`) instead of running a separate formatting model; removed the Formatting agent setting and `ui_host_site`.
+- ACP sessions that finish replying and report usage before going silent now settle cleanly instead of hanging.
 - A proposed plan reads like a plan: what and why at full size, each step with what it involves, a link to the agent's full plan document, and one Accept. To change it, type what you want in the composer; it goes straight to the agent.
 - Questions are calm choice cards: each answer is a tile you click to answer at once (several can be picked and sent together when the agent allows it), "Something else…" takes your own words, and Skip sits quietly by the title. No radio buttons or Submit.
 - Every card (the session, the side cards, the composer, the plan, questions, menus, tooltips) shows its rounded outline in one faint hairline, so its edge reads over a dark picture and the session's corner no longer looks like a stray strip at the top left. The dark fade under the composer is gone. Working spinners are one quiet tone everywhere.

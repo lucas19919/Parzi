@@ -13,7 +13,11 @@ pub async fn list_threads(
     state: State<'_, AppState>,
     far: State<'_, RemoteState>,
 ) -> Result<Vec<SessionMeta>, String> {
-    let mut all = state.orch.store().list().map_err(|e| e.to_string())?;
+    let store = state.orch.store().clone();
+    let mut all = tauri::async_runtime::spawn_blocking(move || store.list())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     all.extend(remote::sessions(&state.app, &far).await);
     Ok(all)
 }
@@ -34,19 +38,20 @@ pub async fn get_thread(
             .await
             .map(|(m, evs)| (m, evs.iter().map(stamped_plain).collect()));
     }
-    let meta = state.orch.store().get(&id).map_err(|e| e.to_string())?;
-    let stamped = state
-        .orch
-        .store()
-        .events_with_times(&id)
-        .map_err(|e| e.to_string())?;
-    Ok((
-        meta,
-        stamped
-            .into_iter()
-            .map(|(e, at)| stamped_of(&e, at))
-            .collect(),
-    ))
+    let store = state.orch.store().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let meta = store.get(&id).map_err(|e| e.to_string())?;
+        let stamped = store.events_with_times(&id).map_err(|e| e.to_string())?;
+        Ok((
+            meta,
+            stamped
+                .into_iter()
+                .map(|(e, at)| stamped_of(&e, at))
+                .collect(),
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn stamped_of(event: &Event, at: Option<i64>) -> serde_json::Value {
@@ -105,7 +110,6 @@ pub async fn send_message(
         app: state.app.clone(),
         pending: state.pending.clone(),
     });
-    let fresh = session_id.is_none();
     let sid = match session_id {
         Some(id) => {
             state
@@ -157,11 +161,6 @@ pub async fn send_message(
                 .id
         }
     };
-    // Beside the run, a small model names a new session first and then sets
-    // the message for display (math, code); the agent already has what was typed.
-    if parent.as_deref().is_none_or(str::is_empty) {
-        state.orch.prepare_soon(&sid, &prompt, fresh);
-    }
     if let Some(parent) = parent.filter(|p| !p.is_empty() && *p != sid) {
         if let Err(e) = state.orch.store().set_parent(&sid, &parent) {
             tracing::warn!("side task {sid} not linked to {parent}: {e}");

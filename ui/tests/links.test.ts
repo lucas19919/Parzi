@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chipLabel, fileLink, gitRefs, isBranchLike, joinPath, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
+import { bareWebRefs, chipLabel, fileLink, gitRefs, isBranchLike, joinPath, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
 
 test("relative links resolve beside the note or file they sit in", () => {
   assert.equal(joinPath("projects/parzi", "mobile-viewers.md"), "projects/parzi/mobile-viewers.md");
@@ -183,4 +183,41 @@ test("web links never hand the backend a character it rejects", () => {
   assert.equal(webLink("https://").kind, "refuse");
   assert.equal(webLink(`https://x.test/${"a".repeat(9000)}`).kind, "refuse");
   assert.equal(webLink("javascript:alert(1)").kind, "refuse");
+});
+
+
+test("schemeless hosts with a port or path become links", () => {
+  assert.deepEqual(bareWebRefs("open localhost:3000 now"), [
+    { href: "http://localhost:3000", index: 5, length: 14 },
+  ]);
+  assert.deepEqual(bareWebRefs("at 127.0.0.1:5173/x."), [
+    { href: "http://127.0.0.1:5173/x", index: 3, length: 16 },
+  ]);
+  assert.deepEqual(bareWebRefs("see foo.lan:8080/a?b=c"), [
+    { href: "http://foo.lan:8080/a?b=c", index: 4, length: 18 },
+  ]);
+  assert.deepEqual(bareWebRefs("(see foo.bar/baz)"), [
+    { href: "http://foo.bar/baz", index: 5, length: 11 },
+  ]);
+  assert.deepEqual(bareWebRefs("en.wikipedia.org/wiki/X_(Y)"), [
+    { href: "http://en.wikipedia.org/wiki/X_(Y)", index: 0, length: 27 },
+  ]);
+});
+
+test("filenames, file:line refs and full URLs stay untouched", () => {
+  for (const text of [
+    "README.md and main.rs",
+    "see md.ts:435",
+    "ui/src/lib/md.ts",
+    "http://localhost:3000/x",
+    "docs/v2.0/setup",
+    "mail user@example.com now",
+    "just localhost",
+  ]) assert.deepEqual(bareWebRefs(text), [], text);
+});
+
+test("intranet http links keep their scheme in a tab", () => {
+  assert.deepEqual(webLink("http://foo.lan:8080/x"), { kind: "tab", url: "http://foo.lan:8080/x" });
+  assert.deepEqual(webLink("http://printer/status"), { kind: "tab", url: "http://printer/status" });
+  assert.deepEqual(webLink("http://example.com/a"), { kind: "open", url: "https://example.com/a" });
 });

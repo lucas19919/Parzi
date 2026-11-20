@@ -36,7 +36,7 @@
   import { applyThemeCss, refreshBackground } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, displayTitle, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { splitQuotes } from "./lib/oldQuotes";
@@ -47,7 +47,6 @@
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
   import { addNeedsNotification, addNotification, dropNotification, dropStaleNeeds, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
-  import { setHosted } from "./lib/hosted";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
@@ -74,7 +73,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     (restored?.tabs ?? [sessionTab()]).map((t) => {
       const c = ensureComposer((t as Partial<Tab>).composer);
       if (c.model === "auto") c.model = "";
-      return { ...t, composer: c };
+      return { ...t, title: displayTitle((t as Partial<Tab>).title, (t as Partial<Tab>).kind === "page" ? "New page" : "New session"), composer: c };
     }),
   );
   let activeId = restored?.active ?? tabs[0].id;
@@ -529,28 +528,57 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void api.warmAgent(provider).catch(() => {});
   }
 
-  // Going from one session to another, the thread fades out, the next one
-  // loads and settles at its bottom unseen, then fades in: no frame of the
-  // old thread under the new title, no jump from the top.
-  let swapping = false;
-  const SWAP_OUT = 100;
+  // Keep recently opened threads warm in memory so switching sessions is
+  // instant without fading out or jumping; the fresh disk read reconciles
+  // quietly right behind it.
+  const THREAD_CACHE_MAX = 24;
+  const threadCache = new Map<string, { meta: SessionMeta; events: ChatEvent[] }>();
+  function cacheThread(id: string, m: SessionMeta, ev: ChatEvent[]) {
+    if (!id) return;
+    threadCache.delete(id);
+    threadCache.set(id, { meta: m, events: ev });
+    while (threadCache.size > THREAD_CACHE_MAX) {
+      const oldest = threadCache.keys().next().value;
+      if (oldest) threadCache.delete(oldest);
+      else break;
+    }
+  }
+  function dropCachedThread(id: string) {
+    threadCache.delete(id);
+  }
+  function eventsDiffer(a: ChatEvent[], b: ChatEvent[]): boolean {
+    if (a.length !== b.length) return true;
+    if (!a.length) return false;
+    const la = a[a.length - 1];
+    const lb = b[b.length - 1];
+    return la.kind !== lb.kind || JSON.stringify(la) !== JSON.stringify(lb);
+  }
 
   async function showSession(id: string) {
     const my = ++navSeq;
-    const fade = !reduced && hasSession && !!shown && shown !== id;
-    if (fade) swapping = true;
-    const started = performance.now();
     shown = id;
     markSessionRead(id);
     clearLive();
+    const cached = threadCache.get(id);
+    if (cached) {
+      meta = cached.meta;
+      events = withPending(id, cached.events);
+      context = { used: cached.meta.context_tokens ?? 0, limit: cached.meta.context_limit ?? 0 };
+      if (cached.meta.model) {
+        tab.composer.model = cached.meta.model;
+        comp = comp;
+      }
+      applyLive(id, cached.meta.status);
+      if (tab.sessionId === id && cached.meta.title) patchTab(tab.id, { title: cached.meta.title });
+      void scrollToBottom();
+    }
     try {
       const [m, ev] = await api.getThread(id);
       if (my !== navSeq) return;
-      const left = SWAP_OUT - (performance.now() - started);
-      if (fade && left > 0) await new Promise((r) => setTimeout(r, left));
-      if (my !== navSeq) return;
+      const changed = !cached || eventsDiffer(cached.events, ev);
+      cacheThread(id, m, ev);
       meta = m;
-      events = withPending(id, ev);
+      if (changed) events = withPending(id, ev);
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
       if (m.model) {
         tab.composer.model = m.model;
@@ -558,11 +586,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
       applyLive(id, m.status);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
-      await scrollToBottom();
+      if (changed) await scrollToBottom();
     } catch (e) {
       if (my === navSeq) toastError(e);
-    } finally {
-      if (my === navSeq) swapping = false;
     }
   }
 
@@ -595,6 +621,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     const [m, ev] = got;
     if (my !== navSeq || shown !== id) return;
+    cacheThread(id, m, ev);
     meta = m;
     events = withPending(id, ev);
     swap?.();
@@ -718,18 +745,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  function openInSession(url: string, sessionId: string) {
-    const existing = tabs.find((t) => t.kind === "page" && t.url === url);
-    if (existing) {
-      if (!existing.owner && !existing.group) patchTab(existing.id, { group: sessionId });
-      selectTab(existing.id);
-      return;
-    }
-    const t = pageTab(url, undefined, null, sessionId);
-    tabs = placeTab(tabs, t, activeId, sessionId);
-    selectTab(t.id);
-  }
-
   // The side bar reads one file per session (tabs outside a session share one).
   let sessionDocs: Record<string, ArtifactDoc> = {};
   let looseDoc: ArtifactDoc | null = null;
@@ -788,34 +803,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return { text: `${path} is open beside the session${at === group ? "" : "; the person sees it when they open this session"}.` };
   }
 
-  /** An agent's ui.host_site: a loopback dev server pins in that session's
-   *  side bar as a live Hosted card. Errors go back to the agent rather
-   *  than to a toast. */
-  function loopbackUrl(raw: string): string | null {
-    const url = raw.trim();
-    if (!/^https?:\/\//i.test(url)) return null;
-    let host = "";
-    try {
-      host = new URL(url).hostname.toLowerCase();
-    } catch {
-      return null;
-    }
-    const loopback =
-      host === "localhost" ||
-      host.endsWith(".localhost") ||
-      host === "::1" ||
-      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-    return loopback ? url : null;
-  }
-
-  async function hostSiteFor(session: string, url: string, title: string): Promise<{ text: string }> {
-    const good = loopbackUrl(url);
-    if (!good) throw new Error("Only this computer's servers can be hosted (localhost, 127.0.0.1 or ::1).");
-    setHosted(session || group || shown || "home", good, title.trim() || "Hosted");
-    if (!infoShown && !pageInfoShown) toggleInfo(true);
-    return { text: `${good} is pinned in the side bar as a live Hosted card.` };
-  }
-
   /** A linked file opens in the side bar; one that isn't workspace text opens outside Parzi. */
   async function openFileInCard(path: string) {
     const at = group;
@@ -857,10 +844,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   function openFromPage(opener: string, url: string) {
     const from = tabs.find((t) => t.id === opener);
-    if (from?.group) {
-      openInSession(url, from.group);
-      return;
-    }
     if (!from?.owner) {
       openPageNext(url);
       return;
@@ -955,7 +938,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       selectTab(existing.id);
       return;
     }
-    const title = threads.find((t) => t.id === id)?.title || "Session";
+    const title = displayTitle(threads.find((t) => t.id === id)?.title, "Session");
     const host = hostSessionOf(id);
     if (host) {
       const t = { ...sessionTab(id, title), group: host };
@@ -1139,6 +1122,35 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (next.item) restore(sid, next.item);
   }
 
+  const DRAIN_DELAYS = [250, 500, 1000, 1500, 2000, 2000];
+  const drainTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; tries: number }>();
+  function clearDrain(sid: string) {
+    const cur = drainTimers.get(sid);
+    if (cur) {
+      clearTimeout(cur.timer);
+      drainTimers.delete(sid);
+    }
+  }
+  function scheduleDrain(sid: string) {
+    if (queuePaused.has(sid) || !(held[sid]?.length)) {
+      clearDrain(sid);
+      return;
+    }
+    const prev = drainTimers.get(sid);
+    const tries = prev ? prev.tries + 1 : 0;
+    if (prev) clearTimeout(prev.timer);
+    if (tries >= DRAIN_DELAYS.length) {
+      drainTimers.delete(sid);
+      return;
+    }
+    const delay = DRAIN_DELAYS[tries];
+    const timer = setTimeout(() => {
+      drainTimers.delete(sid);
+      void drainIfIdle(sid, true);
+    }, delay);
+    drainTimers.set(sid, { timer, tries });
+  }
+
   async function sendHeld(sid: string, given?: HeldItem) {
     if (inflight.has(sid)) {
       if (given) held = putFront(held, sid, given);
@@ -1192,15 +1204,24 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       held = putFront(held, sid, h);
       if (shown === sid) events = events.filter((ev) => ev !== optimistic);
       if (stillWorking(e)) {
-        console.info("queue: still working; the message stays queued", { session: sid });
+        // The previous run may still be releasing its handle; keep it marked
+        // live and retry shortly instead of leaving the queue stalled.
+        markLive(sid);
+        scheduleDrain(sid);
+        console.info("queue: still working; scheduling retry", { session: sid });
         return;
       }
       toastError(e);
     }
   }
 
-  async function drainIfIdle(sid: string) {
-    if (inflight.has(sid) || queuePaused.has(sid) || !(held[sid]?.length)) return;
+  async function drainIfIdle(sid: string, retrying = false) {
+    clearDrain(sid);
+    if (queuePaused.has(sid) || !(held[sid]?.length)) return;
+    if (inflight.has(sid)) {
+      scheduleDrain(sid);
+      return;
+    }
     let status = "";
     try {
       const [m] = await api.getThread(sid);
@@ -1210,6 +1231,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     if (status === "active" || status === "queued") {
       if (!running.has(sid)) markLive(sid);
+      if (retrying) scheduleDrain(sid);
       return;
     }
     release(sid);
@@ -1244,6 +1266,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   async function sendHeldNow(itemId?: string) {
     const id = shown;
     if (!id) return;
+    clearDrain(id);
+    if (queuePaused.has(id)) queuePaused = new Set([...queuePaused].filter((x) => x !== id));
     const next = itemId ? takeId(held, id, itemId) : takeHead(held, id);
     held = next.queue;
     const h = next.item;
@@ -1253,12 +1277,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running);
       clearLive();
       await stopSession(id);
-      for (let i = 0; i < 40; i++) {
-        const t = (await api.listThreads().catch(() => [])).find((x) => x.id === id);
-        if (!t || (t.status !== "active" && t.status !== "queued")) break;
-        await new Promise((r) => setTimeout(r, 125));
+      for (let i = 0; i < 30; i++) {
+        const st = await api.getThread(id).then(([m]) => m.status).catch(() => "");
+        if (!st || (st !== "active" && st !== "queued")) break;
+        await new Promise((r) => setTimeout(r, 100));
       }
-      await new Promise((r) => setTimeout(r, 150));
     }
     for (let i = 0; i < 40 && inflight.has(id); i++) await new Promise((r) => setTimeout(r, 50));
     await sendHeld(id, h);
@@ -1643,12 +1666,15 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
+      clearDrain(e.session);
+      if (e.session !== shown) dropCachedThread(e.session);
       if (e.kind === "error" && /exited before/i.test(e.error) && (held[e.session]?.length ?? 0) > 0) {
         queuePaused = new Set(queuePaused).add(e.session);
       }
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
-      const next = e.kind === "done" && !inflight.has(e.session) && !queuePaused.has(e.session) && !!held[e.session]?.length;
+      const hasQueued = e.kind === "done" && !queuePaused.has(e.session) && !!held[e.session]?.length;
+      const next = hasQueued && !inflight.has(e.session);
       // The turn on screen ends once its saved message is in place: ending it
       // first drops the working line and the live fold while the reply still
       // shows, then the saved message pops in.
@@ -1660,6 +1686,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         if (e.session === shown) clearLive();
       }
       if (next) void sendHeld(e.session);
+      else if (hasQueued) scheduleDrain(e.session);
       const isChild = threads.some((t) => t.id === e.session && t.parent_id);
       if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { news: "problem" });
       else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { news: "done" });
@@ -1667,8 +1694,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       else if (!stopped(e.error)) announce(e.session, "stopped with an error", "error", { news: "problem" });
       return;
     }
-    // A small model named the session or tidied a message (orchestrator/quick.rs).
+    // The working agent formatted a message for display (session.format_message).
     if (e.kind === "refreshed") {
+      if (e.session !== shown) dropCachedThread(e.session);
       void renamed(e.session);
       if (e.session === shown) void reload();
       return;
@@ -1677,6 +1705,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running).add(e.session);
     }
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
+    if (e.kind === "tool_result" && e.name === "session.format_message" && e.ok && e.session === shown) void reload();
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
@@ -1810,6 +1839,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (cmd.label) toast(`${cmd.allow ? "Allowed" : "Denied"} from the command line: ${cmd.label}`);
     } else if (cmd.op === "deleted" && cmd.id) {
       const gone = cmd.id;
+      dropCachedThread(gone);
+      clearDrain(gone);
       running.delete(gone);
       running = running;
       for (const t of tabs.filter((x) => x.sessionId === gone)) closeTab(t.id);
@@ -1851,9 +1882,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           break;
         case "show_file":
           result = await showFileFor(str("session"), str("path"), call.note === true);
-          break;
-        case "host_site":
-          result = await hostSiteFor(str("session"), str("url"), str("title"));
           break;
         default:
           result = { ok: false, error: `unknown call ${String(call.kind)}` };
@@ -1915,7 +1943,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       const id = cmd.id;
       if (cmd.focus !== false) openSession(id);
       else if (!tabs.some((t) => t.sessionId === id)) {
-        const t = sessionTab(id, cmd.title || "Session");
+        const t = sessionTab(id, displayTitle(cmd.title, "Session"));
         tabs = placeTab(tabs, t, activeId);
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
@@ -1959,8 +1987,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
       if (!url) return;
-      if (tab.kind === "session" && tab.sessionId) openInSession(url, tab.sessionId);
-      else openPage(url);
+      openPage(url);
     };
     document.addEventListener("parzi:open-page", onOpenPage);
     const onOpenArtifact = (e: Event) => {
@@ -2032,6 +2059,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void ensureBoard().catch((e) => toast(`Couldn't load the agents: ${e}`, true));
     checkForUpdatesSoon();
     return () => {
+      for (const cur of drainTimers.values()) clearTimeout(cur.timer);
+      drainTimers.clear();
       unActivity();
       unActions();
       unClear();
@@ -2169,7 +2198,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                 />
               </div>
             {:else if hasSession}
-            <div class="workarea" class:swapping>
+            <div class="workarea">
               <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} use:follow.attach>
                 <Thread
                   {events}
@@ -2544,14 +2573,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex: 1;
     min-height: 0;
     display: flex;
-    transition:
-      opacity 240ms var(--ease-out),
-      transform 240ms var(--ease-out);
-  }
-  .workarea.swapping {
-    opacity: 0;
-    transform: translateY(4px);
-    transition-duration: 100ms;
   }
 
   .back {

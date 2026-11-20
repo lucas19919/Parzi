@@ -274,17 +274,14 @@ mod tests {
                 "`plan_write`",
                 "`plan_read`",
                 "`todo_write`",
-                "5 to 15 items",
-                "needs",
-                "plan/<id>",
+                "`propose: true`",
                 "`active`",
                 "`done`",
-                "<parzi:plan>",
-                "belongs to the person",
+                "`session_draft`",
                 "waits",
-                "When a phase is done, stop",
                 "`session_rename`",
                 "2 to 5 words",
+                "`session_format_message`",
             ] {
                 assert!(plans.contains(word), "the plans section says {word}");
             }

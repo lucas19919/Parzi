@@ -18,7 +18,8 @@ const SPILL_CAP: u64 = 8 * 1024 * 1024;
 const STDERR_KEEP: usize = 16 * 1024;
 const DRAIN_FOR: Duration = Duration::from_secs(2);
 pub const MAX_BACKGROUND_PER_SESSION: usize = 8;
-const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
+const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
+const MAX_JOB_URLS: usize = 4;
 
 fn ingest_output(
     ring: &mut Vec<u8>,
@@ -130,10 +131,41 @@ pub struct ShellJob {
     pub exit: Option<i32>,
     pub started: i64,
     pub ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HostJob {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    pub cmd: String,
+    pub workdir: String,
+    pub urls: Vec<String>,
+    pub running: bool,
+    pub exit: Option<i32>,
+    pub started: i64,
+    pub ms: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SavedHost {
+    id: String,
+    cmd: String,
+    workdir: String,
+    urls: Vec<String>,
+    updated: i64,
+    #[serde(skip)]
+    job_id: Option<String>,
 }
 
 const FG_KEEP: usize = 30;
+const MAX_SAVED_HOSTS: usize = 16;
 
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct LogTail {
     pub text: String,
     pub next_offset: u64,
@@ -143,6 +175,8 @@ pub struct LogTail {
 
 struct LiveShell {
     cmd: String,
+    workdir: PathBuf,
+    host_id: Option<String>,
     started_at: i64,
     child: Option<Child>,
     buf: Vec<u8>,
@@ -153,12 +187,15 @@ struct LiveShell {
     exit: Option<i32>,
     exited_at: Option<Instant>,
     drained: bool,
+    urls: Vec<String>,
 }
 
 impl LiveShell {
-    fn reserved(cmd: &str) -> Self {
+    fn reserved(cmd: &str, workdir: PathBuf, host_id: Option<String>) -> Self {
         Self {
             cmd: cmd.to_string(),
+            workdir,
+            host_id,
             started_at: parzi_core::now_ms_i64(),
             child: None,
             buf: Vec::new(),
@@ -169,6 +206,7 @@ impl LiveShell {
             exit: None,
             exited_at: None,
             drained: false,
+            urls: Vec::new(),
         }
     }
 
@@ -206,9 +244,23 @@ impl LiveShell {
         (false, None)
     }
 
-    fn ingest(&mut self, chunk: &[u8]) {
+    fn ingest(&mut self, chunk: &[u8]) -> bool {
         ingest_output(&mut self.buf, &mut self.spill, &mut self.spilled, chunk);
         self.total += chunk.len() as u64;
+        let mut changed = false;
+        if self.urls.len() < MAX_JOB_URLS {
+            let text = String::from_utf8_lossy(chunk);
+            for url in extract_loopback_urls(&text) {
+                if !self.urls.contains(&url) {
+                    self.urls.push(url);
+                    changed = true;
+                    if self.urls.len() >= MAX_JOB_URLS {
+                        break;
+                    }
+                }
+            }
+        }
+        changed
     }
 }
 
@@ -216,6 +268,8 @@ impl LiveShell {
 struct Registry {
     shells: HashMap<String, LiveShell>,
     seq: u64,
+    host_seq: u64,
+    hosts: Vec<SavedHost>,
     foreground: Vec<ShellJob>,
 }
 
@@ -243,9 +297,134 @@ fn lock(inner: &Mutex<Registry>) -> MutexGuard<'_, Registry> {
     inner.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn append(inner: &Mutex<Registry>, id: &str, chunk: &[u8]) {
-    if let Some(sh) = lock(inner).shells.get_mut(id) {
-        sh.ingest(chunk);
+fn normalize_workdir_key(path: &str) -> String {
+    let trimmed = path.trim().replace('\\', "/");
+    let trimmed = trimmed.trim_end_matches('/');
+    if cfg!(windows) {
+        trimmed.to_ascii_lowercase()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn hosts_path(sid: &str) -> Option<PathBuf> {
+    if sid.is_empty() {
+        return None;
+    }
+    parzi_core::paths::sessions_dir()
+        .ok()
+        .map(|d| d.join(sid).join("shell").join("hosts.json"))
+}
+
+fn load_saved_hosts(sid: &str) -> Vec<SavedHost> {
+    let Some(path) = hosts_path(sid) else {
+        return Vec::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let Ok(mut list) = serde_json::from_str::<Vec<SavedHost>>(&raw) else {
+        return Vec::new();
+    };
+    list.retain(|h| !h.id.is_empty() && !h.cmd.trim().is_empty() && !h.urls.is_empty());
+    list
+}
+
+fn save_hosts_file(sid: &str, hosts: &[SavedHost]) {
+    let Some(path) = hosts_path(sid) else {
+        return;
+    };
+    if hosts.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(hosts) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+fn next_host_seq(hosts: &[SavedHost]) -> u64 {
+    hosts
+        .iter()
+        .filter_map(|h| h.id.strip_prefix("host-")?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+fn append(inner: &Mutex<Registry>, sid: &str, id: &str, chunk: &[u8]) {
+    let snapshot = {
+        let mut reg = lock(inner);
+        let meta = {
+            let Some(sh) = reg.shells.get_mut(id) else {
+                return;
+            };
+            if !sh.ingest(chunk) || sh.urls.is_empty() {
+                None
+            } else {
+                Some((
+                    sh.cmd.clone(),
+                    sh.workdir.to_string_lossy().into_owned(),
+                    sh.urls.clone(),
+                    sh.host_id.clone(),
+                ))
+            }
+        };
+        let Some((cmd, workdir, urls, existing_hid)) = meta else {
+            return;
+        };
+        let now = parzi_core::now_ms_i64();
+        let cmd_trim = cmd.trim();
+        let wd_key = normalize_workdir_key(&workdir);
+        let found_idx = existing_hid
+            .as_deref()
+            .and_then(|hid| reg.hosts.iter().position(|h| h.id == hid))
+            .or_else(|| {
+                reg.hosts.iter().position(|h| {
+                    h.cmd.trim() == cmd_trim && normalize_workdir_key(&h.workdir) == wd_key
+                })
+            });
+        let hid = if let Some(idx) = found_idx {
+            let h = &mut reg.hosts[idx];
+            h.urls = urls;
+            h.updated = now;
+            h.job_id = Some(id.to_string());
+            h.id.clone()
+        } else {
+            reg.host_seq += 1;
+            let hid = format!("host-{}", reg.host_seq);
+            reg.hosts.push(SavedHost {
+                id: hid.clone(),
+                cmd,
+                workdir,
+                urls,
+                updated: now,
+                job_id: Some(id.to_string()),
+            });
+            hid
+        };
+        if let Some(sh) = reg.shells.get_mut(id) {
+            sh.host_id = Some(hid);
+        }
+        while reg.hosts.len() > MAX_SAVED_HOSTS {
+            let drop_idx = reg
+                .hosts
+                .iter()
+                .position(|h| {
+                    h.job_id
+                        .as_deref()
+                        .and_then(|jid| reg.shells.get(jid))
+                        .is_none_or(|sh| sh.exit.is_some())
+                })
+                .unwrap_or(0);
+            reg.hosts.remove(drop_idx);
+        }
+        Some(reg.hosts.clone())
+    };
+    if let Some(hosts) = snapshot {
+        save_hosts_file(sid, &hosts);
     }
 }
 
@@ -257,10 +436,35 @@ pub struct ShellRegistry {
 
 impl ShellRegistry {
     pub fn new(sid: &str) -> Self {
+        let hosts = load_saved_hosts(sid);
+        let host_seq = next_host_seq(&hosts);
         Self {
-            inner: Arc::default(),
+            inner: Arc::new(Mutex::new(Registry {
+                hosts,
+                host_seq,
+                ..Registry::default()
+            })),
             sid: sid.to_string(),
         }
+    }
+
+    /// Reads persisted hosts for a session without creating a registry or
+    /// touching the filesystem when no hosts file exists.
+    pub fn hosts_saved(sid: &str) -> Vec<HostJob> {
+        load_saved_hosts(sid)
+            .into_iter()
+            .map(|h| HostJob {
+                id: h.id,
+                job_id: None,
+                cmd: h.cmd,
+                workdir: h.workdir,
+                urls: h.urls,
+                running: false,
+                exit: None,
+                started: h.updated,
+                ms: 0,
+            })
+            .collect()
     }
 
     fn reg(&self) -> MutexGuard<'_, Registry> {
@@ -330,6 +534,8 @@ impl ShellRegistry {
                 exit: None,
                 started: parzi_core::now_ms_i64(),
                 ms: 0,
+                urls: Vec::new(),
+                host_id: None,
             });
             id
         };
@@ -418,8 +624,20 @@ impl ShellRegistry {
     }
 
     pub fn start(&self, cmd: &str, workdir: &std::path::Path) -> std::io::Result<String> {
+        self.start_linked(cmd, workdir, None)
+    }
+
+    fn start_linked(
+        &self,
+        cmd: &str,
+        workdir: &std::path::Path,
+        explicit_host_id: Option<String>,
+    ) -> std::io::Result<String> {
         let dir = self.dir()?;
-        let id = {
+        let wd_str = workdir.to_string_lossy().into_owned();
+        let wd_key = normalize_workdir_key(&wd_str);
+        let cmd_trim = cmd.trim();
+        let (id, linked_host, prev_job) = {
             let mut reg = self.reg();
             let running = reg.shells.values().filter(|s| s.exit.is_none()).count();
             if running >= MAX_BACKGROUND_PER_SESSION {
@@ -427,10 +645,32 @@ impl ShellRegistry {
                     "already running {running} background shells; kill one first"
                 )));
             }
+            let linked = explicit_host_id.or_else(|| {
+                reg.hosts
+                    .iter()
+                    .find(|h| {
+                        h.cmd.trim() == cmd_trim
+                            && normalize_workdir_key(&h.workdir) == wd_key
+                            && h.job_id
+                                .as_deref()
+                                .and_then(|jid| reg.shells.get(jid))
+                                .is_none_or(|sh| sh.exit.is_some())
+                    })
+                    .map(|h| h.id.clone())
+            });
             reg.seq += 1;
             let id = format!("sh-{}", reg.seq);
-            reg.shells.insert(id.clone(), LiveShell::reserved(cmd));
-            id
+            reg.shells.insert(
+                id.clone(),
+                LiveShell::reserved(cmd, workdir.to_path_buf(), linked.clone()),
+            );
+            let prev_job = linked.as_deref().and_then(|hid| {
+                reg.hosts.iter_mut().find(|h| h.id == hid).map(|h| {
+                    h.updated = parzi_core::now_ms_i64();
+                    h.job_id.replace(id.clone())
+                })
+            });
+            (id, linked, prev_job.flatten())
         };
         let spill = std::fs::File::create(dir.join(format!("{id}.log"))).ok();
         let spawned = Self::spawn_shell(cmd, workdir);
@@ -439,6 +679,13 @@ impl ShellRegistry {
             Ok(parts) => parts,
             Err(e) => {
                 reg.shells.remove(&id);
+                if let Some(hid) = linked_host.as_deref() {
+                    if let Some(h) = reg.hosts.iter_mut().find(|h| h.id == hid) {
+                        if h.job_id.as_deref() == Some(id.as_str()) {
+                            h.job_id = prev_job;
+                        }
+                    }
+                }
                 return Err(e);
             }
         };
@@ -456,7 +703,13 @@ impl ShellRegistry {
             }
         }
         drop(reg);
-        tokio::spawn(pump(self.inner.clone(), id.clone(), stdout, stderr));
+        tokio::spawn(pump(
+            self.inner.clone(),
+            self.sid.clone(),
+            id.clone(),
+            stdout,
+            stderr,
+        ));
         Ok(id)
     }
 
@@ -524,6 +777,8 @@ impl ShellRegistry {
                 exit: sh.exit,
                 started: sh.started_at,
                 ms: u64::try_from(ms.as_millis()).unwrap_or(u64::MAX),
+                urls: sh.urls.clone(),
+                host_id: sh.host_id.clone(),
             }
         }));
         drop(reg);
@@ -532,6 +787,134 @@ impl ShellRegistry {
         }
         out.sort_by_key(|j| j.started);
         out
+    }
+
+    pub fn hosts(&self) -> Vec<HostJob> {
+        let mut reg = self.reg();
+        let mut expired = vec![];
+        let Registry { hosts, shells, .. } = &mut *reg;
+        let out: Vec<HostJob> = hosts
+            .iter()
+            .map(|h| {
+                if let Some(sh) = h.job_id.as_deref().and_then(|jid| shells.get_mut(jid)) {
+                    let (running, gone) = sh.enforce();
+                    expired.extend(gone);
+                    let ms = sh.exited_at.unwrap_or_else(Instant::now) - sh.started;
+                    let urls = if sh.urls.is_empty() {
+                        h.urls.clone()
+                    } else {
+                        sh.urls.clone()
+                    };
+                    HostJob {
+                        id: h.id.clone(),
+                        job_id: h.job_id.clone(),
+                        cmd: h.cmd.clone(),
+                        workdir: h.workdir.clone(),
+                        urls,
+                        running,
+                        exit: sh.exit,
+                        started: sh.started_at,
+                        ms: u64::try_from(ms.as_millis()).unwrap_or(u64::MAX),
+                    }
+                } else {
+                    HostJob {
+                        id: h.id.clone(),
+                        job_id: None,
+                        cmd: h.cmd.clone(),
+                        workdir: h.workdir.clone(),
+                        urls: h.urls.clone(),
+                        running: false,
+                        exit: None,
+                        started: h.updated,
+                        ms: 0,
+                    }
+                }
+            })
+            .collect();
+        drop(reg);
+        for child in expired {
+            reap(child);
+        }
+        out
+    }
+
+    /// Starts a stopped host or cleanly restarts a running one in its saved
+    /// working directory. Waits briefly for an existing process tree to exit
+    /// so the port is freed before relaunching.
+    pub async fn restart_host(&self, host_id: &str) -> std::io::Result<HostJob> {
+        let (cmd, workdir, old_child) = {
+            let mut reg = self.reg();
+            let Registry { hosts, shells, .. } = &mut *reg;
+            let Some(h) = hosts.iter().find(|h| h.id == host_id) else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "host not found",
+                ));
+            };
+            let cmd = h.cmd.clone();
+            let workdir = h.workdir.clone();
+            let old_child = h
+                .job_id
+                .as_deref()
+                .and_then(|jid| shells.get_mut(jid))
+                .and_then(|sh| {
+                    let (running, expired) = sh.enforce();
+                    if let Some(child) = expired {
+                        Some(child)
+                    } else if running {
+                        sh.kill()
+                    } else {
+                        None
+                    }
+                });
+            (cmd, workdir, old_child)
+        };
+        let wd = PathBuf::from(&workdir);
+        if !wd.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("folder no longer exists: {workdir}"),
+            ));
+        }
+        if let Some(mut child) = old_child {
+            if let Some(pid) = child.id() {
+                let _ = tokio::task::spawn_blocking(move || process::kill_tree(pid)).await;
+            }
+            let _ = child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+        }
+        self.start_linked(&cmd, &wd, Some(host_id.to_string()))?;
+        self.hosts()
+            .into_iter()
+            .find(|h| h.id == host_id)
+            .ok_or_else(|| std::io::Error::other("host disappeared while starting"))
+    }
+
+    pub fn remove_host(&self, host_id: &str) -> bool {
+        let (removed, killed, snapshot) = {
+            let mut reg = self.reg();
+            let Registry { hosts, shells, .. } = &mut *reg;
+            let Some(idx) = hosts.iter().position(|h| h.id == host_id) else {
+                return false;
+            };
+            let removed_host = hosts.remove(idx);
+            let killed = removed_host
+                .job_id
+                .as_deref()
+                .and_then(|jid| shells.get_mut(jid))
+                .and_then(|sh| sh.exit.is_none().then(|| sh.kill()).flatten());
+            for sh in shells.values_mut() {
+                if sh.host_id.as_deref() == Some(host_id) {
+                    sh.host_id = None;
+                }
+            }
+            (true, killed, hosts.clone())
+        };
+        if let Some(child) = killed {
+            reap(child);
+        }
+        save_hosts_file(&self.sid, &snapshot);
+        removed
     }
 
     pub fn kill(&self, id: &str) -> bool {
@@ -562,12 +945,15 @@ impl ShellRegistry {
 
 async fn pump(
     inner: Arc<Mutex<Registry>>,
+    sid: String,
     id: String,
     mut stdout: ChildStdout,
     stderr: ChildStderr,
 ) {
-    let (err_inner, err_id) = (inner.clone(), id.clone());
-    let mut err_task = drain_stderr(stderr, move |chunk| append(&err_inner, &err_id, chunk));
+    let (err_inner, err_session, err_id) = (inner.clone(), sid.clone(), id.clone());
+    let mut err_task = drain_stderr(stderr, move |chunk| {
+        append(&err_inner, &err_session, &err_id, chunk);
+    });
     let mut buf = [0u8; 8192];
     let mut out_open = true;
     loop {
@@ -575,7 +961,7 @@ async fn pump(
             biased;
             n = stdout.read(&mut buf), if out_open => match n {
                 Ok(0) | Err(_) => out_open = false,
-                Ok(n) => append(&inner, &id, &buf[..n]),
+                Ok(n) => append(&inner, &sid, &id, &buf[..n]),
             },
             () = tokio::time::sleep(Duration::from_millis(250)) => {}
         }
@@ -596,7 +982,7 @@ async fn pump(
             if n == 0 {
                 break;
             }
-            append(&inner, &id, &buf[..n]);
+            append(&inner, &sid, &id, &buf[..n]);
         }
     }
     let _ = tokio::time::timeout(DRAIN_FOR, &mut err_task).await;
@@ -606,6 +992,123 @@ async fn pump(
         sh.drained = true;
         sh.spill = None;
     }
+}
+
+/// Strips ANSI escape sequences (CSI/OSC) so dev server banners like Vite/Next
+/// yield clean URLs.
+fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if matches!(chars.peek(), Some('[')) {
+                chars.next();
+                for n in chars.by_ref() {
+                    if ('@'..='~').contains(&n) {
+                        break;
+                    }
+                }
+            } else if matches!(chars.peek(), Some(']')) {
+                chars.next();
+                while let Some(n) = chars.next() {
+                    if n == '\x07' || (n == '\x1b' && matches!(chars.peek(), Some('\\'))) {
+                        if n == '\x1b' {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Extracts loopback http(s) URLs printed by local dev servers (localhost,
+/// *.localhost, 127.x.x.x, [::1], and wildcard binds 0.0.0.0 / [::] normalized
+/// to localhost so they open cleanly in a browser).
+fn extract_loopback_urls(chunk: &str) -> Vec<String> {
+    if !chunk.contains("://") {
+        return Vec::new();
+    }
+    let clean = strip_ansi(chunk);
+    let mut out = Vec::new();
+    for raw in clean.split_whitespace() {
+        let Some(pos) = raw.find("http://").or_else(|| raw.find("https://")) else {
+            continue;
+        };
+        let candidate = raw[pos..].trim_end_matches(|c: char| {
+            matches!(
+                c,
+                ',' | '.' | ';' | ')' | ']' | '}' | '"' | '\'' | '`' | '>'
+            )
+        });
+        if let Some(url) = normalize_loopback_url(candidate) {
+            if !out.contains(&url) {
+                out.push(url);
+            }
+        }
+    }
+    out
+}
+
+fn normalize_loopback_url(raw: &str) -> Option<String> {
+    let (scheme, rest) = raw.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let sep = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..sep];
+    let tail = &rest[sep..];
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
+        let (h, after) = inner.split_once(']')?;
+        let p = match after {
+            "" => None,
+            s => Some(s.strip_prefix(':')?),
+        };
+        (h, p)
+    } else if authority.matches(':').count() == 1 {
+        let (h, p) = authority.rsplit_once(':')?;
+        (h, Some(p))
+    } else if authority.contains(':') {
+        return None;
+    } else {
+        (authority, None)
+    };
+    if let Some(p) = port {
+        if p.is_empty() || p.parse::<u16>().is_err() {
+            return None;
+        }
+    }
+    let host_lc = host.to_ascii_lowercase();
+    let normalized_host = if host_lc == "0.0.0.0" || host_lc == "::" {
+        "localhost".to_string()
+    } else if host_lc == "localhost"
+        || host_lc.ends_with(".localhost")
+        || host_lc == "::1"
+        || host_lc
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.octets()[0] == 127)
+    {
+        if host_lc == "::1" {
+            "[::1]".to_string()
+        } else {
+            host_lc
+        }
+    } else {
+        return None;
+    };
+    let tail = if tail == "/" { "" } else { tail };
+    Some(match port {
+        Some(p) => format!("{scheme}://{normalized_host}:{p}{tail}"),
+        None => format!("{scheme}://{normalized_host}{tail}"),
+    })
 }
 
 #[cfg(test)]
@@ -649,6 +1152,24 @@ mod tests {
         assert!(reg.kill(&id));
         assert!(!reg.jobs()[1].running, "killed is no longer running");
         scrub("test-jobs");
+    }
+
+    #[test]
+    fn extracts_loopback_urls_from_server_output() {
+        let vite = "\x1b[32m  ➜  Local:   \x1b[36mhttp://localhost:5173/\x1b[0m\n  ➜  Network: http://192.168.1.10:5173/\n";
+        assert_eq!(extract_loopback_urls(vite), vec!["http://localhost:5173"]);
+
+        let py = "Serving HTTP on http://0.0.0.0:8000/ and https://127.0.0.1:8443/app, ignore https://example.com";
+        assert_eq!(
+            extract_loopback_urls(py),
+            vec!["http://localhost:8000", "https://127.0.0.1:8443/app"]
+        );
+
+        let v6 = "Listening on http://[::1]:3000/ and http://[::]:4000/";
+        assert_eq!(
+            extract_loopback_urls(v6),
+            vec!["http://[::1]:3000", "http://localhost:4000"]
+        );
     }
 
     #[tokio::test]
@@ -712,7 +1233,7 @@ mod tests {
     #[test]
     fn logs_tail_never_splits_a_char() {
         let reg = ShellRegistry::new("test-utf8");
-        let mut sh = LiveShell::reserved("test");
+        let mut sh = LiveShell::reserved("test", tmp(), None);
         sh.ingest("é".repeat(100).as_bytes());
         sh.exit = Some(0);
         sh.drained = true;
@@ -802,5 +1323,60 @@ mod tests {
         }
         assert!(seen.contains("err-marker"), "{seen:?}");
         scrub("test-stderr");
+    }
+
+    #[tokio::test]
+    async fn hosts_persist_restart_and_remove() {
+        let sid = format!("test-hosts-{}", std::process::id());
+        scrub(&sid);
+        let cmd = if cfg!(windows) {
+            "Write-Output 'Local: http://localhost:5199/'; Start-Sleep -Seconds 30"
+        } else {
+            "echo 'Local: http://localhost:5199/'; sleep 30"
+        };
+        let reg = ShellRegistry::new(&sid);
+        let first_job = reg.start(cmd, &tmp()).unwrap();
+        let mut found = Vec::new();
+        for _ in 0..80 {
+            found = reg.hosts();
+            if !found.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            found.len(),
+            1,
+            "host should be discovered from server banner"
+        );
+        assert!(found[0].running);
+        assert_eq!(found[0].urls, vec!["http://localhost:5199"]);
+        assert_eq!(found[0].job_id.as_deref(), Some(first_job.as_str()));
+        let host_id = found[0].id.clone();
+
+        // Stopping keeps the host entry available for restart.
+        assert!(reg.kill(&first_job));
+        let stopped = reg.hosts();
+        assert_eq!(stopped.len(), 1);
+        assert!(!stopped[0].running);
+
+        // Fresh registry (simulating Parzi restart) loads the persisted host.
+        let saved = ShellRegistry::hosts_saved(&sid);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].id, host_id);
+        assert!(!saved[0].running);
+
+        let reg2 = ShellRegistry::new(&sid);
+        let restarted = reg2.restart_host(&host_id).await.unwrap();
+        assert!(restarted.running);
+        assert_eq!(restarted.urls, vec!["http://localhost:5199"]);
+        assert!(restarted.job_id.is_some());
+
+        // Removing stops the live process and deletes the persisted host.
+        assert!(reg2.remove_host(&host_id));
+        assert!(reg2.hosts().is_empty());
+        assert!(ShellRegistry::hosts_saved(&sid).is_empty());
+        reg2.kill_all();
+        scrub(&sid);
     }
 }

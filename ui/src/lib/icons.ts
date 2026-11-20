@@ -54,6 +54,7 @@ export const ICONS: Record<string, string> = {
   desktop: "<rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\" /><line x1=\"8\" x2=\"16\" y1=\"21\" y2=\"21\" /><line x1=\"12\" x2=\"12\" y1=\"17\" y2=\"21\" />",
   checkCircle: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"m9 12 2 2 4-4\" />",
   xCircle: "<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"m15 9-6 6\" /><path d=\"m9 9 6 6\" />",
+  play: "<polygon points=\"6 3 20 12 6 21 6 3\" />",
 };
 
 export type IconName =
@@ -109,4 +110,5 @@ export type IconName =
   | "send"
   | "desktop"
   | "checkCircle"
-  | "xCircle";
+  | "xCircle"
+  | "play";
