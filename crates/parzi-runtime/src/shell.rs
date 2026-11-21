@@ -271,6 +271,8 @@ struct Registry {
     host_seq: u64,
     hosts: Vec<SavedHost>,
     foreground: Vec<ShellJob>,
+    /// The session's tool server, for `parzi connector` in its commands.
+    link: Option<String>,
 }
 
 struct FgMark {
@@ -480,7 +482,39 @@ impl ShellRegistry {
         Ok(dir)
     }
 
+    /// Points this session's commands at its tool server, so `parzi
+    /// connector` in them reaches the session's connectors.
+    pub fn set_link(&self, url: Option<String>) {
+        self.reg().link = url;
+    }
+
+    /// What a command gets on top of the usual environment: the session's
+    /// tool server, and Parzi's own `bin` folder (where the app leaves a
+    /// `parzi` for `parzi connector` when no CLI is installed) on its PATH.
+    fn session_env(&self) -> HashMap<String, String> {
+        let mut env = crate::mcp::child_env(&HashMap::new());
+        if let Some(url) = self.reg().link.clone() {
+            env.insert(crate::connector_cli::URL_VAR.into(), url);
+        }
+        if let Some(bin) = parzi_core::paths::parzi_dir()
+            .ok()
+            .map(|d| d.join("bin"))
+            .filter(|d| d.is_dir())
+        {
+            let key = env
+                .keys()
+                .find(|k| k.eq_ignore_ascii_case("PATH"))
+                .cloned()
+                .unwrap_or_else(|| "PATH".into());
+            let sep = if cfg!(windows) { ";" } else { ":" };
+            let rest = env.get(&key).cloned().unwrap_or_default();
+            env.insert(key, format!("{}{sep}{rest}", bin.display()));
+        }
+        env
+    }
+
     fn spawn_shell(
+        &self,
         cmd: &str,
         workdir: &std::path::Path,
     ) -> std::io::Result<(Child, ChildStdout, ChildStderr)> {
@@ -489,7 +523,7 @@ impl ShellRegistry {
         let mut c = Command::new(program);
         c.args(&args)
             .env_clear()
-            .envs(crate::mcp::child_env(&HashMap::new()))
+            .envs(self.session_env())
             .current_dir(workdir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -521,7 +555,7 @@ impl ShellRegistry {
         let spill_path = self
             .dir()?
             .join(format!("fg-{}.log", uuid::Uuid::new_v4().simple()));
-        let (child, mut stdout, stderr) = Self::spawn_shell(cmd, workdir)?;
+        let (child, mut stdout, stderr) = self.spawn_shell(cmd, workdir)?;
         let fg_id = {
             let mut reg = self.reg();
             reg.seq += 1;
@@ -673,7 +707,7 @@ impl ShellRegistry {
             (id, linked, prev_job.flatten())
         };
         let spill = std::fs::File::create(dir.join(format!("{id}.log"))).ok();
-        let spawned = Self::spawn_shell(cmd, workdir);
+        let spawned = self.spawn_shell(cmd, workdir);
         let mut reg = self.reg();
         let (child, stdout, stderr) = match spawned {
             Ok(parts) => parts,

@@ -21,6 +21,7 @@ mod appearance;
 mod artifact_frame;
 mod brain;
 mod browser;
+mod connector_shim;
 mod control;
 mod files;
 mod job;
@@ -585,6 +586,12 @@ fn mark_closed() {
 }
 
 fn main() {
+    // `parzi connector ...` from a session's shell, through the shim in
+    // ~/.parzi/bin when no CLI is installed: answer it and exit, no window.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("connector") {
+        connector_shim::answer(&args[1..]);
+    }
     init_log();
     if parzi_runtime::osserve::serve_locked() {
         tracing::warn!("parzi serve holds the lock; the desk is not starting");
@@ -734,6 +741,7 @@ fn main() {
                 }
             }
             watchdog::start(app.handle());
+            std::thread::spawn(connector_shim::install);
             browser::warm_up();
             let bus_rx = o.subscribe();
             let bus_app = app.handle().clone();

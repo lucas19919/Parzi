@@ -35,8 +35,15 @@ impl ToolHost {
 
     /// `connector.tools`: one deferred connector's tools, as JSON.
     pub(crate) async fn connector_tools(&self, args: &Value) -> (bool, String) {
-        let name = args.get("connector").and_then(Value::as_str).unwrap_or("");
+        let name = args
+            .get("connector")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         let relay = self.relay().await;
+        if name.is_empty() {
+            return (true, relay.connectors().to_string());
+        }
         match relay.catalog(name) {
             Some(tools) => (true, tools.to_string()),
             None => {

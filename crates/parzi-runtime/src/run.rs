@@ -568,6 +568,9 @@ impl EngineRun {
             .mcp
             .as_ref()
             .map(|m| m.register(&self.p.session_id, self.p.host.clone()));
+        if let Some(r) = &registration {
+            self.p.host.link_shell(&r.server.url);
+        }
         let spec = TurnSpec {
             cwd: PathBuf::from(&self.p.cwd),
             model: self.p.model.clone(),

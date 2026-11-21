@@ -310,3 +310,84 @@ async fn a_slow_connector_waits_for_the_next_turn_not_this_one() {
     );
     orch.mcp().shutdown().await;
 }
+
+/// `parzi connector` from a session's shell: the shell knows the session's
+/// tool server, and the client lists, describes and calls a connector there,
+/// by the connector's own tool names.
+#[tokio::test]
+async fn a_session_shell_reaches_its_connectors_by_cli() {
+    if !have_node() {
+        eprintln!("skipped: node not on PATH");
+        return;
+    }
+    home("connector-cli");
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let keep = seen.clone();
+    let fake = Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let keep = keep.clone();
+            async move {
+                let cmd = if cfg!(windows) {
+                    "Write-Output $env:PARZI_MCP_URL"
+                } else {
+                    "echo $PARZI_MCP_URL"
+                };
+                let out = call(&a, "shell_exec", json!({"cmd": cmd})).await;
+                let text = out["content"][0]["text"].as_str().unwrap_or("").to_string();
+                let url = text
+                    .split_whitespace()
+                    .find(|w| w.starts_with("http://"))
+                    .unwrap_or("")
+                    .to_string();
+                let results = tokio::task::spawn_blocking(move || {
+                    let run = |args: &[&str]| {
+                        let args: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
+                        let o = parzi_runtime::connector_cli::run_with(&url, &args, String::new);
+                        format!("{}|{}", o.ok, o.text)
+                    };
+                    vec![
+                        run(&["list"]),
+                        run(&["tools", "fake"]),
+                        run(&["call", "fake", "echo", r#"{"x":2}"#]),
+                        run(&["call", "fake", "a.dotted tool"]),
+                        run(&["call", "fake", "fail"]),
+                    ]
+                })
+                .await
+                .unwrap();
+                keep.lock().unwrap().push(text);
+                keep.lock().unwrap().extend(results);
+                a.say("done");
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    );
+    let (orch, store) = orch_with(config("fake", connector(0)), &[fake]);
+    warm(&orch).await;
+    let (meta, _rx) = orch
+        .spawn("t", "claude", "go", None, "", "low", vec![], None)
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+    let got = seen.lock().unwrap().clone();
+    assert!(
+        got[0].contains("/mcp/"),
+        "the shell has the address: {}",
+        got[0]
+    );
+    assert_eq!(got[1], "true|fake (4 tools)");
+    assert!(
+        got[2].starts_with("true|")
+            && got[2].contains("\necho(args: { x?: number })  // echo back"),
+        "{}",
+        got[2]
+    );
+    assert_eq!(got[3], r#"true|echo:{"x":2}"#);
+    assert_eq!(
+        got[4], "true|a.dotted tool:{}",
+        "the connector's own name works"
+    );
+    assert_eq!(got[5], "false|it broke");
+    orch.mcp().shutdown().await;
+}

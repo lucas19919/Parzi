@@ -59,6 +59,13 @@ enum Cmd {
         #[arg(long, global = true, help = "Also bring the window to the front")]
         raise: bool,
     },
+    #[command(
+        about = "Connector tools from a session's shell: list, tools <connector>, call <connector> <tool> [json|-]"
+    )]
+    Connector {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     #[command(about = "A notification in the open window")]
     Notify {
         #[arg(required = true)]
@@ -456,6 +463,7 @@ async fn main() -> Result<()> {
             background,
             raise,
         } => cmd_open(what, background, raise).await,
+        Cmd::Connector { args } => cmd_connector(&args),
         Cmd::Notify { text, session } => {
             window::simple(
                 "desk.notify",
@@ -1490,6 +1498,21 @@ fn open_body(what: OpenCmd, background: bool, raise: bool) -> Value {
         b.extend(e.into_iter().filter(|(_, v)| !v.is_null()));
     }
     body
+}
+
+fn cmd_connector(args: &[String]) -> Result<()> {
+    let out = parzi_runtime::connector_cli::run(args, || {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+        text
+    });
+    if out.ok {
+        println!("{}", out.text);
+        Ok(())
+    } else {
+        eprintln!("{}", out.text);
+        std::process::exit(1);
+    }
 }
 
 async fn cmd_open(what: OpenCmd, background: bool, raise: bool) -> Result<()> {

@@ -101,14 +101,40 @@ impl Relay {
 
     /// One connector's tools as the agent would see them listed, for
     /// `connector.tools`.
+    /// Each entry also carries `tool`, the connector's own name for it, so a
+    /// script can call it by that name.
     pub fn catalog(&self, server: &str) -> Option<Value> {
-        let tools: Vec<&Value> = self
+        let tools: Vec<Value> = self
             .tools
             .iter()
             .filter(|t| t.server == server)
-            .map(|t| &t.entry)
+            .map(|t| {
+                let mut e = t.entry.clone();
+                e["tool"] = json!(t.tool);
+                e
+            })
             .collect();
         (!tools.is_empty()).then(|| json!(tools))
+    }
+
+    /// Every connector this session can use, with its tool count and whether
+    /// its tools are listed with every turn.
+    pub fn connectors(&self) -> Value {
+        let mut out: Vec<(String, usize)> = Vec::new();
+        for t in &self.tools {
+            match out.iter_mut().find(|(s, _)| *s == t.server) {
+                Some((_, n)) => *n += 1,
+                None => out.push((t.server.clone(), 1)),
+            }
+        }
+        json!(out
+            .into_iter()
+            .map(|(server, tools)| json!({
+                "connector": server,
+                "tools": tools,
+                "listed": !self.is_deferred(&server),
+            }))
+            .collect::<Vec<_>>())
     }
 
     pub fn find(&self, name: &str) -> Option<&Relayed> {

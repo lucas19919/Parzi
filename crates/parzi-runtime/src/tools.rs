@@ -375,8 +375,7 @@ pub(crate) fn connector_defs(deferred: &[(String, usize)]) -> Vec<ToolDef> {
             ),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {"connector": {"type": "string", "description": "a connector named above"}},
-                "required": ["connector"],
+                "properties": {"connector": {"type": "string", "description": "a connector named above; leave out to list every connector"}},
             }),
         },
         ToolDef {

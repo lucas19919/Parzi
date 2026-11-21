@@ -102,6 +102,11 @@ impl ToolHost {
         }
     }
 
+    /// Gives this session's shell commands the address of its tool server.
+    pub(crate) fn link_shell(&self, url: &str) {
+        self.p.shell.set_link(Some(url.to_string()));
+    }
+
     pub(crate) async fn defs(&self) -> Vec<ToolDef> {
         self.defs
             .get_or_init(|| async {

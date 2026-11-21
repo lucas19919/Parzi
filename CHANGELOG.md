@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Agents can script your connectors: from a session's shell, `parzi connector tools github` prints the tools as typed signatures and `parzi connector call github <tool> '<json>'` runs one, with the same approvals as any connector call. A chain like "list my open PRs, keep the failing ones, comment on each" becomes one script instead of a turn per call, and the bulky results stay out of the conversation. It works without the parzi CLI installed: the app answers it.
 - See a page as a phone: a page opened full screen over a session switches between laptop, iPhone and Android. The phones are emulated for real (their screen size and pixel density, their browser's user agent, and touch for the mouse), drawn in a plain frame and scaled to fit, so the site lays out and behaves as it does on the phone.
 - Projects have a plan: a short goal and an ordered list of targets that agents keep with `project_plan`. The open targets show above the composer, with a dot on the one being worked on; work can be linked to a target when it is drafted or handed to a helper.
 - A proposed plan no longer holds the agent in the middle of a tool call: the agent stops, the plan waits on the session (even across a restart), and Accept, Not now or your own words go to it as your next message. A plan's full document is kept with the session, so the Plan pin keeps working.
