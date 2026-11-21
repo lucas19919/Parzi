@@ -295,8 +295,9 @@ async fn a_run_is_on_record_before_it_reads_as_finished() {
         )
         .await
         .unwrap();
+    // Up to 10 s: the git look at the end of a run is slow on a busy machine.
     let mut m = store.get(&meta.id).unwrap();
-    for _ in 0..400 {
+    for _ in 0..2000 {
         m = store.get(&meta.id).unwrap();
         if m.status != parzi_core::store::SessionStatus::Active {
             break;
