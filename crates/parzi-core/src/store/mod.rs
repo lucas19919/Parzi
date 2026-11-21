@@ -432,7 +432,9 @@ impl SessionStore {
 
     /// Sets the session's plan; an empty list clears it.
     pub fn set_plan(&self, id: &str, plan: Option<SessionPlan>) -> Result<()> {
-        let plan = plan.filter(|p| !p.items.is_empty());
+        let plan = plan
+            .filter(|p| !p.items.is_empty())
+            .map(|p| self.keep_plan_doc(id, p));
         if self.get(id)?.plan == plan {
             return Ok(());
         }
@@ -442,6 +444,32 @@ impl SessionStore {
         })?;
         self.mark_md_dirty(id);
         Ok(())
+    }
+
+    /// The plan's document is copied into the session's own folder as
+    /// `plan.md`, so it outlives the agent's scratch folder and the plan pin
+    /// keeps working. A path that is missing or already the session's copy
+    /// stays as it is.
+    fn keep_plan_doc(&self, id: &str, mut plan: SessionPlan) -> SessionPlan {
+        let Some(doc) = plan.doc.as_deref().map(str::trim).filter(|d| !d.is_empty()) else {
+            return plan;
+        };
+        let Some(dir) = self
+            .events_path(id)
+            .parent()
+            .map(std::path::Path::to_path_buf)
+        else {
+            return plan;
+        };
+        let kept = dir.join("plan.md");
+        let source = std::path::Path::new(doc);
+        if source == kept || !source.is_file() {
+            return plan;
+        }
+        if std::fs::copy(source, &kept).is_ok() {
+            plan.doc = Some(kept.to_string_lossy().into_owned());
+        }
+        plan
     }
 
     pub fn set_title(&self, id: &str, title: &str) -> Result<()> {

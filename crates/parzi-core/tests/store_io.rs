@@ -393,3 +393,32 @@ fn rewind_keeps_what_came_before_the_chosen_message() {
     assert!(store.events(&before_all.id).unwrap().is_empty());
     assert!(store.rewind(&s.id, 2).is_err(), "no third message");
 }
+
+#[test]
+fn a_plan_s_document_moves_into_the_session() {
+    use parzi_core::store::{PlanStep, SessionPlan};
+    let store = open();
+    let s = store.create("plan doc", "t-plan-doc", "m").unwrap();
+    let scratch = std::env::temp_dir().join(format!("parzi-plan-doc-{}.md", std::process::id()));
+    std::fs::write(&scratch, "# The plan\n").unwrap();
+    let plan = SessionPlan {
+        items: vec![PlanStep {
+            title: "first".into(),
+            ..PlanStep::default()
+        }],
+        summary: None,
+        doc: Some(scratch.to_string_lossy().into_owned()),
+    };
+    store.set_plan(&s.id, Some(plan)).unwrap();
+    let doc = store.get(&s.id).unwrap().plan.unwrap().doc.unwrap();
+    assert!(
+        doc.ends_with("plan.md") && doc.contains(&s.id),
+        "the session keeps its own copy: {doc}"
+    );
+    std::fs::remove_file(&scratch).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&doc).unwrap(),
+        "# The plan\n",
+        "after scratch is gone"
+    );
+}
