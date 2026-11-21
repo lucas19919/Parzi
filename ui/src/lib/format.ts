@@ -19,3 +19,10 @@ export function tokenCount(n: number): string {
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** The files a sent message carried, from the "[attached: a, b]" line the
+ *  engine adds to it. */
+export function attachedPaths(text: string): string[] {
+  const m = /\[attached: ([^\]]+)\]/.exec(text);
+  return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
+}

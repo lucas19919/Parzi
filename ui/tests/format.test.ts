@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { duration, plural, tokenCount } from "../src/lib/format.ts";
+import { attachedPaths, duration, plural, tokenCount } from "../src/lib/format.ts";
 
 test("durations read the same everywhere", () => {
   assert.equal(duration(320), "320ms");
@@ -20,4 +20,9 @@ test("plurals", () => {
   assert.equal(plural(1, "step"), "1 step");
   assert.equal(plural(3, "step"), "3 steps");
   assert.equal(plural(2, "child", "children"), "2 children");
+});
+
+test("a sent message gives back the files it carried", () => {
+  assert.deepEqual(attachedPaths("fix this\n[attached: src/a.ts, shot.png]"), ["src/a.ts", "shot.png"]);
+  assert.deepEqual(attachedPaths("no files here"), []);
 });

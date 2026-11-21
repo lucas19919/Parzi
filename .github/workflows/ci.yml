@@ -72,6 +72,10 @@ jobs:
           PARZI_HOME: ${{ runner.temp }}/parzi-test-home
       - run: npm --prefix ui run build
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+      # The desktop crate sits outside the workspace, so its tests need their own run.
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --bin parzi-app --no-fail-fast
+        env:
+          PARZI_HOME: ${{ runner.temp }}/parzi-test-home
       - name: The Windows setup window
         if: runner.os == 'Windows'
         run: cargo clippy --locked --manifest-path setup/Cargo.toml

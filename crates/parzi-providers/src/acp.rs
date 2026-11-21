@@ -1074,8 +1074,23 @@ struct Seen {
     last_cost: Option<f64>,
     commands: Vec<String>,
     context: Option<u64>,
-    open_tools: HashSet<String>,
+    /// Tool calls not yet reported finished, with the reply-text count when
+    /// each started.
+    open_tools: HashMap<String, u64>,
+    /// How many non-empty reply chunks have streamed this turn.
+    text_seq: u64,
     usage_after_reply: bool,
+}
+
+impl Seen {
+    /// Whether an open tool call may still be working. A tool started before
+    /// the latest reply text has been answered: the model wrote more after
+    /// it, so it took its next step. Some agents (Antigravity) only report
+    /// their read and edit calls finished when the whole prompt ends, and
+    /// those must not hold the turn open once the reply is written.
+    fn tools_running(&self) -> bool {
+        self.open_tools.values().any(|&at| at == self.text_seq)
+    }
 }
 
 fn listed_commands(u: &Value) -> Option<Vec<String>> {
@@ -1494,7 +1509,8 @@ async fn drive(
         },
         commands,
         context: None,
-        open_tools: HashSet::new(),
+        open_tools: HashMap::new(),
+        text_seq: 0,
         usage_after_reply: false,
     };
     for msg in held {
@@ -1565,7 +1581,7 @@ async fn drive(
                             } else if !interrupting
                                 && !background.busy()
                                 && seen.usage_after_reply
-                                && seen.open_tools.is_empty()
+                                && !seen.tools_running()
                             {
                                 settle_by = Some(tokio::time::Instant::now() + POST_USAGE_SETTLE);
                             } else {
@@ -1842,6 +1858,9 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
         "agent_message_chunk" => {
             seen.usage_after_reply = false;
             let t = chunk();
+            if !t.trim().is_empty() {
+                seen.text_seq += 1;
+            }
             buffers.message.push_str(&t);
             let _ = events.send(ProviderEvent::TextDelta(t));
         }
@@ -1874,7 +1893,7 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
                 input: u.get("rawInput").cloned().unwrap_or(Value::Null),
             });
             if !finish_tool(u, &id, &name, events) && !id.is_empty() {
-                seen.open_tools.insert(id);
+                seen.open_tools.insert(id, seen.text_seq);
             }
         }
         "tool_call_update" => {
@@ -1917,7 +1936,7 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
                     });
                 }
             }
-            if !seen.buffers.message.trim().is_empty() && seen.open_tools.is_empty() {
+            if !seen.buffers.message.trim().is_empty() && !seen.tools_running() {
                 seen.usage_after_reply = true;
             }
         }
@@ -1939,7 +1958,7 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
             if used > 0 {
                 seen.context = Some(used);
             }
-            if !seen.buffers.message.trim().is_empty() && seen.open_tools.is_empty() {
+            if !seen.buffers.message.trim().is_empty() && !seen.tools_running() {
                 seen.usage_after_reply = true;
             }
         }
@@ -3211,6 +3230,62 @@ mod tests {
                 .any(|e| matches!(e, ProviderEvent::Message(m) if m == "All done.")),
             "reply should be flushed: {got:?}"
         );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_read_left_open_does_not_hold_a_written_reply() {
+        // Antigravity reports its view_file calls finished only when the
+        // prompt ends. When it then wedges after the reply, the open read
+        // must not keep the turn alive until the idle cap.
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            let note = |u: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S0", "update": u}});
+            send(&mut w, note(json!({"sessionUpdate": "tool_call", "toolCallId": "v1", "title": "Running view_file", "status": "in_progress"}))).await;
+            send(&mut w, note(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "The file says hello."}}))).await;
+            send(
+                &mut w,
+                note(json!({"sessionUpdate": "usage_update", "used": 1000, "size": 200_000})),
+            )
+            .await;
+            let cancel = read(&mut lines).await;
+            assert_eq!(cancel["method"], "session/cancel");
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut opened = Opened::default();
+        let res = tokio::time::timeout(
+            POST_USAGE_SETTLE * 20,
+            drive(
+                &peer,
+                &mut incoming,
+                &json!({"agentCapabilities": {"sessionCapabilities": {"resume": {}}}}),
+                agent("antigravity").unwrap(),
+                &spec(Some(json!({"session_id": "S0"}))),
+                Arc::new(Gate(
+                    PermissionDecision::Allow,
+                    std::sync::Mutex::new(vec![]),
+                )),
+                &tx,
+                &CancellationToken::new(),
+                Some(Reused {
+                    sid: "S0".into(),
+                    session: json!({}),
+                    model: None,
+                    commands: vec![],
+                }),
+                &mut opened,
+            ),
+        )
+        .await
+        .expect("the turn should settle, not wait for the idle cap");
+        assert!(matches!(res, Ok(TurnEnd::Completed)), "{res:?}");
+        assert!(opened.stalled);
         server.await.unwrap();
     }
 

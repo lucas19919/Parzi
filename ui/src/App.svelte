@@ -51,6 +51,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
+  import { attachedPaths } from "./lib/format";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -556,6 +557,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   async function showSession(id: string) {
     const my = ++navSeq;
+    // The tab this load is for: switching to a page tab doesn't bump navSeq,
+    // so a late reply must also check the tab is still the one in front.
+    const at = activeId;
     shown = id;
     markSessionRead(id);
     clearLive();
@@ -574,7 +578,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     try {
       const [m, ev] = await api.getThread(id);
-      if (my !== navSeq) return;
+      if (my !== navSeq || activeId !== at) return;
       const changed = !cached || eventsDiffer(cached.events, ev);
       cacheThread(id, m, ev);
       meta = m;
@@ -1513,6 +1517,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function retryLast() {
     const last = [...events].reverse().find((e) => e.kind === "user");
     if (!last || last.kind !== "user" || streaming || sending) return;
+    // Resend the files the message carried, not just its words.
+    comp.attachments = attachedPaths(last.text);
     comp.input = last.text
       .replace(/\n?\[attached: [^\]]+\]/, "")
       .replace(/\n*<side-task[^>]*>[\s\S]*?<\/side-task>\n*/, "")
