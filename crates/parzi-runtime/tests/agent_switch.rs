@@ -185,3 +185,36 @@ async fn a_session_moved_to_another_folder_hands_the_thread_over() {
     assert!(turn.prompt.contains("<earlier-conversation>"));
     assert!(turn.prompt.contains("Read the old repo."));
 }
+
+/// Answering a proposal: yes makes it the session's plan, no drops it; the
+/// proposal is gone either way.
+#[tokio::test]
+async fn answering_a_proposal_saves_it_or_drops_it() {
+    use parzi_core::store::{PlanStep, SessionPlan};
+    home("proposal-answer");
+    let claude = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.say("ok");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&claude));
+    let meta = store.create("answer", "answer", "claude/m").unwrap();
+    let plan = SessionPlan {
+        items: vec![PlanStep {
+            title: "one".into(),
+            ..PlanStep::default()
+        }],
+        summary: None,
+        doc: None,
+    };
+    store.set_proposal(&meta.id, Some(plan.clone())).unwrap();
+    let no = orch.answer_proposal(&meta.id, false).unwrap();
+    assert!(no.proposal.is_none() && no.plan.is_none());
+
+    store.set_proposal(&meta.id, Some(plan)).unwrap();
+    let yes = orch.answer_proposal(&meta.id, true).unwrap();
+    assert!(yes.proposal.is_none());
+    assert_eq!(yes.plan.expect("saved").items[0].title, "one");
+}

@@ -252,15 +252,13 @@ impl ToolHost {
                     Ok(p) => p,
                     Err(e) => return (false, format!("plan.write: {e}")),
                 };
-                let mut approved = "";
-                if bool_arg(args, "propose") == Some(true) {
-                    match self.plan_review(id, &payload).await {
-                        Ok(note) => approved = note,
-                        Err(answer) => return answer,
-                    }
+                // With a person to answer, a proposal waits on the session
+                // and this turn ends, instead of holding the call open. With
+                // nobody to ask, it saves.
+                if bool_arg(args, "propose") == Some(true) && self.p.asker.is_some() {
+                    return self.propose_plan(&payload);
                 }
-                let saved = self.save_plan(payload);
-                return (true, format!("{approved} {saved}").trim().to_string());
+                return (true, self.save_plan(payload));
             }
             let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
             let is_format = name == "session.format_message";
@@ -748,47 +746,22 @@ impl ToolHost {
         crate::bench::text(&self.p.cfg, &statuses, &own)
     }
 
-    /// A plan is the person's: a write that adds, drops or rewords work is
-    /// shown to them first and saved only on their yes. Progress (an item
-    /// started or done, a note, a branch) is saved without asking, and so is
-    /// everything when no one is there to ask. `Ok` carries what to tell the
-    /// agent with the saved result; `Err` is the tool's answer instead.
-    async fn plan_review(
-        &self,
-        id: &str,
-        payload: &Value,
-    ) -> std::result::Result<&'static str, (bool, String)> {
-        let Some(asker) = &self.p.asker else {
-            return Ok("");
-        };
+    /// Keeps a proposed plan on the session for the person to answer and
+    /// tells the agent to end its turn.
+    fn propose_plan(&self, payload: &Value) -> (bool, String) {
         let Some(plan) =
             parzi_core::store::SessionPlan::from_payload(payload).filter(|p| !p.items.is_empty())
         else {
-            return Ok("");
+            return (false, "plan.write: a proposal needs steps".into());
         };
-        let req = AskRequest {
-            id: id.into(),
-            question: crate::plan_tools::proposal_text(&plan),
-            options: vec![
-                crate::plan_tools::USE_PLAN.into(),
-                crate::plan_tools::NOT_NOW.into(),
-            ],
-            // The card reads the plan from here (plan_tools::proposal_json).
-            details: vec![crate::plan_tools::proposal_json(&plan)],
-            multi: false,
-            kind: String::new(),
-            session: self.p.session_id.clone(),
-        };
-        let answer = tokio::select! {
-            () = self.p.cancel.cancelled() => {
-                return Err((false, "the turn stopped before the person answered; the plan was not saved".into()));
-            }
-            a = asker.ask(&req) => a,
-        };
-        match crate::plan_tools::verdict(&answer) {
-            crate::plan_tools::Verdict::Save(note) => Ok(note),
-            crate::plan_tools::Verdict::Hold(why) => Err((true, why)),
+        if let Err(e) = self.p.store.set_proposal(&self.p.session_id, Some(plan)) {
+            return (false, e.to_string());
         }
+        self.p.sink.emit(RunEvent::Refreshed);
+        (
+            true,
+            "Proposed. The person sees your plan now. End your turn here and do not start the work: their answer (use it, not now, or changes) comes as their next message.".into(),
+        )
     }
 
     async fn execute_question(&self, id: &str, args: &Value) -> (bool, String) {

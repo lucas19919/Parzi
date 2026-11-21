@@ -293,6 +293,7 @@ mod tests {
                 }],
                 ..Default::default()
             }),
+            proposal: None,
             brief: None,
             branch: "plan/parser".into(),
             effort: String::new(),

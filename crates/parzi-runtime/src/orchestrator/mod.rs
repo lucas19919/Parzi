@@ -329,6 +329,21 @@ impl Orchestrator {
         all
     }
 
+    /// Answers the plan an agent proposed: a yes saves it as the session's
+    /// plan; either way the proposal is cleared. The window then sends the
+    /// person's answer as their next message.
+    pub fn answer_proposal(&self, id: &str, accept: bool) -> Result<SessionMeta> {
+        let meta = self.store.get(id)?;
+        let Some(plan) = meta.proposal else {
+            return Ok(meta);
+        };
+        self.store.set_proposal(id, None)?;
+        if accept {
+            self.store.set_plan(id, Some(plan))?;
+        }
+        self.store.get(id)
+    }
+
     /// Moves a session to another folder (a project, or a branch's worktree)
     /// and project while it is not running. When the folder changes, the
     /// agents' own sessions are dropped: they belong to the old folder, and

@@ -66,6 +66,10 @@ pub struct SessionMeta {
     /// works. Lives on the session, so it survives restarts and agent switches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<SessionPlan>,
+    /// A plan the agent proposed and the person has not answered yet. The
+    /// agent's turn ended when it proposed; the answer is the next message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<SessionPlan>,
     /// A draft's brief: what to do, sent as the first message when it starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief: Option<String>,

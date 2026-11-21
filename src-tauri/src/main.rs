@@ -808,6 +808,7 @@ fn main() {
             settings::shell_logs,
             sessions::rewind_thread,
             sessions::set_session_environment,
+            sessions::answer_plan_proposal,
             files::git_branches,
             files::tool_image,
             settings::shell_kill,

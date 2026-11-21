@@ -90,6 +90,7 @@ impl SessionStore {
             cwd: String::new(),
             last_run: None,
             plan: None,
+            proposal: None,
             brief: None,
             branch: String::new(),
             effort: String::new(),
@@ -443,6 +444,18 @@ impl SessionStore {
             m.updated = Utc::now();
         })?;
         self.mark_md_dirty(id);
+        Ok(())
+    }
+
+    /// Keeps a proposed plan until the person answers it; `None` clears it.
+    pub fn set_proposal(&self, id: &str, plan: Option<SessionPlan>) -> Result<()> {
+        let plan = plan
+            .filter(|p| !p.items.is_empty())
+            .map(|p| self.keep_plan_doc(id, p));
+        self.update_meta(id, |m| {
+            m.proposal = plan;
+            m.updated = Utc::now();
+        })?;
         Ok(())
     }
 

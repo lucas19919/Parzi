@@ -78,46 +78,28 @@ fn steps() -> serde_json::Value {
     })
 }
 
-/// A proposed plan waits for the person's yes; a no or a change request
-/// saves nothing and goes back to the agent.
+/// A proposed plan waits on the session for the person's answer, and the
+/// agent's turn ends: nothing is asked inside the tool call, and nothing is
+/// saved as the plan until the person says yes.
 #[tokio::test]
-async fn a_proposed_plan_waits_for_the_persons_yes() {
-    let person = Person::says(&["Not now", "Drop the cache step", "Use this plan"]);
+async fn a_proposal_waits_on_the_session_and_the_turn_ends() {
+    let person = Person::says(&[]);
     let (h, store, sid) = host("review-yes", Some(person.clone()));
-    let saved = || store.get(&sid).unwrap().plan;
-
-    let (ok, out) = h.call("plan.write", &steps()).await;
-    assert!(ok, "a no is an answer, not a failure: {out}");
-    assert!(
-        out.contains("not now") && out.contains("nothing was saved"),
-        "{out}"
-    );
-    assert!(saved().is_none());
 
     let (ok, out) = h.call("plan.write", &steps()).await;
     assert!(ok, "{out}");
+    assert!(out.contains("End your turn"), "{out}");
     assert!(
-        out.contains("\"Drop the cache step\"") && out.contains("propose: true"),
-        "{out}"
+        person.asked().is_empty(),
+        "the call does not wait on a question"
     );
-    assert!(saved().is_none());
-
-    let (ok, out) = h.call("plan.write", &steps()).await;
-    assert!(ok, "{out}");
-    assert!(out.contains("approved"), "{out}");
-    let plan = saved().expect("saved on yes");
-    assert_eq!(plan.items.len(), 2);
-    let asked = person.asked();
-    assert_eq!(asked.len(), 3);
+    let meta = store.get(&sid).unwrap();
     assert!(
-        asked[0].question.contains("Find the stall\nCache the head"),
-        "{}",
-        asked[0].question
+        meta.plan.is_none(),
+        "not the plan until the person says yes"
     );
-    let card: serde_json::Value = serde_json::from_str(&asked[0].details[0]).unwrap();
-    assert_eq!(card["plan"], true, "the card gets the plan as data");
-    assert_eq!(card["steps"][1]["title"], "Cache the head");
-    assert_eq!(asked[0].options, ["Use this plan", "Not now"]);
+    let proposal = meta.proposal.expect("kept on the session");
+    assert_eq!(proposal.items[1].title, "Cache the head");
 }
 
 /// Progress updates are not proposals: they save at once, without asking.

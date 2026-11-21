@@ -120,95 +120,13 @@ fn read(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String>
     })
 }
 
-/// The two answers offered under a plan proposal. Anything else the person
-/// types is what they want changed.
-pub(crate) const USE_PLAN: &str = "Use this plan";
-pub(crate) const NOT_NOW: &str = "Not now";
-
-/// The question for a proposed plan: the steps, numbered.
-pub(crate) fn proposal_text(plan: &SessionPlan) -> String {
-    let mut out = vec!["Use this plan for this session?".to_string()];
-    if let Some(s) = &plan.summary {
-        out.push(s.clone());
-    }
-    out.extend(plan.items.iter().map(|i| match &i.detail {
-        Some(d) => format!("{}: {d}", i.title),
-        None => i.title.clone(),
-    }));
-    if let Some(d) = &plan.doc {
-        out.push(format!("Full plan: {d}"));
-    }
-    out.join("\n")
-}
-
-/// The proposal as data for the card: summary, steps with their detail, and
-/// the fuller plan document.
-pub(crate) fn proposal_json(plan: &SessionPlan) -> String {
-    let steps: Vec<Value> = plan
-        .items
-        .iter()
-        .map(|i| serde_json::json!({ "title": i.title, "detail": i.detail }))
-        .collect();
-    serde_json::json!({
-        "plan": true,
-        "summary": plan.summary,
-        "steps": steps,
-        "doc": plan.doc,
-    })
-    .to_string()
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Verdict {
-    /// Save it. `note` is what to tell the agent besides the saved result.
-    Save(&'static str),
-    /// Nothing is saved; the text goes back to the agent.
-    Hold(String),
-}
-
-pub(crate) fn verdict(answer: &str) -> Verdict {
-    let a = answer.trim();
-    if a == USE_PLAN {
-        return Verdict::Save("The person approved this plan.");
-    }
-    if a == NOT_NOW {
-        return Verdict::Hold(
-            "The person said not now, so nothing was saved. Carry on without this plan, and do not propose it again unless they ask.".into(),
-        );
-    }
-    let lower = a.to_ascii_lowercase();
-    if lower.starts_with("skipped") {
-        return Verdict::Save("The person skipped the review, so it is saved as you wrote it.");
-    }
-    if a.is_empty() || lower.starts_with("the user didn't answer") {
-        return Verdict::Hold(
-            "Nobody answered, so nothing was saved. Say in your reply what plan you would propose; the person can ask you to save it.".into(),
-        );
-    }
-    Verdict::Hold(format!(
-        "The person wants changes before this plan is saved: \"{a}\". Nothing was saved. Change it and call plan.write again with propose: true."
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use parzi_core::store::PlanStep;
 
     #[test]
-    fn the_persons_answer_decides_whether_the_plan_is_saved() {
-        assert!(matches!(verdict(USE_PLAN), Verdict::Save(_)));
-        assert!(matches!(verdict("Skipped: auto"), Verdict::Save(_)));
-        assert!(matches!(verdict(NOT_NOW), Verdict::Hold(_)));
-        assert!(matches!(verdict(""), Verdict::Hold(_)));
-        match verdict("drop the second step") {
-            Verdict::Hold(why) => assert!(why.contains("drop the second step")),
-            Verdict::Save(_) => panic!("a change request is not a yes"),
-        }
-    }
-
-    #[test]
-    fn a_plan_reads_as_marked_lines_and_a_proposal_with_its_context() {
+    fn a_plan_reads_as_marked_lines() {
         let step = |title: &str, state, detail: Option<&str>| PlanStep {
             title: title.into(),
             state,
@@ -228,13 +146,6 @@ mod tests {
             doc: Some("/s/plan.md".into()),
         };
         assert_eq!(lines(&p), "[x] Lexer\n[>] Parser\n[ ] Tests");
-        assert_eq!(
-            proposal_text(&p),
-            "Use this plan for this session?\nA small parser for the config language.\nLexer\nParser: Pratt, for the operators\nTests\nFull plan: /s/plan.md"
-        );
-        let j: Value = serde_json::from_str(&proposal_json(&p)).unwrap();
-        assert_eq!(j["steps"][1]["detail"], "Pratt, for the operators");
-        assert_eq!(j["doc"], "/s/plan.md");
     }
 
     #[test]

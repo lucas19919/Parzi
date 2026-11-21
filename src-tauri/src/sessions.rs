@@ -277,6 +277,22 @@ pub async fn rewind_thread(
     state.orch.rewind(&id, nth).map_err(|e| e.to_string())
 }
 
+/// Answers a plan the agent proposed: yes saves it as the session's plan;
+/// either way the proposal card goes. The window sends the answer on as the
+/// person's next message.
+#[tauri::command]
+pub async fn answer_plan_proposal(
+    state: State<'_, AppState>,
+    id: String,
+    accept: bool,
+) -> Result<SessionMeta, String> {
+    read_only(&id)?;
+    state
+        .orch
+        .answer_proposal(&id, accept)
+        .map_err(|e| e.to_string())
+}
+
 /// Moves a session to another folder (a project, or a branch's worktree) and
 /// project, from the Environment card.
 #[tauri::command]
