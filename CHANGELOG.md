@@ -6,6 +6,10 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Antigravity turns no longer hang for up to 20 minutes after replying: Antigravity reports its file reads finished only when the whole prompt ends, and Parzi no longer waits on those once the reply is written.
+- Agents carry less: big connectors (GitHub, IsarOS) are listed by name until an agent asks for their tools, Parzi's own instructions are a third of their old length, and a few duplicate window tools are gone. Every agent now gets the repository's instructions, whether the repo keeps them in CLAUDE.md or AGENTS.md.
+- Switching agents and back resumes the first agent's own session, and it hears only what happened while it was away. ACP agents that can load a session (but not resume one) now pick up where they left off.
+- Retrying with another model resends the files the message carried.
 - Parzi is smaller. Gone: the ad blocker, Bitwarden passwords, Parzi's own download handling (pages download as the browser does), the site permission bar (pages ask with the browser's own prompt), bookmark and history import with its setup step, the notifications bell and its settings, and the Files, Hosts and Changes cards. A session's tab shows how it stands instead: a spinner while it works, an amber dot when it needs you, and a green or red dot when it finished or failed and you haven't opened it yet.
 - Removed the bottom fade overlays on glass code blocks and folded artifact cards.
 - Bare localhost, IP, and local/intranet addresses with a port or path now linkify and open directly in a Parzi tab.
