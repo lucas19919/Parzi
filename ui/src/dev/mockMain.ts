@@ -85,28 +85,7 @@ if (mockRequest) {
   };
   await emit("parzi://run-event", { kind: "request", key: "r1", session: "s1", request: asks[mockRequest] ?? asks.text, req_kind: mockRequest });
 }
-if (mockQuestion === "plan") {
-  await emit("parzi://run-event", {
-    kind: "question",
-    key: "q1",
-    session: "s1",
-    question: "Use this plan for this session?\nTyping stalls because the composer measures and renders the whole thread on every key.\nFind where typing stalls\nCache the markdown head\nRun the UI tests\nFull plan: C:\\Users\\dev\\.parzi\\scratch\\s1\\plan.md",
-    options: ["Use this plan", "Not now"],
-    details: [
-      JSON.stringify({
-        plan: true,
-        summary: "Typing stalls because the composer measures its height and re-renders the whole thread's markdown on every key. I'll measure once per frame and cache rendered messages, so a keystroke only touches the box you type in.",
-        steps: [
-          { title: "Find where typing stalls", detail: "Profile a 300-turn thread and confirm the autosize and markdown passes are the cost." },
-          { title: "Cache the markdown head", detail: "Keep each settled message's HTML; only the streaming tail re-renders." },
-          { title: "Run the UI tests", detail: "npm test plus a typing check on the long mock thread." },
-        ],
-        doc: "C:\\Users\\dev\\.parzi\\scratch\\s1\\plan.md",
-      }),
-    ],
-    multi: false,
-  });
-} else if (mockQuestion) {
+if (mockQuestion) {
   await emit("parzi://run-event", {
     kind: "question",
     key: "q1",

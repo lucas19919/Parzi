@@ -23,11 +23,18 @@ export interface SessionMeta {
   /** The session's plan: its checklist, kept on the session. */
   plan?: { items: { title: string; state: "pending" | "active" | "done" }[]; summary?: string | null; doc?: string | null } | null;
   /** A plan the agent proposed that the person has not answered yet. */
-  proposal?: { items: { title: string; detail?: string | null }[]; summary?: string | null; doc?: string | null } | null;
+  proposal?: Proposal | null;
   /** A draft's brief: sent as the first message when it starts. */
   brief?: string | null;
   branch?: string;
   effort?: string;
+}
+
+/** A plan the agent proposed: its steps, a summary and the full document. */
+export interface Proposal {
+  items: { title: string; detail?: string | null }[];
+  summary?: string | null;
+  doc?: string | null;
 }
 
 export type RunEnd = "completed" | "failed" | "paused" | "stopped" | "crashed" | "interrupted" | "not_started";

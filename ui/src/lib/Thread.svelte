@@ -11,7 +11,7 @@
   import Viz from "./viz/Viz.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type AgentRequest, type ChatEvent, type ProviderStatus, type Question } from "./api";
+  import { api, type AgentRequest, type ChatEvent, type Proposal, type ProviderStatus, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
   import { splitQuotes } from "./oldQuotes";
   import { toast, toastError } from "./toast";
@@ -57,6 +57,8 @@
   let todo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
+  /** A plan the agent proposed, waiting on the session for an Accept. */
+  export let proposal: Proposal | null = null;
   export let request: AgentRequest | null = null;
   export let askerTitle = "";
   export let agentName = "";
@@ -69,7 +71,7 @@
   const dispatch = createEventDispatcher<{
     voted: { key: string };
     answered: { key: string; session?: string; text?: string };
-    proposal: { session: string; text: string };
+    proposal: { session: string };
     edited: { text: string };
     forked: void;
     startDraft: void;
@@ -307,7 +309,7 @@
   $: running = liveTools.filter((t) => t.running);
   $: status = approval
     ? "Needs your approval"
-    : question || request
+    : question || proposal || request
       ? "Waiting for your answer"
       : !streaming
         ? ""
@@ -327,7 +329,7 @@
   // Subagents still at work show even once this session's own turn is over.
   $: activityShown = stepsShown || liveHelpers.length > 0;
   $: lineText =
-    status && (approval || question || request || (running.length && !stepsShown))
+    status && (approval || question || proposal || request || (running.length && !stepsShown))
       ? status
       : activeTask
         ? `${activeTask}…`
@@ -605,12 +607,6 @@ ${e.text}` : e.text;
   async function respond(answer: string) {
     if (!question || !answer.trim()) return;
     const { key, session } = question;
-    if (key.startsWith("proposal:")) {
-      // A proposed plan waits on the session, not on a tool call: the
-      // window answers it and sends the answer as the next message.
-      dispatch("proposal", { session, text: answer.trim() });
-      return;
-    }
     try {
       await api.answerQuestion(key, session, answer.trim());
     } catch (e) {
@@ -925,6 +921,12 @@ ${e.text}` : e.text;
   {#if question}
     <div transition:fade={spring}>
       <QuestionCard {question} on:answer={(e) => respond(e.detail.text)} />
+    </div>
+  {:else if proposal}
+    <!-- A proposed plan waits on the session, not on a tool call: the
+         window answers it and sends the answer as the next message. -->
+    <div transition:fade={spring}>
+      <QuestionCard {proposal} on:accept={() => dispatch("proposal", { session })} />
     </div>
   {/if}
 

@@ -308,29 +308,15 @@
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   // A plan the agent proposed waits on the session (meta.proposal) and shows
-  // as the same card as a question; its answer goes as the next message.
-  $: proposalQuestion =
-    shown && meta?.id === shown && meta.proposal?.items?.length
-      ? ({
-          key: `proposal:${shown}`,
-          session: shown,
-          question: "Use this plan for this session?",
-          options: ["Use this plan", "Not now"],
-          details: [
-            JSON.stringify({
-              plan: true,
-              summary: meta.proposal.summary ?? null,
-              steps: meta.proposal.items.map((i) => ({ title: i.title, detail: i.detail ?? null })),
-              doc: meta.proposal.doc ?? null,
-            }),
-          ],
-        } satisfies Question)
-      : null;
-  $: openQuestion = questions.find((q) => q.session === shown) ?? proposalQuestion;
+  // where a question would; its answer goes as the next message. A question
+  // from a tool call comes first.
+  $: openQuestion = questions.find((q) => q.session === shown) ?? null;
+  $: proposal = !openQuestion && !!shown && meta?.id === shown && meta.proposal?.items?.length ? meta.proposal : null;
   // A proposal that arrives brings the thread down to it, once.
   let seenProposal = "";
-  $: if ((proposalQuestion?.key ?? "") !== seenProposal) {
-    seenProposal = proposalQuestion?.key ?? "";
+  $: proposalFor = proposal ? (shown ?? "") : "";
+  $: if (proposalFor !== seenProposal) {
+    seenProposal = proposalFor;
     if (seenProposal) void scrollToBottom(true);
   }
   $: openRequest = requests.find((r) => r.session === shown) ?? null;
@@ -1042,72 +1028,80 @@
     else showCover("sessions");
   }
 
-  // A plan waiting for an answer takes what you type as your answer: changes
-  // go straight to the agent instead of queueing behind it.
-  $: planAsk = openQuestion && openQuestion.options[0] === "Use this plan" ? openQuestion : null;
-
-  /** Answers the session's proposed plan, then sends the answer to the agent
-   *  as the person's next message (its turn ended when it proposed). */
-  async function answerProposal(session: string, text: string, typed = false) {
-    const accept = !typed && text === "Use this plan";
+  /** Answers the session's proposed plan; false when that failed. */
+  async function settleProposal(session: string, accept: boolean): Promise<boolean> {
     try {
       const m = await api.answerPlanProposal(session, accept);
-      if (shown === session) meta = m;
+      if (meta?.id === session) meta = m;
+      threads = threads.map((t) => (t.id === session ? { ...t, proposal: null } : t));
+      return true;
     } catch (e) {
       toastError(e);
-      return;
+      return false;
     }
-    if (typed) return;
-    comp.input = accept ? "Use this plan." : text === "Not now" ? "Not now. Carry on without this plan." : text;
-    comp = comp;
-    void send();
   }
 
-  async function send() {
+  /** Accept on a proposed plan: the answer goes to the agent as the
+   *  person's next message (its turn ended when it proposed), from the tab
+   *  it was given in, and whatever they were typing stays in the composer. */
+  let accepting = "";
+  async function answerProposal(session: string) {
     const target = tab;
+    if (target.sessionId !== session || accepting === session) return;
+    accepting = session;
+    try {
+      if (await settleProposal(session, true)) await sendText(target, "Use this plan.");
+    } finally {
+      accepting = "";
+    }
+  }
+
+  /** Sends given words (and files) from a tab as the next message, leaving
+   *  the draft in its composer as it is. */
+  function sendText(target: Tab, text: string, files: string[] = []) {
+    return send({ target, text, files });
+  }
+
+  /** Sends the composer's draft, or given words from a tab (sendText). */
+  async function send(given?: { target: Tab; text: string; files: string[] }) {
+    const target = given?.target ?? tab;
+    target.composer = ensureComposer(target.composer);
     const draft = target.composer;
-    const prompt = draft.input.trim();
+    const prompt = (given ? given.text : draft.input).trim();
     if (!prompt) return;
-    if (proposalQuestion && target.sessionId === proposalQuestion.session) {
-      // Typing while a plan waits is the answer: the card goes, the words
-      // go to the agent as usual.
-      await answerProposal(proposalQuestion.session, prompt, true);
-    }
-    if (planAsk && target.sessionId === planAsk.session && !planAsk.key.startsWith("proposal:")) {
-      const ask = planAsk;
+    /** Empties the composer, when it was the draft that went. */
+    const clearDraft = () => {
+      if (given) return;
       draft.input = "";
+      draft.attachments = [];
       comp = comp;
-      settle(ask.key);
-      try {
-        await api.answerQuestion(ask.key, ask.session, prompt);
-      } catch (e) {
-        draft.input = prompt;
-        comp = comp;
-        toastError(e);
-      }
-      return;
-    }
+    };
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
       return;
     }
     if (isExplicitUrl(prompt)) {
-      draft.input = "";
-      comp = comp;
+      clearDraft();
       browse(toAddress(prompt));
       return;
     }
-    const files = [...draft.attachments];
+    // Words sent while a plan waits answer it: the card goes, the words go
+    // to the agent as usual. Read from the session itself, not from what
+    // the window last drew.
+    const plans = target.sessionId && metaOf(target.sessionId)?.proposal?.items?.length ? target.sessionId : "";
+    if (plans && !(await settleProposal(plans, false))) return;
+    const files = given ? given.files : [...draft.attachments];
+    const place = placeOf(target);
     const agentOf = (model: string) => model.split("/")[0];
     const sessionModel = threads.find((t) => t.id === target.sessionId)?.model ?? "";
     // Another agent takes the same thread over (parzi-runtime route): the
     // session and its history stay, the new agent is handed the conversation.
     const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
     const fresh = !target.sessionId;
-    const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
+    const where = place.cwd;
     const key = target.sessionId ?? tabKey(target.id);
-    const item = { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn };
+    const item = { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: place.remote };
     if (isBusy(sends, key)) {
       // A new tab's first message is still on its way: there is nothing to queue behind yet.
       if (fresh) return;
@@ -1115,18 +1109,14 @@
         toast(`The queue holds ${MAX_HELD} messages`);
         return;
       }
-      draft.input = "";
-      draft.attachments = [];
-      comp = comp;
+      clearDraft();
       return;
     }
     const wasDraft = threads.find((t) => t.id === target.sessionId)?.status === "draft";
     if (target.sessionId && otherAgent && !wasDraft) toast(`${nameOf(agentOf(draft.model))} takes over this thread, with the conversation so far`);
     act({ type: "begin", key, text: prompt, users: fresh ? 0 : usersOf(key) });
-    forgetDraft(target);
-    draft.input = "";
-    draft.attachments = [];
-    comp = comp;
+    if (!given) forgetDraft(target);
+    clearDraft();
     void scrollToBottom(true);
     try {
       const sid = await api.sendMessage({
@@ -1137,14 +1127,12 @@
         effort: draft.effort,
         attachments: files,
         mode: permission,
-        remote: remoteOn,
-        worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
+        remote: place.remote,
+        worktree: !target.sessionId && !place.remote ? draft.worktree : undefined,
       });
       act({ type: "started", key, sid });
       rememberModel(draft.model, draft.effort);
-      draft.input = "";
-      draft.attachments = [];
-      comp = comp;
+      clearDraft();
       if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || "New session").slice(0, 40) });
       else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
@@ -1159,12 +1147,30 @@
         console.info("queue: still working; the message stays queued", { session: key });
         return;
       }
-      draft.input = prompt;
-      draft.attachments = files;
-      comp = comp;
+      // What failed goes back to the composer, unless the person is
+      // already typing something else there.
+      if (!given || (!draft.input.trim() && !draft.attachments.length)) {
+        draft.input = prompt;
+        draft.attachments = files;
+        comp = comp;
+      }
       if (still) toast(`The queue holds ${MAX_HELD} messages`);
       else toastError(e);
     }
+  }
+
+  /** What the window knows of a session: the one on screen, or the list's. */
+  function metaOf(sid: string): SessionMeta | null {
+    return (meta?.id === sid ? meta : threads.find((x) => x.id === sid)) ?? null;
+  }
+
+  /** Where a message from this tab runs: the remote or this PC, and in
+   *  which folder (a session's own, or the one picked for a new one). */
+  function placeOf(t: Tab): { remote: boolean; cwd: string } {
+    const sid = t.sessionId;
+    const remote = sid ? isRemote(sid) : !!$remoteInfo && (t.composer.remote ?? preferRemote);
+    if (sid) return { remote, cwd: metaOf(sid)?.cwd ?? "" };
+    return { remote, cwd: remote ? (t.composer.remoteCwd ?? "") : (t.cwd ?? "") };
   }
 
   function restore(sid: string, h: HeldItem) {
@@ -1363,17 +1369,7 @@
 
   async function sendReply(text: string) {
     if (sending || streaming) return;
-    const draft = tab.composer;
-    const kept = { input: draft.input, attachments: [...draft.attachments] };
-    draft.input = text;
-    draft.attachments = [];
-    comp = comp;
-    await send();
-    if (kept.input || kept.attachments.length) {
-      draft.input = kept.input;
-      draft.attachments = kept.attachments;
-      comp = comp;
-    }
+    await sendText(tab, text);
   }
 
   async function aimAt(text: string): Promise<{ text: string; folder: string; title: string }> {
@@ -1464,22 +1460,19 @@
   // the composer; the plan it carries stays on the session.
   function startDraft() {
     if (!meta || meta.status !== "draft" || sending) return;
-    comp.input = meta.brief ?? comp.input;
-    comp = comp;
-    void send();
+    if (meta.brief?.trim()) void sendText(tab, meta.brief);
+    else void send();
   }
 
   function retryLast() {
     const last = [...events].reverse().find((e) => e.kind === "user");
     if (!last || last.kind !== "user" || streaming || sending) return;
     // Resend the files the message carried, not just its words.
-    comp.attachments = attachedPaths(last.text);
-    comp.input = last.text
+    const text = last.text
       .replace(/\n?\[attached: [^\]]+\]/, "")
       .replace(/\n*<side-task[^>]*>[\s\S]*?<\/side-task>\n*/, "")
       .trimEnd();
-    comp = comp;
-    void send();
+    void sendText(tab, text, attachedPaths(last.text));
   }
 
   async function remove(id: string) {
@@ -2176,6 +2169,7 @@
                   {liveHelpers}
                   {approval}
                   question={openQuestion}
+                  {proposal}
                   request={openRequest}
                   askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? openRequest?.session ?? approval?.session ?? shown))?.title ?? ""}
                   agentName={nameOf(threads.find((t) => t.id === shown)?.model.split("/")[0] ?? "")}
@@ -2186,7 +2180,7 @@
                   sessionTitle={titleOf}
                   on:voted={(e) => settle(e.detail.key)}
                   on:answered={(e) => settle(e.detail.key)}
-                  on:proposal={(e) => void answerProposal(e.detail.session, e.detail.text)}
+                  on:proposal={(e) => void answerProposal(e.detail.session)}
                   on:edited={(e) => {
                     comp.input = e.detail.text;
                     comp = comp;
@@ -2280,11 +2274,11 @@
             comp = comp;
           }}
           hero={!hasSession && !coverOn}
-          hint={planAsk ? "Say what to change, or accept the plan above" : ""}
+          hint={proposal ? "Say what to change, or accept the plan above" : ""}
           {project}
           queue={heldRows}
           queuePaused={queueIsPaused}
-          on:send={send}
+          on:send={() => void send()}
           on:unhold={(e) => shown && unhold(shown, e.detail.id)}
           on:dropHeld={(e) => shown && dropQueued(shown, e.detail.id)}
           on:moveHeld={(e) => shown && moveQueued(shown, e.detail.id, e.detail.to)}
