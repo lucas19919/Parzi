@@ -17,7 +17,7 @@ const MAX_LISTED: usize = 50;
 const SUMMARY_MAX: usize = 140;
 const TITLE_MAX: usize = 120;
 const CONTEXT_HEAD: &str = "# The user's notes (Parzi brain)\nPinned notes are included in full. \
-On-demand notes are listed with a one-line summary; read one with brain.read when the task needs it.";
+On-demand notes are listed with a one-line summary; read one with brain_read when the task needs it.";
 const ON_DEMAND: &str = "\n\n## On demand";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -734,7 +734,7 @@ fn demand_line(n: &Note, pinned: bool) -> String {
 }
 
 fn more_line(left: usize) -> String {
-    format!("\n- …and {left} more (brain_list)")
+    format!("\n- …and {left} more (brain_search)")
 }
 
 struct Note {
@@ -1963,7 +1963,7 @@ mod tests {
         assert!(shown < 50, "{shown}");
         assert!(ctx
             .text
-            .ends_with(&format!("\n- …and {} more (brain_list)", 50 - shown)));
+            .ends_with(&format!("\n- …and {} more (brain_search)", 50 - shown)));
     }
 
     #[test]
@@ -2027,7 +2027,7 @@ mod tests {
             ctx.text,
             format!(
                 "# The user's notes (Parzi brain)\n\
-                 Pinned notes are included in full. On-demand notes are listed with a one-line summary; read one with brain.read when the task needs it.\n\
+                 Pinned notes are included in full. On-demand notes are listed with a one-line summary; read one with brain_read when the task needs it.\n\
                  \n\
                  ## Project: Demo\n\
                  Folder: {}\n\
@@ -2123,7 +2123,7 @@ mod tests {
         assert!((40..50).contains(&shown), "{shown}");
         assert!(ctx
             .text
-            .ends_with(&format!("\n- …and {} more (brain_list)", 50 - shown)));
+            .ends_with(&format!("\n- …and {} more (brain_search)", 50 - shown)));
         let report = v.overflow();
         assert_eq!(report.len(), 1, "{report:?}");
         assert_eq!(report["c.md"], ["demo"]);
@@ -2183,7 +2183,7 @@ mod tests {
             let ctx = v.context(&folder, None).unwrap();
             assert!(ctx.chars <= CONTEXT_CAP, "pad {pad}: {}", ctx.chars);
             assert!(ctx.text.contains("\n\n## On demand"), "pad {pad}");
-            assert!(ctx.text.ends_with(" more (brain_list)"), "pad {pad}");
+            assert!(ctx.text.ends_with(" more (brain_search)"), "pad {pad}");
             assert_eq!(ctx.listed.len() + ctx.attached.len(), 81, "pad {pad}");
         }
     }
