@@ -277,3 +277,60 @@ async fn coming_back_past_an_agent_without_a_session_still_resumes() {
         back.prompt
     );
 }
+
+/// Retrying the last message with another agent (after a usage limit, say)
+/// sends it again without a second copy in the thread.
+#[tokio::test]
+async fn resending_the_last_message_does_not_repeat_it() {
+    home("resend");
+    let claude = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.say("ok");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let codex = Fake::new(
+        "codex",
+        script(|a: Agent| async move {
+            a.say("codex did it");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(&[claude.clone(), codex.clone()]);
+    let (meta, _rx) = orch
+        .spawn(
+            "resend",
+            "claude",
+            "fix the bug",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+    orch.resend_last(
+        &meta.id,
+        None,
+        "",
+        "low",
+        vec![],
+        Some("codex".into()),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&store, &meta.id).await;
+    let users = store
+        .events(&meta.id)
+        .unwrap()
+        .into_iter()
+        .filter(|e| matches!(e, parzi_core::store::Event::User { .. }))
+        .count();
+    assert_eq!(users, 1, "the message is in the thread once");
+    let turn = codex.seen().pop().expect("codex ran");
+    assert!(turn.prompt.ends_with("fix the bug"), "{}", turn.prompt);
+}

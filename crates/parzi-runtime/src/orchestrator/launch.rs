@@ -186,6 +186,67 @@ impl Orchestrator {
         model_override: Option<String>,
         mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+        let opts = SendOpts::new(cwd, effort, model_override, mode_override);
+        self.send_inner(cause, id, prompt, approver, attachments, opts, false)
+            .await
+    }
+
+    /// Sends the session's last message again, to the agent picked now (a
+    /// retry after a usage limit, say). It is already in the thread, so it is
+    /// not recorded a second time. Errors when the session has no message.
+    pub async fn resend_last(
+        &self,
+        id: &str,
+        approver: Option<Arc<dyn Approver>>,
+        cwd: &str,
+        effort: &str,
+        attachments: Vec<parzi_core::context::AttachedFile>,
+        model_override: Option<String>,
+        mode_override: Option<String>,
+    ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+        let last = self
+            .store
+            .events(id)?
+            .into_iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::User { text } => Some(text),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ParziError::Validation("this session has no message to send again".into())
+            })?;
+        let prompt = strip_attached(&last);
+        let opts = SendOpts::new(cwd, effort, model_override, mode_override);
+        self.send_inner(
+            RunCause::Send,
+            id,
+            &prompt,
+            approver,
+            attachments,
+            opts,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_inner(
+        &self,
+        cause: RunCause,
+        id: &str,
+        prompt: &str,
+        approver: Option<Arc<dyn Approver>>,
+        attachments: Vec<parzi_core::context::AttachedFile>,
+        opts: SendOpts<'_>,
+        recorded: bool,
+    ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+        let SendOpts {
+            cwd,
+            effort,
+            model_override,
+            mode_override,
+        } = opts;
         let meta = self.store.get(id)?;
         // A person's message is their answer to a waiting plan proposal,
         // whichever way it came (the window, the CLI, a phone): the card goes.
@@ -261,7 +322,7 @@ impl Orchestrator {
             attachments,
             approver,
             restore_approver: false,
-            prompt_recorded: false,
+            prompt_recorded: recorded,
             inbox_from: None,
             mode_override,
             cause,
@@ -862,5 +923,41 @@ mod tests {
         assert_eq!(eff(Deny, Some("edits")), (Deny, false, false));
         assert_eq!(eff(Auto, None), (Auto, false, false));
         assert_eq!(eff(Ask, None), (Ask, false, false));
+    }
+}
+
+/// How a send runs: the folder, effort, model and mode it was sent with.
+struct SendOpts<'a> {
+    cwd: &'a str,
+    effort: &'a str,
+    model_override: Option<String>,
+    mode_override: Option<String>,
+}
+
+impl<'a> SendOpts<'a> {
+    fn new(
+        cwd: &'a str,
+        effort: &'a str,
+        model_override: Option<String>,
+        mode_override: Option<String>,
+    ) -> Self {
+        Self {
+            cwd,
+            effort,
+            model_override,
+            mode_override,
+        }
+    }
+}
+
+/// A recorded message without the "[attached: ...]" line the engine adds:
+/// the files go along as attachments instead.
+fn strip_attached(text: &str) -> String {
+    match text.rfind(
+        "
+[attached: ",
+    ) {
+        Some(at) if text[at..].trim_end().ends_with(']') => text[..at].to_string(),
+        _ => text.to_string(),
     }
 }

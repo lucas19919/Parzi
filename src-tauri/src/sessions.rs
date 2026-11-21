@@ -277,6 +277,51 @@ pub async fn rewind_thread(
     state.orch.rewind(&id, nth).map_err(|e| e.to_string())
 }
 
+/// Sends the session's last message again to the model picked now (a retry
+/// after a usage limit), without a second copy in the thread.
+#[tauri::command]
+#[allow(clippy::too_many_arguments, reason = "a Tauri command's arguments")]
+pub async fn resend_last(
+    state: State<'_, AppState>,
+    session_id: String,
+    model: String,
+    cwd: String,
+    effort: Option<String>,
+    attachments: Option<Vec<String>>,
+    mode: Option<String>,
+) -> Result<(), String> {
+    read_only(&session_id)?;
+    if remote_id(&session_id).is_some() {
+        return Err("Retrying works on this computer's sessions; send the message again.".into());
+    }
+    let effort =
+        parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
+    let attached = {
+        let (cwd, paths) = (cwd.clone(), attachments.unwrap_or_default());
+        tauri::async_runtime::spawn_blocking(move || read_attachments(&cwd, &paths))
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
+        app: state.app.clone(),
+        pending: state.pending.clone(),
+    });
+    state
+        .orch
+        .resend_last(
+            &session_id,
+            Some(approver),
+            &cwd,
+            &effort,
+            attached,
+            Some(model),
+            mode,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Answers a plan the agent proposed: yes saves it as the session's plan;
 /// either way the proposal card goes. The window sends the answer on as the
 /// person's next message.
