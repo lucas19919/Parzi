@@ -35,9 +35,9 @@ const STATES = {
     click("section 4", nth(".sections", 4), `${nth(".sections", 4)}[aria-selected="true"]`),
   ],
   setup: [
-    ...[2, 3].map((i) => click(`step ${i}`, nth("header .page-tabs", i), `${nth("header .page-tabs", i)}[aria-selected="true"]`)),
+    click("step 2", nth("header .page-tabs", 2), `${nth("header .page-tabs", 2)}[aria-selected="true"]`),
     click("tool notes", ".body .list > .item:first-child .more", ".list.picks"),
-    click("step 4", nth("header .page-tabs", 4), `${nth("header .page-tabs", 4)}[aria-selected="true"]`),
+    click("step 3", nth("header .page-tabs", 3), `${nth("header .page-tabs", 3)}[aria-selected="true"]`),
     click("server form", ".disclose", ".remote-form"),
   ],
 };

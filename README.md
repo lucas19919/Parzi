@@ -14,7 +14,7 @@ Each session can have its own plan: ask an agent to plan the work and the thread
 
 The Brain is markdown in `~/.parzi/brain`. A note can go to every session or to the projects you name. Pinned notes are sent in full. The rest are one line, and the agent reads a note when it needs it.
 
-Connectors, in Settings, add tools: diagonaldiagrams for diagrams and charts comes on by default (it needs [uv](https://docs.astral.sh/uv/)), GitHub, Notion, Linear, and the other presets, or any MCP server by its address or command. You sign in to that service in the browser. Pages are a normal browser, with an address bar, back and forward, and bookmarks imported from Brave, Chrome, or Edge.
+Connectors, in Settings, add tools: diagonaldiagrams for diagrams and charts comes on by default (it needs [uv](https://docs.astral.sh/uv/)), GitHub, Notion, Linear, and the other presets, or any MCP server by its address or command. You sign in to that service in the browser. Pages are a normal browser, with an address bar and back and forward.
 
 ## Install
 

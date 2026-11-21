@@ -627,11 +627,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
 const win = (...parts: string[]) => parts.join("\\");
 const note = (tool: string, title: string, file: string, kind = "skill") => ({ source: win("C:", "Users", "dev", `.${tool}`, file), title, kind, bytes: 2048 });
 const scan = {
-  browsers: [
-    { id: "brave", name: "Brave", profile: "Default", label: "Sam Doe", bookmarks: 214, history: true },
-    { id: "brave", name: "Brave", profile: "Profile 3", label: "Work", bookmarks: 38, history: true },
-    { id: "chrome", name: "Google Chrome", profile: "Default", label: "Person 1", bookmarks: 1, history: false },
-  ],
   tools: [
     {
       id: "claude",

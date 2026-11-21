@@ -869,7 +869,6 @@ fn main() {
             control::desk_sync,
             control::desk_answer,
             onboard::onboard_scan,
-            onboard::onboard_browser,
             onboard::onboard_import,
             onboard::agent_install,
             onboard::agent_login,

@@ -475,7 +475,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function openRemoteSetup() {
-    setupStep = 3;
+    setupStep = 2;
     setupServer = true;
     setupOpen = true;
   }

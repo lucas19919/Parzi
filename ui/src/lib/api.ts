@@ -400,15 +400,6 @@ interface BrainContext {
   tokens: number;
 }
 
-interface BrowserSource {
-  id: string;
-  name: string;
-  profile: string;
-  label: string;
-  bookmarks: number;
-  history: boolean;
-}
-
 interface NoteCandidate {
   source: string;
   title: string;
@@ -433,14 +424,8 @@ interface FolderCandidate {
 }
 
 export interface Scan {
-  browsers: BrowserSource[];
   tools: ToolSource[];
   folders: FolderCandidate[];
-}
-
-interface BrowserData {
-  bookmarks: { title: string; url: string; folder: string }[];
-  history: { url: string; title: string; visits: number; last_visit: number }[];
 }
 
 interface ImportReport {
@@ -463,7 +448,6 @@ export const brain = {
 
 export const onboard = {
   scan: () => invoke<Scan>("onboard_scan"),
-  browser: (id: string, profile: string) => invoke<BrowserData>("onboard_browser", { id, profile }),
   importTools: (notes: string[], folders: string[]) => invoke<ImportReport>("onboard_import", { notes, folders }),
   install: (provider: string) => invoke<void>("agent_install", { provider }),
   login: (provider: string) => invoke<boolean>("agent_login", { provider }),

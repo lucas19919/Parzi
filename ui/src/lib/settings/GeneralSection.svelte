@@ -138,7 +138,7 @@
   <div class="rows">
     <div class="row row-title"><span>Set up Parzi</span></div>
     <div class="row">
-      <span class="row-label">Guided setup<small>Agents, browser and the remote, step by step</small></span>
+      <span class="row-label">Guided setup<small>Agents, your other tools and the remote, step by step</small></span>
       <span class="row-ctl auto"><button class="btn" on:click={onSetup}><Icon name="wrench" size={12} /><span>Set up</span></button></span>
     </div>
   </div>
