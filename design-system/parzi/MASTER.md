@@ -66,10 +66,10 @@ from Rust replaces the preview (`applyThemeCss` always clears inline
 vars). Theme packs live in `~/.parzi/themes/<slug>/`; a pack without art
 keeps the current backdrop. Surfaces are solid `--panel` on `--bg`, with one
 exception the person chooses: on Home the wallpaper shows as a band across the
-top or the full window, and the cards and composer over it are Clear (outlined,
-the default), Glass (frosted, the only `backdrop-filter` in the app) or Solid.
-That lives in `App.svelte` under `.over-art`, keyed by `html[data-art-fill]`
-and `html[data-art-cards]`, which `lib/theme.ts` sets from the theme.
+top or the full window, and the cards and composer over it are frosted glass
+(the only `backdrop-filter` in the app). That lives in `App.svelte` under
+`.over-art`, keyed by `html[data-art-fill]`, which `lib/theme.ts` sets from
+the theme.
 
 ## Layout
 

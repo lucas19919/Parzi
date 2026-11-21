@@ -377,7 +377,6 @@ const theme = {
     height: 0.34,
     y: 0.5,
     fill: params.get("fill") === "full" ? "full" : "band",
-    cards: params.get("cards") ?? "clear",
     dither: Number(params.get("dither") ?? 0.25),
     dither_size: Number(params.get("dsize") ?? 1),
   },
@@ -543,7 +542,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     ],
   }),
   get_theme: () => theme,
-  get_theme_css: () => `:root{--accent:${theme.colors.accent};--bg:${theme.colors.stage};--text:${theme.colors.text};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
+  get_theme_css: () => `:root{--accent:${theme.colors.accent};--bg:${theme.colors.stage};--text:${theme.colors.text};--art-fill:${theme.background.fill};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
   // Keeps the window's answers to desk calls, for checks to read.
   desk_answer: (a) => {
     const w = window as unknown as { __deskAnswers?: Record<string, unknown> };

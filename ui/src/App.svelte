@@ -359,8 +359,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
-  // Popups live on <body>, outside .shell: this lets them match the glass.
-  $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-over-art", overArt);
   $: onHome = showWallpaper;
 
   /* For a moment after the window comes to or leaves Home (or Home goes
@@ -1923,7 +1921,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       { id: "composer.draft", title: "Write text into the composer for the person to send", args: [{ name: "text", type: "string", required: true }], run: (a) => { comp.input = String(a.text); comp = comp; return "The text is in the composer; the person sends it."; } },
       { id: "appearance.theme", title: "Apply a theme pack", args: [{ name: "pack", type: "string", required: true }], run: async (a) => { const packs = await api.listPackInfos(); const p = packs.find((x) => x.name.toLowerCase() === String(a.pack).toLowerCase()); if (!p) throw new Error(`No theme "${a.pack}"; the themes are ${packs.map((x) => x.name).join(", ")}.`); applyThemeCss(await api.applyPack(p.name)); await refreshBackground(); document.dispatchEvent(new CustomEvent("parzi:theme")); return `Applied the ${p.name} theme.`; } },
       { id: "appearance.wallpaper", title: "Show the Home wallpaper as a band or the full window", args: [{ name: "show", type: "string", required: true, choices: ["band", "full"] }], run: async (a) => { await theme((t) => (t.background.fill = a.show === "full" ? "full" : "band")); return `The wallpaper shows as ${a.show === "full" ? "the full window" : "a band"}.`; } },
-      { id: "appearance.cards", title: "Set how cards look", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards are ${a.look}.`; } },
     ];
   }
 
@@ -1967,11 +1964,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void warmPages();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
-    const onDefaultMode = (e: Event) => {
-      policy = (e as CustomEvent<string>).detail ?? "";
-      permission = permissionFor(policy);
-    };
-    document.addEventListener("parzi:default-mode", onDefaultMode);
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
       if (!url) return;
@@ -2052,7 +2044,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       unActivity();
       unActions();
       unClear();
-      document.removeEventListener("parzi:default-mode", onDefaultMode);
       document.removeEventListener("parzi:open-page", onOpenPage);
       document.removeEventListener("parzi:open-artifact", onOpenArtifact);
       document.removeEventListener("parzi:pin-note", onPinNote);
@@ -2370,7 +2361,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* The card look (clear, glass or solid) is one set of values for all of
+  /* The card look is one set of values for all of
      Parzi (theme.css, --surface and --blur); on Home it
      eases as it changes. */
   .on-home :global(:is(.info .card, .reader .card, .ob .box)) {
@@ -2393,11 +2384,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   /* Light theme, picture filling the window: Home is a dark scene (the
      theme marks data-scene). Over the picture the theme's colours swap,
      its text colour the ground and its ground the text, so the title bar
-     and the line above the composer read as on a dark theme. Glass and
-     solid cards and the composer keep the light theme's own colours: light
-     frosted glass with dark text, like light widgets on a dark wallpaper.
-     The open tab and toggles that are on are the same light glass. Clear
-     cards have no surface of their own, so they stay dark. */
+     and the line above the composer read as on a dark theme. Cards and the
+     composer keep the light theme's own colours: light frosted glass with
+     dark text, like light widgets on a dark wallpaper. The open tab and
+     toggles that are on are the same light glass. */
   :global(html[data-scene="dark"]) .over-art {
     --bg: var(--scene-bg);
     --text: var(--scene-text);
