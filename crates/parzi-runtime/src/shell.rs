@@ -250,7 +250,7 @@ impl LiveShell {
         let mut changed = false;
         if self.urls.len() < MAX_JOB_URLS {
             let text = String::from_utf8_lossy(chunk);
-            for url in extract_loopback_urls(&text) {
+            for url in extract_dev_urls(&text) {
                 if !self.urls.contains(&url) {
                     self.urls.push(url);
                     changed = true;
@@ -1026,10 +1026,12 @@ fn strip_ansi(input: &str) -> String {
     out
 }
 
-/// Extracts loopback http(s) URLs printed by local dev servers (localhost,
-/// *.localhost, 127.x.x.x, [::1], and wildcard binds 0.0.0.0 / [::] normalized
-/// to localhost so they open cleanly in a browser).
-fn extract_loopback_urls(chunk: &str) -> Vec<String> {
+/// Extracts the http(s) URLs a local dev server prints: loopback ones
+/// (localhost, *.localhost, 127.x.x.x, [::1], and wildcard binds 0.0.0.0 /
+/// [::] normalized to localhost so they open cleanly in a browser), and the
+/// private network ones (Vite's "Network:" line, a Tailscale address), which
+/// a phone on the same network or tailnet can open.
+fn extract_dev_urls(chunk: &str) -> Vec<String> {
     if !chunk.contains("://") {
         return Vec::new();
     }
@@ -1045,7 +1047,7 @@ fn extract_loopback_urls(chunk: &str) -> Vec<String> {
                 ',' | '.' | ';' | ')' | ']' | '}' | '"' | '\'' | '`' | '>'
             )
         });
-        if let Some(url) = normalize_loopback_url(candidate) {
+        if let Some(url) = normalize_dev_url(candidate) {
             if !out.contains(&url) {
                 out.push(url);
             }
@@ -1054,7 +1056,7 @@ fn extract_loopback_urls(chunk: &str) -> Vec<String> {
     out
 }
 
-fn normalize_loopback_url(raw: &str) -> Option<String> {
+fn normalize_dev_url(raw: &str) -> Option<String> {
     let (scheme, rest) = raw.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
@@ -1101,6 +1103,11 @@ fn normalize_loopback_url(raw: &str) -> Option<String> {
         } else {
             host_lc
         }
+    } else if host_lc
+        .parse::<std::net::Ipv4Addr>()
+        .is_ok_and(private_network)
+    {
+        host_lc
     } else {
         return None;
     };
@@ -1109,6 +1116,13 @@ fn normalize_loopback_url(raw: &str) -> Option<String> {
         Some(p) => format!("{scheme}://{normalized_host}:{p}{tail}"),
         None => format!("{scheme}://{normalized_host}{tail}"),
     })
+}
+
+/// A home or office network (10/8, 172.16/12, 192.168/16) or a tailnet
+/// (100.64/10): reachable from the person's phone, not from the internet.
+fn private_network(ip: std::net::Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    ip.is_private() || (a == 100 && (64..128).contains(&b))
 }
 
 #[cfg(test)]
@@ -1155,19 +1169,25 @@ mod tests {
     }
 
     #[test]
-    fn extracts_loopback_urls_from_server_output() {
+    fn extracts_dev_urls_from_server_output() {
         let vite = "\x1b[32m  ➜  Local:   \x1b[36mhttp://localhost:5173/\x1b[0m\n  ➜  Network: http://192.168.1.10:5173/\n";
-        assert_eq!(extract_loopback_urls(vite), vec!["http://localhost:5173"]);
+        assert_eq!(
+            extract_dev_urls(vite),
+            vec!["http://localhost:5173", "http://192.168.1.10:5173"],
+            "the network address is kept for phones"
+        );
+        let tailnet = "Network: http://100.101.2.3:3000/ and http://8.8.8.8:80/";
+        assert_eq!(extract_dev_urls(tailnet), vec!["http://100.101.2.3:3000"]);
 
         let py = "Serving HTTP on http://0.0.0.0:8000/ and https://127.0.0.1:8443/app, ignore https://example.com";
         assert_eq!(
-            extract_loopback_urls(py),
+            extract_dev_urls(py),
             vec!["http://localhost:8000", "https://127.0.0.1:8443/app"]
         );
 
         let v6 = "Listening on http://[::1]:3000/ and http://[::]:4000/";
         assert_eq!(
-            extract_loopback_urls(v6),
+            extract_dev_urls(v6),
             vec!["http://[::1]:3000", "http://localhost:4000"]
         );
     }
