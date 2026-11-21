@@ -437,7 +437,7 @@ const mockHosts = [
     job_id: "sh-1",
     cmd: "npm run dev",
     workdir: "D:\\Repos\\Parzi\\ui",
-    urls: ["http://localhost:1420", "http://192.168.1.23:1420"],
+    urls: ["http://localhost:1420"],
     running: true,
     exit: null as number | null,
     started: now - 8_220_000,
