@@ -514,26 +514,6 @@ export const browserPrefs = {
   forget: (origin: string, kind: string | null = null) => invoke<BrowserPrefs>("browser_forget_site", { origin, kind }),
 };
 
-export interface Download {
-  id: string;
-  tab: string;
-  url: string;
-  name: string;
-  path: string;
-  received: number;
-  total: number;
-  state: "progress" | "done" | "failed" | "canceled";
-  started: number;
-}
-
-export const downloads = {
-  reveal: (id: string) => invoke<void>("browser_download_reveal", { id }),
-};
-
-export function onDownload(cb: (d: Download) => void) {
-  return listen<Download>("parzi://download", (ev) => cb(ev.payload));
-}
-
 export function onBrowserAsk(cb: (a: BrowserAsk) => void) {
   return listen<BrowserAsk>("parzi://browser-ask", (ev) => cb(ev.payload));
 }

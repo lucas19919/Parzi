@@ -22,7 +22,6 @@ mod artifact_frame;
 mod brain;
 mod browser;
 mod control;
-mod downloads;
 mod files;
 mod job;
 mod onboard;
@@ -797,7 +796,6 @@ fn main() {
             siteprefs::browser_prefs,
             siteprefs::browser_set_pref,
             siteprefs::browser_forget_site,
-            downloads::browser_download_reveal,
             search::search_suggest,
             settings::connector_check,
             settings::connector_sign_in,

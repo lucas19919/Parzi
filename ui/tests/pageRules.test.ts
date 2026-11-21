@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   appFor,
-  downloadShare,
   iconFor,
   originOf,
   permissionName,
@@ -79,12 +78,6 @@ test("prompts name the permission and the app in plain words", () => {
   assert.equal(appFor("zoommtg://zoom.us/join?confno=1"), "Zoom");
   assert.equal(appFor("mailto:a@b.c"), "your email app");
   assert.equal(appFor("foo+bar:thing"), "the app for foo+bar links");
-});
-
-test("a download's toast shows its share only while it runs with a known size", () => {
-  assert.equal(downloadShare({ state: "progress", received: 1, total: 4 }), 0.25);
-  assert.equal(downloadShare({ state: "progress", received: 1, total: 0 }), undefined);
-  assert.equal(downloadShare({ state: "done", received: 4, total: 4 }), undefined);
 });
 
 test("tooltips stay off the page: below, else above, else beside", () => {

@@ -8,12 +8,12 @@
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onResync, onRunEvent,
     type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
-  import { deskAnswer, downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
+  import { deskAnswer, onBrowserAsk } from "./lib/api";
   import { defineActions, describeActions, runAction, type AppAction } from "./lib/actions";
   import { click as clickControl, screen as readScreen, type as typeControl } from "./lib/appScreen";
   import { addPrompt, dropTabPrompts } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
-  import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
+  import { popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
@@ -865,22 +865,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     await new Promise((r) => setTimeout(r, 250));
     patchTab(id, { crashed: undefined, loading: false });
-  }
-
-  function onDownloadEvent(d: Download) {
-    const key = `download-${d.id}`;
-    if (d.state === "progress") {
-      keyedToast(key, `Downloading ${d.name}`, { progress: downloadShare(d), ms: 0 });
-    } else if (d.state === "done") {
-      keyedToast(key, `Downloaded ${d.name}`, {
-        ms: 8000,
-        action: { label: "Show in folder", run: () => void downloadApi.reveal(d.id).catch(toastError) },
-      });
-    } else if (d.state === "failed") {
-      keyedToast(key, `Download failed: ${d.name}`, { err: true, ms: 6000 });
-    } else {
-      keyedToast(key, null);
-    }
   }
 
   function navigatePage(url: string) {
@@ -1976,7 +1960,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const unOpen = onBrowserOpen((e) => openFromPage(e.tab, e.url));
     const unKey = onBrowserKey((name) => void shortcut(name));
     const unAsk = onBrowserAsk((a) => addPrompt({ ...a }));
-    const unDownload = onDownload(onDownloadEvent);
     const unActivity = watchActivity();
     const unActions = defineActions(appActions());
     selectTab(activeId);
@@ -2078,7 +2061,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       unDesk.then((f) => f()).catch(() => {});
       unResync.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
-      for (const un of [unPage, unOpen, unKey, unAsk, unDownload]) un.then((f) => f()).catch(() => {});
+      for (const un of [unPage, unOpen, unKey, unAsk]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
     };
   });
@@ -2362,11 +2345,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           }}>{t.text}</button
         >
       {:else}
-        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: DUR }}>
+        <div class="toast" class:err={t.err} class:acts={!!t.action} transition:fade={{ duration: DUR }}>
           <span class="toast-text">{t.text}</span>
-          {#if t.progress !== undefined}
-            <span class="toast-bar" aria-hidden="true"><span style:width="{Math.round(t.progress * 100)}%" /></span>
-          {/if}
           {#if t.action}
             {@const act = t.action}
             <button
@@ -2692,22 +2672,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .toast-bar {
-    display: block;
-    flex: none;
-    width: 64px;
-    height: 4px;
-    margin-left: calc(var(--space) * 2);
-    border-radius: var(--radius-sm);
-    background: var(--line);
-    overflow: hidden;
-  }
-  .toast-bar span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    transition: width 200ms var(--ease-out);
   }
   .toast-act {
     flex: none;

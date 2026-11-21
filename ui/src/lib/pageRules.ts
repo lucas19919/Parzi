@@ -112,17 +112,6 @@ export function rememberIcon(icons: Record<string, string>, pageUrl: string, ico
   return Object.fromEntries([...rest.slice(Math.max(0, rest.length - max + 1)), [origin, icon]]);
 }
 
-export interface DownloadLike {
-  state: "progress" | "done" | "failed" | "canceled";
-  received: number;
-  total: number;
-}
-
-export function downloadShare(d: DownloadLike): number | undefined {
-  if (d.state !== "progress" || d.total <= 0) return undefined;
-  return Math.max(0, Math.min(1, d.received / d.total));
-}
-
 export interface Box {
   left: number;
   top: number;

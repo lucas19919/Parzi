@@ -2,19 +2,15 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2AcceleratorKeyPressedEventArgs, ICoreWebView2Controller,
-    ICoreWebView2Deferral, ICoreWebView2DownloadOperation, ICoreWebView2Environment,
-    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
-    ICoreWebView2_15, ICoreWebView2_19, ICoreWebView2_3, ICoreWebView2_4,
-    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG, COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON,
-    COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED, COREWEBVIEW2_DOWNLOAD_STATE,
-    COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
+    ICoreWebView2Deferral, ICoreWebView2Environment, ICoreWebView2PermissionRequestedEventArgs,
+    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2_15, ICoreWebView2_19,
+    ICoreWebView2_3, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
     COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
     COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, COREWEBVIEW2_PERMISSION_KIND,
@@ -32,14 +28,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 };
 use webview2_com::{
     take_pwstr, AcceleratorKeyPressedEventHandler,
-    AddScriptToExecuteOnDocumentCreatedCompletedHandler, BytesReceivedChangedEventHandler,
-    CapturePreviewCompletedHandler, ContainsFullScreenElementChangedEventHandler,
-    DownloadStartingEventHandler, ExecuteScriptCompletedHandler,
+    AddScriptToExecuteOnDocumentCreatedCompletedHandler, CapturePreviewCompletedHandler,
+    ContainsFullScreenElementChangedEventHandler, ExecuteScriptCompletedHandler,
     FaviconChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
     NavigationCompletedEventHandler, NavigationStartingEventHandler,
     NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler,
-    StateChangedEventHandler, TrySuspendCompletedHandler, WebMessageReceivedEventHandler,
-    WindowCloseRequestedEventHandler,
+    TrySuspendCompletedHandler, WebMessageReceivedEventHandler, WindowCloseRequestedEventHandler,
     ZoomFactorChangedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
@@ -55,8 +49,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_SHOWWINDOW,
 };
 
-use crate::downloads::State as DownloadState;
-
 static PAGE_ENV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -68,10 +60,6 @@ struct Asked {
 
 thread_local! {
     static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
-    // Each running download stays referenced here until it ends, so its
-    // progress and finish events never depend on WebView2 keeping it alone.
-    static DOWNLOADS: RefCell<HashMap<String, ICoreWebView2DownloadOperation>> =
-        RefCell::new(HashMap::new());
     static NEW_WINDOW: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
 }
 
@@ -384,22 +372,6 @@ pub enum PageSignal {
         origin: String,
         kind: &'static str,
     },
-    DownloadStarted {
-        id: String,
-        url: String,
-        path: PathBuf,
-        total: u64,
-    },
-    DownloadProgress {
-        id: String,
-        received: u64,
-        total: u64,
-    },
-    DownloadFinished {
-        id: String,
-        state: DownloadState,
-        path: String,
-    },
     CloseRequested,
 }
 
@@ -412,7 +384,6 @@ pub enum Role {
 pub struct Hook {
     pub tab: String,
     pub role: Role,
-    pub downloads: Option<PathBuf>,
     pub devtools: bool,
 }
 
@@ -566,7 +537,6 @@ fn hook_page(
             })),
             &raw mut token,
         )?;
-        hook_downloads(&core, signal.clone(), hook.downloads.clone())?;
         hook_permissions(&core, signal.clone(), hook.tab.clone())?;
         core.add_NewWindowRequested(
             &NewWindowRequestedEventHandler::create(Box::new(|_, args| {
@@ -737,97 +707,6 @@ unsafe fn favicon(core: &ICoreWebView2_15, signal: Rc<dyn Fn(PageSignal)>) {
             Ok(())
         })),
     );
-}
-
-fn hook_downloads(
-    core: &ICoreWebView2,
-    signal: Rc<dyn Fn(PageSignal)>,
-    dir: Option<PathBuf>,
-) -> windows::core::Result<()> {
-    let mut token = 0i64;
-    unsafe {
-        core.cast::<ICoreWebView2_4>()?.add_DownloadStarting(
-            &DownloadStartingEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else { return Ok(()) };
-                let op = args.DownloadOperation()?;
-                let mut suggested = PWSTR::null();
-                args.ResultFilePath(&raw mut suggested)?;
-                let suggested = PathBuf::from(take_pwstr(suggested));
-                let name = suggested
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let folder = dir
-                    .clone()
-                    .or_else(|| suggested.parent().map(Path::to_path_buf));
-                let Some(folder) = folder else { return Ok(()) };
-                let path = crate::downloads::target(&folder, &name);
-                args.SetResultFilePath(&HSTRING::from(path.as_os_str()))?;
-                args.SetHandled(true)?;
-                let mut uri = PWSTR::null();
-                op.Uri(&raw mut uri)?;
-                let mut total = 0i64;
-                let _ = op.TotalBytesToReceive(&raw mut total);
-                let id = crate::downloads::new_id();
-                signal(PageSignal::DownloadStarted {
-                    id: id.clone(),
-                    url: take_pwstr(uri),
-                    path,
-                    total: u64::try_from(total).unwrap_or(0),
-                });
-                let (s, at) = (signal.clone(), id.clone());
-                op.add_BytesReceivedChanged(
-                    &BytesReceivedChangedEventHandler::create(Box::new(move |op, _| {
-                        let Some(op) = op else { return Ok(()) };
-                        let (mut got, mut total) = (0i64, 0i64);
-                        op.BytesReceived(&raw mut got)?;
-                        let _ = op.TotalBytesToReceive(&raw mut total);
-                        s(PageSignal::DownloadProgress {
-                            id: at.clone(),
-                            received: u64::try_from(got).unwrap_or(0),
-                            total: u64::try_from(total).unwrap_or(0),
-                        });
-                        Ok(())
-                    })),
-                    &raw mut token,
-                )?;
-                let (s, at) = (signal.clone(), id.clone());
-                op.add_StateChanged(
-                    &StateChangedEventHandler::create(Box::new(move |op, _| {
-                        let Some(op) = op else { return Ok(()) };
-                        let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
-                        op.State(&raw mut state)?;
-                        if state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS {
-                            return Ok(());
-                        }
-                        let mut why = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
-                        let _ = op.InterruptReason(&raw mut why);
-                        let mut path = PWSTR::null();
-                        let _ = op.ResultFilePath(&raw mut path);
-                        let state = if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
-                            DownloadState::Done
-                        } else if why == COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED {
-                            DownloadState::Canceled
-                        } else {
-                            DownloadState::Failed
-                        };
-                        DOWNLOADS.with(|m| m.borrow_mut().remove(&at));
-                        s(PageSignal::DownloadFinished {
-                            id: at.clone(),
-                            state,
-                            path: take_pwstr(path),
-                        });
-                        Ok(())
-                    })),
-                    &raw mut token,
-                )?;
-                DOWNLOADS.with(|m| m.borrow_mut().insert(id, op));
-                Ok(())
-            })),
-            &raw mut token,
-        )?;
-    }
-    Ok(())
 }
 
 fn permission_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> Option<&'static str> {

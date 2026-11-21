@@ -730,7 +730,7 @@ fn page_builder(
     let builder = {
         let builder = builder.incognito(isolated);
         let (load_app, load_tab, load_label) = (app.clone(), tab.to_string(), label.to_string());
-        let builder = builder.on_page_load(move |_wv, payload| {
+        builder.on_page_load(move |_wv, payload| {
             let body = match payload.event() {
                 tauri::webview::PageLoadEvent::Started => {
                     json!({ "tab": load_tab, "loading": true })
@@ -748,47 +748,9 @@ fn page_builder(
                 }
             };
             tell(&load_app, BROWSER, body);
-        });
-        let (dl_app, dl_tab) = (app.clone(), tab.to_string());
-        builder.on_download(move |_wv, event| webkit_download(&dl_app, &dl_tab, event))
+        })
     };
     builder
-}
-
-#[cfg(not(windows))]
-fn webkit_download(app: &AppHandle, tab: &str, event: tauri::webview::DownloadEvent<'_>) -> bool {
-    use crate::downloads::State;
-    match event {
-        tauri::webview::DownloadEvent::Requested { url, destination } => {
-            let suggested = destination
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .filter(|n| !n.is_empty())
-                .or_else(|| {
-                    url.path_segments()
-                        .and_then(Iterator::last)
-                        .map(str::to_string)
-                })
-                .unwrap_or_default();
-            let Some(dir) = crate::downloads::downloads_dir(app) else {
-                return false;
-            };
-            let path = crate::downloads::target(&dir, &suggested);
-            let id = crate::downloads::new_id();
-            crate::downloads::started(app, &id, tab, url.as_str(), &path, 0);
-            *destination = path;
-            true
-        }
-        tauri::webview::DownloadEvent::Finished { url, path, success } => {
-            if let Some(id) = crate::downloads::running_id(url.as_str()) {
-                let state = if success { State::Done } else { State::Failed };
-                let path = path.as_ref().and_then(|p| p.to_str());
-                crate::downloads::finished(app, &id, state, path);
-            }
-            true
-        }
-        _ => true,
-    }
 }
 
 #[derive(Default, Debug)]
@@ -848,11 +810,10 @@ fn guess_history(label: &str, url: &str) -> (bool, bool) {
 }
 
 #[cfg(windows)]
-fn hook_for(app: &AppHandle, tab: String, role: crate::dwm::Role) -> crate::dwm::Hook {
+fn hook_for(tab: String, role: crate::dwm::Role) -> crate::dwm::Hook {
     crate::dwm::Hook {
         tab,
         role,
-        downloads: crate::downloads::downloads_dir(app),
         devtools: crate::siteprefs::devtools(),
     }
 }
@@ -860,7 +821,7 @@ fn hook_for(app: &AppHandle, tab: String, role: crate::dwm::Role) -> crate::dwm:
 #[cfg(windows)]
 fn watch_page(app: &AppHandle, wv: &Webview, tab: String) {
     let label = wv.label().to_string();
-    let hook = hook_for(app, tab.clone(), crate::dwm::Role::Page);
+    let hook = hook_for(tab.clone(), crate::dwm::Role::Page);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(wv, hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -873,7 +834,7 @@ fn watch_page(app: &AppHandle, wv: &Webview, tab: String) {
 #[cfg(windows)]
 fn watch_popup(app: &AppHandle, window: &tauri::WebviewWindow, tab: String) {
     let label = window.label().to_string();
-    let hook = hook_for(app, tab.clone(), crate::dwm::Role::Popup);
+    let hook = hook_for(tab.clone(), crate::dwm::Role::Popup);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(window.as_ref(), hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -930,20 +891,6 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
                 ASK,
                 json!({ "kind": "permission", "id": id, "tab": tab, "origin": origin, "permission": kind }),
             );
-        }
-        PageSignal::DownloadStarted {
-            id,
-            url,
-            path,
-            total,
-        } => crate::downloads::started(app, &id, tab, &url, &path, total),
-        PageSignal::DownloadProgress {
-            id,
-            received,
-            total,
-        } => crate::downloads::progress(app, &id, received, total),
-        PageSignal::DownloadFinished { id, state, path } => {
-            crate::downloads::finished(app, &id, state, Some(&path));
         }
         PageSignal::CloseRequested => {
             let (app, label) = (app.clone(), label.to_string());
