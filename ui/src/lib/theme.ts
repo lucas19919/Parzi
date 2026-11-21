@@ -40,24 +40,19 @@ function themeVars(t: Theme): Record<string, string> {
     "--bg-height": `${Math.round(t.background.height * 100)}%`,
     "--bg-y": `${Math.round(t.background.y * 100)}%`,
     "--art-fill": t.background.fill ?? "band",
-    "--art-cards": t.background.cards ?? "clear",
     // As the engine writes them: strength times the most it ever shows.
     "--dither": (Math.min(1, Math.max(0, t.background.dither ?? 0.25)) * DITHER_MAX_OPACITY).toFixed(3),
     "--dither-size": `${Math.min(6, Math.max(1, Math.round(t.background.dither_size ?? 1)))}px`,
   };
 }
 
-/** The wallpaper's fill and the cards' look arrive as theme variables; as
- *  attributes on the page, plain CSS can style by them. */
+/** The wallpaper's fill arrives as a theme variable; as an attribute on
+ *  the page, plain CSS can style by it. */
 function syncArt() {
   const root = document.documentElement;
   const css = getComputedStyle(root);
   const fill = css.getPropertyValue("--art-fill").trim();
-  const cards = css.getPropertyValue("--art-cards").trim();
   root.dataset.artFill = fill === "full" ? "full" : "band";
-  // Cards are always glass now; the attribute stays for the CSS that keys on it.
-  void cards;
-  root.dataset.artCards = "glass";
   // A light theme with the picture filling the window shows Home as a dark
   // scene: white text and dark glass over the picture, like a lock screen.
   // The rest of the app stays light. data-tone is the tone over the picture.
@@ -98,7 +93,7 @@ export function previewTheme(t: Theme) {
   syncArt();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y", "--art-fill", "--art-cards", "--dither", "--dither-size"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y", "--art-fill", "--dither", "--dither-size"];
 
 function clearPreview() {
   const s = document.documentElement.style;

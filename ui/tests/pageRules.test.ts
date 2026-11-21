@@ -2,11 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   appFor,
-  downloadShare,
   iconFor,
   originOf,
-  permissionName,
-  permissionText,
   popClosed,
   popReopenable,
   pushClosed,
@@ -72,19 +69,10 @@ test("favicons: a reported icon wins, else the site's /favicon.ico", () => {
   assert.deepEqual(Object.keys(capped), ["https://s2.com", "https://s3.com", "https://s4.com"]);
 });
 
-test("prompts name the permission and the app in plain words", () => {
-  assert.equal(permissionText("camera"), "use your camera");
-  assert.equal(permissionText("teleport"), "use a browser feature");
-  assert.equal(permissionName("geolocation"), "Location");
+test("prompts name the app in plain words", () => {
   assert.equal(appFor("zoommtg://zoom.us/join?confno=1"), "Zoom");
   assert.equal(appFor("mailto:a@b.c"), "your email app");
   assert.equal(appFor("foo+bar:thing"), "the app for foo+bar links");
-});
-
-test("a download's toast shows its share only while it runs with a known size", () => {
-  assert.equal(downloadShare({ state: "progress", received: 1, total: 4 }), 0.25);
-  assert.equal(downloadShare({ state: "progress", received: 1, total: 0 }), undefined);
-  assert.equal(downloadShare({ state: "done", received: 4, total: 4 }), undefined);
 });
 
 test("tooltips stay off the page: below, else above, else beside", () => {

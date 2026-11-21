@@ -7,7 +7,7 @@
   import { brain, onboard, type Scan } from "./api";
   import { board, checking, nextStep, refreshBoard, setupWaits } from "./providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
-  import { importBrowser, onboarded } from "./browserData";
+  import { onboarded } from "./browserData";
   import { setOverlay } from "./overlay";
   import { mergeProgress, onRemoteProgress, remote, remoteInfo as linked, stepName, type RemoteInfo, type RemoteProgress } from "./remote";
   import { toastError } from "./toast";
@@ -15,8 +15,8 @@
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
-  const STEPS = ["Agents", "Browser", "Your tools", "Done"];
-  const TITLES = ["Your agents", "Bring your browser", "Bring your other tools", "You're set"];
+  const STEPS = ["Agents", "Your tools", "Done"];
+  const TITLES = ["Your agents", "Bring your other tools", "You're set"];
   const LAST = STEPS.length - 1;
   const RECENT = 12;
   export let startStep = 0;
@@ -25,10 +25,6 @@
   let step = startStep;
   let scan: Scan | null = null;
   let scanError = "";
-  let browserPick = "";
-  let wantBookmarks = true;
-  let wantHistory = true;
-  let browserResult = "";
   let busy = false;
   let picked = new Set<string>();
   let open = new Set<string>();
@@ -41,7 +37,6 @@
   type Group = { id: string; name: string; unit: [string, string]; items: { key: string; title: string; hint: string }[] };
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
-  $: browsers = scan?.browsers ?? [];
   $: groups = groupsOf(scan);
 
   function groupsOf(s: Scan | null): Group[] {
@@ -70,8 +65,6 @@
     brain.dir().then((d) => (vault = d)).catch(() => {});
     try {
       scan = await onboard.scan();
-      const first = scan.browsers.find((b) => b.id === "brave") ?? scan.browsers[0];
-      browserPick = first ? `${first.id}:${first.profile}` : "";
       picked = new Set(groupsOf(scan).flatMap((g) => g.items.map((i) => i.key)));
     } catch (e) {
       scanError = String(e);
@@ -109,24 +102,6 @@
     return { update: (v: boolean) => (node.indeterminate = v) };
   }
 
-  async function importFromBrowser() {
-    if (!browserPick) return;
-    const [id, profile] = browserPick.split(":");
-    busy = true;
-    try {
-      const data = await onboard.browser(id, profile);
-      const got = importBrowser({
-        bookmarks: wantBookmarks ? data.bookmarks : [],
-        history: wantHistory ? data.history : [],
-      });
-      browserResult = `Imported ${got.bookmarks} bookmarks and ${got.history} history entries.`;
-    } catch (e) {
-      toastError(e);
-    } finally {
-      busy = false;
-    }
-  }
-
   async function importFromTools() {
     const keys = (projects: boolean) =>
       groups.filter((g) => (g.id === "projects") === projects).flatMap((g) => g.items.map((i) => i.key).filter((k) => picked.has(k)));
@@ -157,8 +132,7 @@
 
   async function next() {
     if (busy) return;
-    if (step === 1 && !browserResult && browserPick && (wantBookmarks || wantHistory)) await importFromBrowser();
-    else if (step === 2 && !toolResult && picked.size) await importFromTools();
+    if (step === 1 && !toolResult && picked.size) await importFromTools();
     step += 1;
   }
 
@@ -270,34 +244,6 @@
           {$checking.size ? "Checking…" : "Check again"}
         </button>
       {:else if step === 1}
-        <p class="lead">Bookmarks and history only. Passwords and cookies stay where they are.</p>
-        {#if !browsers.length}
-          <p class="empty">{scanError || (scan ? "No Brave, Chrome or Edge profile found." : "Looking…")}</p>
-        {:else}
-          <div class="list">
-            {#each browsers as b (b.id + b.profile)}
-              <label class="item" class:on={browserPick === `${b.id}:${b.profile}`}>
-                <input type="radio" bind:group={browserPick} value={`${b.id}:${b.profile}`} />
-                <span class="line">
-                  <span class="title">{b.label}</span>
-                  <span class="muted">{b.name}</span>
-                </span>
-                <span class="count">{b.bookmarks} {b.bookmarks === 1 ? "bookmark" : "bookmarks"}</span>
-              </label>
-            {/each}
-          </div>
-          <div class="checks">
-            <label><input type="checkbox" bind:checked={wantBookmarks} /> Bookmarks</label>
-            <label><input type="checkbox" bind:checked={wantHistory} /> History</label>
-          </div>
-          <div class="action">
-            <button class="btn primary" disabled={busy || !browserPick || (!wantBookmarks && !wantHistory)} on:click={importFromBrowser}>
-              {busy ? "Importing…" : "Import"}
-            </button>
-            {#if browserResult}<span class="result">{browserResult}</span>{/if}
-          </div>
-        {/if}
-      {:else if step === 2}
         <p class="lead">Instructions, memories and skills from your other agents become notes in your brain. Folders you've worked in become projects.</p>
         {#if !scan}
           <p class="empty">{scanError || "Looking…"}</p>
@@ -479,10 +425,6 @@
     cursor: default;
     transition: background var(--dur) ease, border-color var(--dur) ease;
   }
-  .item.on {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  }
   label.item {
     cursor: pointer;
   }
@@ -529,26 +471,6 @@
   }
   .sub.ok {
     color: var(--ok-text);
-  }
-  .line {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: baseline;
-    gap: calc(var(--space) * 2);
-  }
-  .muted {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--fs-md);
-    color: var(--muted);
-  }
-  .count {
-    flex: none;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
   }
   .pick {
     flex: 1;
@@ -697,19 +619,6 @@
     inset: 0 auto 0 0;
     width: 30%;
     animation: sweep 1.3s ease-in-out infinite;
-  }
-  .checks {
-    display: flex;
-    gap: calc(var(--space) * 4);
-    margin: calc(var(--space) * 3) calc(var(--space) * 3) 0;
-    font-size: var(--fs-md);
-    color: var(--muted);
-  }
-  .checks label {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    cursor: pointer;
   }
   .action {
     display: flex;

@@ -39,8 +39,18 @@
 
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
   $: markOf = (sessionId?: string | null) => (sessionId ? $sessionMarks[sessionId] : undefined);
-  $: markTitle = (title: string, sessionId?: string | null) =>
-    markOf(sessionId) === "waiting" ? `${title} · waiting for you` : markOf(sessionId) === "running" ? `${title} · working` : title;
+  const MARK_WORDS: Record<string, string> = { waiting: "waiting for you", running: "working", done: "finished", failed: "failed" };
+  $: markTitle = (title: string, sessionId?: string | null) => {
+    const mark = markOf(sessionId);
+    return mark ? `${title} · ${MARK_WORDS[mark]}` : title;
+  };
+  /** The dot after a session tab's title: it needs you, or its last run
+   *  finished or failed and nobody has opened it since. Working shows as
+   *  the spinner instead. */
+  $: dotOf = (sessionId?: string | null) => {
+    const mark = markOf(sessionId);
+    return mark && mark !== "running" ? mark : "";
+  };
 
   $: if (strip && activeTabId) void tick().then(() => strip?.querySelector('[aria-selected="true"]')?.closest(".tab")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
 
@@ -213,7 +223,7 @@
               {/if}
             </span>
             <span class="title">{displayTitle(tab.title)}</span>
-            {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
+            {#if dotOf(tab.sessionId)}<span class="dot {dotOf(tab.sessionId)}" />{/if}
           </div>
           <button
             class="close count on"
@@ -262,7 +272,7 @@
                 {/if}
               </span>
               <span class="title">{displayTitle(sub.title, sub.kind === "session" ? "Side session" : "New page")}</span>
-              {#if markOf(sub.sessionId) === "waiting"}<span class="waiting" />{/if}
+              {#if dotOf(sub.sessionId)}<span class="dot {dotOf(sub.sessionId)}" />{/if}
             </div>
             <button
               class="close"
@@ -309,7 +319,7 @@
               {/if}
             </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
-        {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
+        {#if dotOf(tab.sessionId)}<span class="dot {dotOf(tab.sessionId)}" />{/if}
       </div>
       {#if attached.length}
         <button
@@ -417,12 +427,18 @@
     width: 14px;
     height: 14px;
   }
-  .waiting {
+  .dot {
     width: 7px;
     height: 7px;
     flex: none;
     border-radius: 50%;
     background: var(--warn);
+  }
+  .dot.done {
+    background: var(--ok);
+  }
+  .dot.failed {
+    background: var(--bad);
   }
   .spinner {
     width: 11px;

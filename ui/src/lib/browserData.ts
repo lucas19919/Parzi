@@ -16,7 +16,6 @@ export interface Pin {
 }
 
 const HISTORY_MAX = 2000;
-const BOOKMARKS_MAX = 5000;
 
 function sameShape(v: unknown, fallback: unknown): boolean {
   if (fallback === null) return true;
@@ -116,36 +115,5 @@ export interface Bookmark {
 }
 
 export const bookmarks = persisted<Bookmark[]>("parzi.bookmarks.v1", []);
-
-export function importBrowser(data: {
-  bookmarks: Bookmark[];
-  history: { url: string; title: string; visits: number; last_visit: number }[];
-}) {
-  const marks = data.bookmarks.filter((b) => /^https?:\/\//i.test(b.url));
-  bookmarks.update((all) => {
-    const seen = new Set(all.map((b) => b.url));
-    return [...all, ...marks.filter((b) => !seen.has(b.url))].slice(0, BOOKMARKS_MAX);
-  });
-  pins.update((all) => {
-    if (all.length) return all;
-    const bar = marks.filter((b) => /bar/i.test(b.folder.split("/")[0] ?? ""));
-    return (bar.length ? bar : marks).slice(0, 8).map((b) => ({ url: b.url, title: b.title }));
-  });
-  history.update((all) => {
-    const byUrl = new Map(all.map((v) => [v.url, v]));
-    for (const h of data.history) {
-      if (!/^https?:\/\//i.test(h.url)) continue;
-      const prev = byUrl.get(h.url);
-      byUrl.set(h.url, {
-        url: h.url,
-        title: prev?.title || h.title,
-        at: Math.max(prev?.at ?? 0, h.last_visit),
-        count: Math.max(prev?.count ?? 0, h.visits),
-      });
-    }
-    return [...byUrl.values()].sort((a, b) => b.at - a.at).slice(0, HISTORY_MAX);
-  });
-  return { bookmarks: marks.length, history: data.history.length };
-}
 
 export const onboarded = persisted<boolean>("parzi.onboarded.v1", false);

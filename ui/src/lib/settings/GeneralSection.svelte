@@ -1,11 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { adblock, api, browserPrefs, vault, type BrowserPrefs, type VaultState } from "../api";
+  import { api, browserPrefs, type BrowserPrefs } from "../api";
   import Icon from "../Icon.svelte";
-  import { permissionName } from "../pageRules";
-  import { tooltip } from "../tooltip";
-  import { notifyLevel, notifySounds, type NotifyLevel } from "../notifyPrefs";
-  import SegControl from "./SegControl.svelte";
   import { check as checkUpdates, devChannel, dlDone, dlTotal, installUpdate, setDevChannel, updateMsg, updateState, updateVersion } from "../updateStore";
   import { clearFinishedSessions } from "../sessions";
   import ConnectionsSection from "./ConnectionsSection.svelte";
@@ -16,9 +12,6 @@
   export let onSetup: () => void = () => {};
   export let onReport: () => void = () => {};
 
-  let blockAds = true;
-  let pw: VaultState | null = null;
-  let pwBusy = false;
   let web: BrowserPrefs | null = null;
 
   let version = "";
@@ -30,50 +23,6 @@
     if (!web) return;
     try {
       web = await browserPrefs.set(name, !web[name]);
-    } catch (e) {
-      notify(`Could not save: ${e}`, true);
-    }
-  }
-
-  async function forgetSite(origin: string, kind: string) {
-    try {
-      web = await browserPrefs.forget(origin, kind);
-    } catch (e) {
-      notify(`Could not save: ${e}`, true);
-    }
-  }
-
-  async function installVault() {
-    pwBusy = true;
-    try {
-      await vault.install();
-      const recheck = () => {
-        window.removeEventListener("focus", recheck);
-        vault.state().then((s) => (pw = s)).catch(() => {});
-      };
-      window.addEventListener("focus", recheck);
-    } catch (e) {
-      pwBusy = false;
-      notify(`Could not start the install: ${e}`, true);
-    }
-  }
-
-  async function pwAction() {
-    if (!pw || pwBusy) return;
-    pwBusy = true;
-    try {
-      pw = pw.status === "unlocked" ? await vault.lock() : await vault.unlock();
-    } catch (e) {
-      notify(String(e) === "missing" ? "Bitwarden isn't installed" : String(e), true);
-      pw = await vault.state().catch(() => pw);
-    } finally {
-      pwBusy = false;
-    }
-  }
-
-  async function toggleAds() {
-    try {
-      blockAds = (await adblock.enable(!blockAds)).enabled;
     } catch (e) {
       notify(`Could not save: ${e}`, true);
     }
@@ -92,16 +41,7 @@
     }
   }
 
-  const setLevel = (v: string) => notifyLevel.set((v === "all" || v === "off" ? v : "needed") as NotifyLevel);
-  const NOTIFY = [
-    { value: "all", label: "Everything" },
-    { value: "needed", label: "When needed" },
-    { value: "off", label: "Nothing" },
-  ];
-
   onMount(() => {
-    adblock.state("").then((s) => (blockAds = s.enabled)).catch(() => {});
-    vault.state().then((s) => (pw = s)).catch(() => {});
     browserPrefs.get().then((p) => (web = p)).catch(() => {});
     api.appVersion().then((v) => (version = v)).catch(() => {});
     void countSessions();
@@ -138,58 +78,7 @@
 
 <div class="pref-section">
   <div class="rows">
-    <div class="row row-title"><span>Notifications</span></div>
-    <div class="row ctl-row">
-      <span class="row-label">Tell me</span>
-      <SegControl
-        label="Notifications"
-        options={NOTIFY}
-        value={$notifyLevel}
-        on:pick={(e) => setLevel(e.detail)}
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">Sound when an agent needs me</span>
-      <span class="row-ctl auto"><Switch on={$notifySounds} title="Sound when an agent needs me" on:toggle={() => notifySounds.set(!$notifySounds)} /></span>
-    </div>
-  </div>
-</div>
-
-<div class="pref-section">
-  <div class="rows">
     <div class="row row-title"><span>Browser</span></div>
-    <div class="row">
-      <span class="row-label">Block ads and trackers
-        {#if web && !web.windows}<small>Windows only for now.</small>{/if}
-      </span>
-      <span class="row-ctl auto"><Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} /></span>
-    </div>
-    <div class="row">
-      <span class="row-label">Passwords from Bitwarden
-        <small>
-          {#if !pw}
-            Checking…
-          {:else if pw.status === "missing"}
-            Not installed
-          {:else if pw.status === "unlocked"}
-            Unlocked{pw.email ? ` as ${pw.email}` : ""}
-          {:else if pw.status === "unauthenticated"}
-            Not signed in
-          {:else}
-            Locked{pw.email ? ` · ${pw.email}` : ""}
-          {/if}
-        </small>
-      </span>
-      <span class="row-ctl auto">
-        {#if pw?.status === "missing"}
-          <button class="btn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
-        {:else if pw}
-          <button class="btn" disabled={pwBusy} on:click={pwAction}>
-            {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
-          </button>
-        {/if}
-      </span>
-    </div>
     {#if web}
       <div class="row">
         <span class="row-label">Agent tabs use your sign-ins</span>
@@ -201,23 +90,6 @@
         </span>
         <span class="row-ctl auto"><Switch on={web.devtools} title="Developer tools for pages" on:toggle={() => setWeb("devtools")} /></span>
       </div>
-      {#if web.sites.length}
-        <div class="row sites">
-          <span class="row-label">Site permissions</span>
-          <ul class="site-list">
-            {#each web.sites as s (s.origin + s.kind)}
-              <li class="site">
-                <span class="site-origin">{s.origin.replace(/^https:\/\//, "")}</span>
-                <span class="site-kind">{permissionName(s.kind)}</span>
-                <span class="site-state" class:allow={s.allow}>{s.allow ? "Allowed" : "Blocked"}</span>
-                <button class="forget" use:tooltip={"Forget this choice"} on:click={() => forgetSite(s.origin, s.kind)}>
-                  <Icon name="close" size={12} />
-                </button>
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
     {/if}
   </div>
 </div>
@@ -238,7 +110,7 @@
   <div class="rows">
     <div class="row row-title"><span>Set up Parzi</span></div>
     <div class="row">
-      <span class="row-label">Guided setup<small>Agents, browser and the remote, step by step</small></span>
+      <span class="row-label">Guided setup<small>Agents, your other tools and the remote, step by step</small></span>
       <span class="row-ctl auto"><button class="btn" on:click={onSetup}><Icon name="wrench" size={12} /><span>Set up</span></button></span>
     </div>
   </div>
@@ -260,69 +132,5 @@
     color: var(--muted);
     font-size: var(--fs-md);
     font-variant-numeric: tabular-nums;
-  }
-
-  /* ── Browser: sites with a remembered permission ── */
-
-  .row.sites {
-    flex-wrap: wrap;
-  }
-  .row.sites .site-list {
-    display: flex;
-    flex: 1 1 100%;
-    flex-direction: column;
-    margin: var(--space) 0 0;
-    padding: 0;
-    list-style: none;
-  }
-  .site {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    min-height: var(--h-field);
-    padding: 0 var(--space) 0 calc(var(--space) * 2);
-    border-radius: var(--radius);
-    font-size: var(--fs-md);
-  }
-  .site:hover {
-    background: var(--hover);
-  }
-  .site-origin {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text);
-  }
-  .site-kind {
-    flex: none;
-    color: var(--muted);
-  }
-  .site-state {
-    flex: none;
-    width: 64px;
-    color: var(--muted);
-  }
-  .site-state.allow {
-    color: var(--text);
-  }
-  .forget {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: var(--h-sm);
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .forget:hover {
-    background: var(--selected);
-    color: var(--text);
   }
 </style>

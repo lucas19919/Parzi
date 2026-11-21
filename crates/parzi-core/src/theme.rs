@@ -57,10 +57,6 @@ pub struct BackgroundTheme {
     /// or "full", the whole window.
     #[serde(default = "d_bg_fill")]
     pub fill: String,
-    /// How cards look over the wallpaper: "clear" (see-through, outlined),
-    /// "glass" (frosted) or "solid" (the panel colour).
-    #[serde(default = "d_bg_cards")]
-    pub cards: String,
     /// How strong the dither over the wallpaper is, 0 (off) to 1.
     #[serde(default = "d_bg_dither")]
     pub dither: f64,
@@ -140,9 +136,6 @@ fn d_bg_y() -> f64 {
 fn d_bg_fill() -> String {
     "band".into()
 }
-fn d_bg_cards() -> String {
-    "clear".into()
-}
 fn d_bg_dither() -> f64 {
     0.25
 }
@@ -183,7 +176,6 @@ impl Default for BackgroundTheme {
             height: d_bg_height(),
             y: d_bg_y(),
             fill: d_bg_fill(),
-            cards: d_bg_cards(),
             dither: d_bg_dither(),
             dither_size: d_bg_dither_size(),
         }
@@ -216,9 +208,6 @@ impl Theme {
         if !matches!(t.background.fill.as_str(), "band" | "full") {
             t.background.fill = d_bg_fill();
         }
-        if !matches!(t.background.cards.as_str(), "clear" | "glass" | "solid") {
-            t.background.cards = d_bg_cards();
-        }
         t.background.dither = if t.background.dither.is_finite() {
             t.background.dither.clamp(0.0, 1.0)
         } else {
@@ -241,7 +230,7 @@ impl Theme {
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
             --bg:{};--text:{};--accent:{};--panel:{};--bg-height:{}%;--bg-y:{}%;\
-            --art-fill:{};--art-cards:{};--dither:{:.3};--dither-size:{}px;}}\n",
+            --art-fill:{};--dither:{:.3};--dither-size:{}px;}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -253,7 +242,6 @@ impl Theme {
             (t.background.height * 100.0).round(),
             (t.background.y * 100.0).round(),
             t.background.fill,
-            t.background.cards,
             t.background.dither * DITHER_MAX_OPACITY,
             t.background.dither_size,
         )
@@ -512,9 +500,6 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     if !sets("fill") {
         theme.background.fill = current.background.fill.clone();
     }
-    if !sets("cards") {
-        theme.background.cards = current.background.cards.clone();
-    }
     if !sets("dither") {
         theme.background.dither = current.background.dither;
     }
@@ -583,9 +568,6 @@ pub struct ThemeChange {
     /// "band" or "full".
     #[serde(default)]
     pub wallpaper: Option<String>,
-    /// "clear", "glass" or "solid".
-    #[serde(default)]
-    pub cards: Option<String>,
     /// Dither strength over the wallpaper: 0 to 100 (percent), or "off".
     #[serde(default)]
     pub dither: Option<String>,
@@ -603,7 +585,6 @@ impl ThemeChange {
             &self.text,
             &self.panel,
             &self.wallpaper,
-            &self.cards,
             &self.dither,
             &self.dither_size,
         ]
@@ -674,7 +655,7 @@ fn dither_px(v: &str) -> Result<u32> {
         .ok_or_else(|| ParziError::Validation(format!("dither_size `{v}` is 1 to 6 pixels")))
 }
 
-/// The look as it is now, in a line or two: the theme, the wallpaper, the cards.
+/// The look as it is now, in a line or two: the theme and the wallpaper.
 pub fn describe() -> Result<String> {
     let t = Theme::load().unwrap_or_default().normalized();
     let packs = list_pack_infos()?;
@@ -690,16 +671,15 @@ pub fn describe() -> Result<String> {
         })
         .collect();
     let wall = if t.background.image.is_empty() {
-        format!("no wallpaper, {} cards", t.background.cards)
+        "no wallpaper".to_string()
     } else {
         format!(
-            "wallpaper shown as a {}, {} cards, dither {:.0}% at {}px",
+            "wallpaper shown as a {}, dither {:.0}% at {}px",
             if t.background.fill == "full" {
                 "full window"
             } else {
                 "band"
             },
-            t.background.cards,
             t.background.dither * 100.0,
             t.background.dither_size
         )
@@ -750,13 +730,6 @@ pub fn change(c: &ThemeChange) -> Result<String> {
         ) {
             return Err(ParziError::Validation(format!(
                 "wallpaper `{v}` is band or full"
-            )));
-        }
-    }
-    if let Some(v) = given(&c.cards) {
-        if !matches!(v.to_lowercase().as_str(), "clear" | "glass" | "solid") {
-            return Err(ParziError::Validation(format!(
-                "cards `{v}` is clear, glass or solid"
             )));
         }
     }
@@ -818,16 +791,6 @@ pub fn change(c: &ThemeChange) -> Result<String> {
             }
         ));
     }
-    if let Some(v) = c.cards.as_deref().filter(|v| !v.trim().is_empty()) {
-        let v = v.trim().to_lowercase();
-        if !matches!(v.as_str(), "clear" | "glass" | "solid") {
-            return Err(ParziError::Validation(format!(
-                "cards `{v}` is clear, glass or solid"
-            )));
-        }
-        said.push(format!("{v} cards"));
-        t.background.cards = v;
-    }
     if let Some(v) = given(&c.dither) {
         let pct = dither_percent(&v)?;
         t.background.dither = pct / 100.0;
@@ -843,7 +806,7 @@ pub fn change(c: &ThemeChange) -> Result<String> {
     }
     t.save()?;
     let mut out = format!("Parzi now has {}.", said.join(", "));
-    // Cards apply everywhere, picture or not; only the fill waits for one.
+    // Only the fill waits for a picture.
     if !t.background.image.is_empty() || c.wallpaper.is_none() {
         return Ok(out);
     }
@@ -1008,7 +971,7 @@ mod css_tests {
         assert!(css.contains("--panel:color-mix(in srgb, var(--text) 6%, var(--bg));"));
         assert!(css.contains("--bg-height:34%;"));
         assert!(css.contains("--bg-y:50%;"));
-        assert!(css.contains("--art-fill:band;--art-cards:clear;"));
+        assert!(css.contains("--art-fill:band;--dither:"));
         assert!(!css.contains("--muted:"));
         assert!(!css.contains("--bg-dim:"));
         assert!(!css.contains("--glass"));
@@ -1141,24 +1104,20 @@ mod default_migration_tests {
     }
 
     #[test]
-    fn the_wallpaper_fill_and_card_look_are_kept_and_checked() {
+    fn the_wallpaper_fill_is_kept_and_checked() {
         let mut t = Theme::default();
         t.background.fill = "full".into();
-        t.background.cards = "glass".into();
-        assert!(t
-            .to_css_vars()
-            .contains("--art-fill:full;--art-cards:glass;"));
+        assert!(t.to_css_vars().contains("--art-fill:full;"));
         t.background.fill = "everywhere".into();
-        t.background.cards = "neon".into();
         assert!(
-            t.to_css_vars()
-                .contains("--art-fill:band;--art-cards:clear;"),
+            t.to_css_vars().contains("--art-fill:band;"),
             "unknown values fall back"
         );
         let old: Theme = toml::from_str("[background]\nimage = \"a.jpg\"\n").unwrap();
-        assert_eq!(
-            (old.background.fill.as_str(), old.background.cards.as_str()),
-            ("band", "clear")
-        );
+        assert_eq!(old.background.fill, "band");
+        // Themes saved while cards had a look of their own still load.
+        let older: Theme =
+            toml::from_str("[background]\nfill = \"full\"\ncards = \"glass\"\n").unwrap();
+        assert_eq!(older.background.fill, "full");
     }
 }

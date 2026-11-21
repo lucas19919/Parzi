@@ -377,7 +377,6 @@ const theme = {
     height: 0.34,
     y: 0.5,
     fill: params.get("fill") === "full" ? "full" : "band",
-    cards: params.get("cards") ?? "clear",
     dither: Number(params.get("dither") ?? 0.25),
     dither_size: Number(params.get("dsize") ?? 1),
   },
@@ -415,11 +414,6 @@ const browserPrefs = {
   devtools: false,
   agentSignIns: false,
   windows: true,
-  sites: [
-    { origin: "https://meet.google.com", kind: "camera", allow: true },
-    { origin: "https://meet.google.com", kind: "microphone", allow: true },
-    { origin: "https://news.example.com", kind: "notifications", allow: false },
-  ],
 };
 
 const mockHosts = [
@@ -548,7 +542,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     ],
   }),
   get_theme: () => theme,
-  get_theme_css: () => `:root{--accent:${theme.colors.accent};--bg:${theme.colors.stage};--text:${theme.colors.text};--art-fill:${theme.background.fill};--art-cards:${theme.background.cards};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
+  get_theme_css: () => `:root{--accent:${theme.colors.accent};--bg:${theme.colors.stage};--text:${theme.colors.text};--art-fill:${theme.background.fill};--dither:${(theme.background.dither * 0.22).toFixed(3)};--dither-size:${theme.background.dither_size}px;}`,
   // Keeps the window's answers to desk calls, for checks to read.
   desk_answer: (a) => {
     const w = window as unknown as { __deskAnswers?: Record<string, unknown> };
@@ -604,16 +598,10 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   pick_text_file: () => ({ path: "C:\\Users\\me\\Desktop\\todo.md", content: "# Todo\n\n- Try reading a file in the side bar\n" }),
   list_files: (a) => ["README.md", "CHANGELOG.md", "ui/src/App.svelte", "ui/src/lib/FilePanel.svelte", "ui/src/lib/Omnibar.svelte", "ui/src/lib/Thread.svelte", "src-tauri/src/files.rs", "crates/parzi-core/src/theme.rs", "docs/releasing.md"].filter((f) => f.toLowerCase().includes(String(a.query ?? "").toLowerCase())),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
-  vault_state: () => ({ status: "missing", email: "" }),
-  adblock_state: () => ({ enabled: true, allowed: false, host: "", supported: true }),
   browser_prefs: () => browserPrefs,
   browser_set_pref: (a) => {
     if (a.name === "devtools") browserPrefs.devtools = !!a.on;
     if (a.name === "agentSignIns") browserPrefs.agentSignIns = !!a.on;
-    return browserPrefs;
-  },
-  browser_forget_site: (a) => {
-    browserPrefs.sites = browserPrefs.sites.filter((s) => !(s.origin === a.origin && (!a.kind || s.kind === a.kind)));
     return browserPrefs;
   },
   onboard_scan: () => scan,
@@ -638,11 +626,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
 const win = (...parts: string[]) => parts.join("\\");
 const note = (tool: string, title: string, file: string, kind = "skill") => ({ source: win("C:", "Users", "dev", `.${tool}`, file), title, kind, bytes: 2048 });
 const scan = {
-  browsers: [
-    { id: "brave", name: "Brave", profile: "Default", label: "Sam Doe", bookmarks: 214, history: true },
-    { id: "brave", name: "Brave", profile: "Profile 3", label: "Work", bookmarks: 38, history: true },
-    { id: "chrome", name: "Google Chrome", profile: "Default", label: "Person 1", bookmarks: 1, history: false },
-  ],
   tools: [
     {
       id: "claude",

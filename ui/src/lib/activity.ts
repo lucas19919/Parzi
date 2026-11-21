@@ -35,7 +35,7 @@ export function trackActivity(e: UiEvent) {
   else if (e.kind === "done" || e.kind === "error" || e.kind === "paused") stage(e.session, null);
 }
 
-export type SessionMark = "running" | "waiting";
+export type SessionMark = "running" | "waiting" | "done" | "failed";
 export const sessionMarks = writable<Record<string, SessionMark>>({});
 
 export function watchActivity(): () => void {

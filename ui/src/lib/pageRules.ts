@@ -1,39 +1,3 @@
-const PERMISSION_TEXT: Record<string, string> = {
-  camera: "use your camera",
-  microphone: "use your microphone",
-  geolocation: "know your location",
-  notifications: "show notifications",
-  sensors: "use your motion sensors",
-  clipboard: "see text and images you copied",
-  downloads: "download several files",
-  files: "edit files on your computer",
-  fonts: "use the fonts on your computer",
-  midi: "control your MIDI devices",
-  windows: "open and place windows on your screens",
-};
-
-const PERMISSION_NAME: Record<string, string> = {
-  camera: "Camera",
-  microphone: "Microphone",
-  geolocation: "Location",
-  notifications: "Notifications",
-  sensors: "Motion sensors",
-  clipboard: "Clipboard",
-  downloads: "Several downloads",
-  files: "Files",
-  fonts: "Fonts",
-  midi: "MIDI devices",
-  windows: "Window placement",
-};
-
-export function permissionText(kind: string): string {
-  return PERMISSION_TEXT[kind] ?? "use a browser feature";
-}
-
-export function permissionName(kind: string): string {
-  return PERMISSION_NAME[kind] ?? kind;
-}
-
 const APPS: Record<string, string> = {
   mailto: "your email app",
   tel: "your phone app",
@@ -110,17 +74,6 @@ export function rememberIcon(icons: Record<string, string>, pageUrl: string, ico
   if (!origin || !usable || icons[origin] === icon) return null;
   const rest = Object.entries(icons).filter(([o]) => o !== origin);
   return Object.fromEntries([...rest.slice(Math.max(0, rest.length - max + 1)), [origin, icon]]);
-}
-
-export interface DownloadLike {
-  state: "progress" | "done" | "failed" | "canceled";
-  received: number;
-  total: number;
-}
-
-export function downloadShare(d: DownloadLike): number | undefined {
-  if (d.state !== "progress" || d.total <= 0) return undefined;
-  return Math.max(0, Math.min(1, d.received / d.total));
 }
 
 export interface Box {

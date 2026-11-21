@@ -163,8 +163,6 @@ export interface Theme {
     y: number;
     /** Where the wallpaper shows on Home. */
     fill?: "band" | "full";
-    /** How cards look over it. */
-    cards?: "clear" | "glass" | "solid";
     /** Dither over the wallpaper, 0 (off) to 1. */
     dither?: number;
     /** Dither dot size in pixels, 1 to 6. */
@@ -308,7 +306,6 @@ export const api = {
   browserFocus: (tab: string) => invoke<void>("browser_focus", { tab }),
   browserRecover: (tab: string) => invoke<void>("browser_recover", { tab }),
   browserExternal: (id: string, open: boolean) => invoke<void>("browser_external", { id, open }),
-  browserPermission: (id: string, allow: boolean) => invoke<void>("browser_permission", { id, allow }),
   browserSnapshot: (tab: string) => invoke<string>("browser_snapshot", { tab }),
   searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
@@ -401,15 +398,6 @@ interface BrainContext {
   tokens: number;
 }
 
-interface BrowserSource {
-  id: string;
-  name: string;
-  profile: string;
-  label: string;
-  bookmarks: number;
-  history: boolean;
-}
-
 interface NoteCandidate {
   source: string;
   title: string;
@@ -434,14 +422,8 @@ interface FolderCandidate {
 }
 
 export interface Scan {
-  browsers: BrowserSource[];
   tools: ToolSource[];
   folders: FolderCandidate[];
-}
-
-interface BrowserData {
-  bookmarks: { title: string; url: string; folder: string }[];
-  history: { url: string; title: string; visits: number; last_visit: number }[];
 }
 
 interface ImportReport {
@@ -464,7 +446,6 @@ export const brain = {
 
 export const onboard = {
   scan: () => invoke<Scan>("onboard_scan"),
-  browser: (id: string, profile: string) => invoke<BrowserData>("onboard_browser", { id, profile }),
   importTools: (notes: string[], folders: string[]) => invoke<ImportReport>("onboard_import", { notes, folders }),
   install: (provider: string) => invoke<void>("agent_install", { provider }),
   login: (provider: string) => invoke<boolean>("agent_login", { provider }),
@@ -479,7 +460,6 @@ export interface PageEvent {
   canGoForward?: boolean;
   fullscreen?: boolean;
   zoom?: number;
-  blocked?: number;
   bg?: string;
   ok?: boolean;
   favicon?: string;
@@ -487,92 +467,27 @@ export interface PageEvent {
   popupBlocked?: string;
 }
 
-export interface AdblockState {
-  enabled: boolean;
-  allowed: boolean;
-  host: string;
-  supported?: boolean;
-}
-
 export interface BrowserAsk {
-  kind: "permission" | "external";
+  kind: "external";
   id: string;
   tab: string;
-  origin?: string;
-  permission?: string;
   url?: string;
-}
-
-export interface SitePermission {
-  origin: string;
-  kind: string;
-  allow: boolean;
 }
 
 export interface BrowserPrefs {
   devtools: boolean;
   agentSignIns: boolean;
-  sites: SitePermission[];
   windows: boolean;
 }
 
 export const browserPrefs = {
   get: () => invoke<BrowserPrefs>("browser_prefs"),
   set: (name: "devtools" | "agentSignIns", on: boolean) => invoke<BrowserPrefs>("browser_set_pref", { name, on }),
-  forget: (origin: string, kind: string | null = null) => invoke<BrowserPrefs>("browser_forget_site", { origin, kind }),
 };
-
-export interface Download {
-  id: string;
-  tab: string;
-  url: string;
-  name: string;
-  path: string;
-  received: number;
-  total: number;
-  state: "progress" | "done" | "failed" | "canceled";
-  started: number;
-}
-
-export const downloads = {
-  reveal: (id: string) => invoke<void>("browser_download_reveal", { id }),
-};
-
-export function onDownload(cb: (d: Download) => void) {
-  return listen<Download>("parzi://download", (ev) => cb(ev.payload));
-}
 
 export function onBrowserAsk(cb: (a: BrowserAsk) => void) {
   return listen<BrowserAsk>("parzi://browser-ask", (ev) => cb(ev.payload));
 }
-
-export interface VaultState {
-  status: "missing" | "unauthenticated" | "locked" | "unlocked" | string;
-  email: string;
-}
-
-export interface VaultLogin {
-  id: string;
-  name: string;
-  username: string;
-}
-
-export const vault = {
-  state: () => invoke<VaultState>("vault_state"),
-  install: () => invoke<void>("vault_install"),
-  unlock: () => invoke<VaultState>("vault_unlock"),
-  lock: () => invoke<VaultState>("vault_lock"),
-  logins: (tab: string) => invoke<{ status: string; host: string; items: VaultLogin[] }>("vault_logins", { tab }),
-  fill: (tab: string, id: string) => invoke<string>("vault_fill", { tab, id }),
-};
-
-export const BITWARDEN_INSTALL = "winget install Bitwarden.CLI";
-
-export const adblock = {
-  state: (url: string) => invoke<AdblockState>("adblock_state", { url }),
-  enable: (on: boolean) => invoke<AdblockState>("adblock_enable", { on }),
-  site: (url: string, allow: boolean) => invoke<AdblockState>("adblock_site", { url, allow }),
-};
 
 export function onBrowserOpen(cb: (e: { tab: string; url: string }) => void) {
   return listen<{ tab: string; url: string }>("parzi://browser-open", (ev) => cb(ev.payload));

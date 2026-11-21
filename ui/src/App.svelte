@@ -8,12 +8,12 @@
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onResync, onRunEvent,
     type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
-  import { deskAnswer, downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
+  import { deskAnswer, onBrowserAsk } from "./lib/api";
   import { defineActions, describeActions, runAction, type AppAction } from "./lib/actions";
   import { click as clickControl, screen as readScreen, type as typeControl } from "./lib/appScreen";
   import { addPrompt, dropTabPrompts } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
-  import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
+  import { popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
@@ -41,12 +41,11 @@
   import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { splitQuotes } from "./lib/oldQuotes";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
-  import { freshNotice, notifyLevel, notifySounds } from "./lib/notifyPrefs";
+  import { freshNotice } from "./lib/notifyPrefs";
   import { effortsFor, nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
-  import { addNeedsNotification, addNotification, dropNotification, dropStaleNeeds, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
@@ -88,8 +87,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let approvals: Approval[] = [];
   let questions: Question[] = [];
   let requests: AgentRequest[] = [];
+  /** How a session's last run ended, kept until someone opens it. */
+  let unseen: Record<string, SessionMark> = {};
   $: sessionMarks.set(
     Object.fromEntries<SessionMark>([
+      ...Object.entries(unseen),
       ...[...running].map((id) => [id, "running"] as const),
       ...[...approvals, ...questions, ...requests].map((x) => [x.session, "waiting"] as const),
     ]),
@@ -357,8 +359,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
-  // Popups live on <body>, outside .shell: this lets them match the glass.
-  $: if (typeof document !== "undefined") document.documentElement.toggleAttribute("data-over-art", overArt);
   $: onHome = showWallpaper;
 
   /* For a moment after the window comes to or leaves Home (or Home goes
@@ -475,7 +475,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function openRemoteSetup() {
-    setupStep = 3;
+    setupStep = 2;
     setupServer = true;
     setupOpen = true;
   }
@@ -561,7 +561,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     // so a late reply must also check the tab is still the one in front.
     const at = activeId;
     shown = id;
-    markSessionRead(id);
+    if (unseen[id]) unseen = Object.fromEntries(Object.entries(unseen).filter(([k]) => k !== id));
     clearLive();
     const cached = threadCache.get(id);
     if (cached) {
@@ -867,22 +867,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     patchTab(id, { crashed: undefined, loading: false });
   }
 
-  function onDownloadEvent(d: Download) {
-    const key = `download-${d.id}`;
-    if (d.state === "progress") {
-      keyedToast(key, `Downloading ${d.name}`, { progress: downloadShare(d), ms: 0 });
-    } else if (d.state === "done") {
-      keyedToast(key, `Downloaded ${d.name}`, {
-        ms: 8000,
-        action: { label: "Show in folder", run: () => void downloadApi.reveal(d.id).catch(toastError) },
-      });
-    } else if (d.state === "failed") {
-      keyedToast(key, `Download failed: ${d.name}`, { err: true, ms: 6000 });
-    } else {
-      keyedToast(key, null);
-    }
-  }
-
   function navigatePage(url: string) {
     const id = tab.id;
     patchTab(id, { url, title: hostOf(url) });
@@ -898,7 +882,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (e.loading !== undefined) patch.loading = e.loading;
     if (e.canGoBack !== undefined) patch.canGoBack = e.canGoBack;
     if (e.canGoForward !== undefined) patch.canGoForward = e.canGoForward;
-    if (e.blocked !== undefined) patch.blocked = e.blocked;
     if (e.zoom !== undefined) patch.zoom = Math.abs(e.zoom - 1) < 0.005 ? undefined : e.zoom;
     if (e.bg) patch.bg = e.bg;
     if (e.crashed) patch.crashed = e.crashed;
@@ -1602,36 +1585,30 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
 
-  /** Tells the person about an agent they are not looking at, as much as
-   *  Settings, General, Notifications allows:
-   *  - "needs": an approval, question or request. One card line per session
-   *    (a newer ask replaces an older unread one), a toast that goes once
+  /** Tells the person about an agent they are not looking at:
+   *  - "needs": an approval, question or request. A toast that goes once
    *    it is answered, and a short tone if they are elsewhere.
-   *  - "done": a run finished. A quiet card line; a toast and tone only on
-   *    "all", and the tone only while the window is in the background.
-   *  - "problem": an error or a spending pause. A card line and a toast.
+   *  - "done": a run finished. Only its tab says so.
+   *  - "problem": an error or a spending pause. A toast.
    *  A subagent's finish or error is news for the agent that started it,
-   *  not the person, unless they asked for everything. A toast never shows
-   *  while the window is in the background: it would be gone before they
-   *  look, and the card keeps it. */
-  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; news: "needs" | "done" | "problem" }) {
+   *  not the person. A toast never shows while the window is in the
+   *  background: it would be gone before they look, and the tab keeps it. */
+  function announce(session: string, what: string, opts: { key?: string; news: "needs" | "done" | "problem" }) {
     const focused = document.hasFocus();
     if (session === shown && tab.kind === "session" && focused) return;
-    const level = $notifyLevel;
     const child = threads.some((t) => t.id === session && t.parent_id);
-    if (child && opts.news !== "needs" && level !== "all") return;
-    const title = titleOf(session);
-    const key = opts.key ?? newsKey(session);
-    const body = what[0].toUpperCase() + what.slice(1);
-    if (opts.news === "needs") addNeedsNotification({ title, body, kind, sessionId: session, key });
-    else addNotification({ title, body, kind, sessionId: session, key });
-    if (level === "off") return;
-    const toastIt = level === "all" || opts.news !== "done";
-    // The card shows it when the column is open; a toast would say it twice.
-    if (toastIt && focused && !infoShown) keyedToast(key, `${title} ${what}`, { session, ms: opts.news === "needs" ? 10000 : 6000 });
-    if (!$notifySounds) return;
+    if (child && opts.news !== "needs") return;
+    if (opts.news === "done") return;
+    const key = opts.key ?? `news:${session}`;
+    // The side column lists what is waiting; a toast would say it twice.
+    if (focused && !infoShown) keyedToast(key, `${titleOf(session)} ${what}`, { session, ms: opts.news === "needs" ? 10000 : 6000 });
     if (opts.news === "needs") chime(false);
-    else if (level === "all" && !focused) chime(opts.news === "done");
+  }
+
+  /** Marks a run's end on its tab until the session is opened. */
+  function markEnded(session: string, mark: SessionMark) {
+    if (session === shown && tab.kind === "session") return;
+    unseen = { ...unseen, [session]: mark };
   }
 
   function settle(key: string) {
@@ -1639,8 +1616,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     approvals = approvals.filter((a) => a.key !== key);
     questions = questions.filter((q) => q.key !== key);
     requests = requests.filter((r) => r.key !== key);
-    dropNotification(key);
-    dropStaleNeeds(new Set([...approvals, ...questions, ...requests].map((x) => x.session)));
   }
 
   const stopped = (error: string) => {
@@ -1652,19 +1627,19 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (e.kind === "approval") {
       const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
-      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, news: "needs" });
+      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options, details: e.details, multi: e.multi }];
-      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, news: "needs" });
+      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "request") {
       const fresh = !requests.some((r) => r.key === e.key);
       requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
-      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, news: "needs" });
+      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "expired") {
@@ -1693,11 +1668,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
       if (next) void sendHeld(e.session);
       else if (hasQueued) scheduleDrain(e.session);
-      const isChild = threads.some((t) => t.id === e.session && t.parent_id);
-      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { news: "problem" });
-      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { news: "done" });
-      // A stop someone asked for (the person, or a parent agent) is not an error.
-      else if (!stopped(e.error)) announce(e.session, "stopped with an error", "error", { news: "problem" });
+      if (e.kind === "paused") {
+        announce(e.session, "paused at its spending limit", { news: "problem" });
+        markEnded(e.session, "waiting");
+      } else if (e.kind === "done") {
+        announce(e.session, "finished", { news: "done" });
+        markEnded(e.session, "done");
+      } else if (!stopped(e.error)) {
+        // A stop someone asked for (the person, or a parent agent) is not an error.
+        announce(e.session, "stopped with an error", { news: "problem" });
+        markEnded(e.session, "failed");
+      }
       return;
     }
     // The working agent formatted a message for display (session.format_message).
@@ -1755,7 +1736,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (e.kind === "context") {
       context = { used: e.used, limit: e.limit };
     } else if (e.kind === "notice") {
-      if ($notifyLevel !== "off" && freshNotice(e.session, e.text)) toast(e.text);
+      if (freshNotice(e.session, e.text)) toast(e.text);
     }
   }
 
@@ -1832,13 +1813,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         .catch((e) => toast(`Couldn't load the new theme: ${e}`, true));
     }
     else if (cmd.op === "notify" && cmd.text) {
-      // An agent's own heads-up: at most one a minute per session, quiet on
-      // "off", and no tone while the person is looking at that session.
+      // An agent's own heads-up: at most one a minute per session, and no
+      // tone while the person is looking at that session.
       const sid = cmd.session ?? "";
-      if ($notifyLevel !== "off" && freshNotice(`notify:${sid}`, "", Date.now(), 60_000)) {
+      if (freshNotice(`notify:${sid}`, "", Date.now(), 60_000)) {
         notify(cmd.text, sid);
         const watching = document.hasFocus() && sid === shown && tab.kind === "session";
-        if ($notifySounds && !watching) chime(true);
+        if (!watching) chime(true);
       }
     } else if (cmd.op === "approval" && cmd.key) {
       approvals = approvals.filter((a) => a.key !== cmd.key);
@@ -1940,7 +1921,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       { id: "composer.draft", title: "Write text into the composer for the person to send", args: [{ name: "text", type: "string", required: true }], run: (a) => { comp.input = String(a.text); comp = comp; return "The text is in the composer; the person sends it."; } },
       { id: "appearance.theme", title: "Apply a theme pack", args: [{ name: "pack", type: "string", required: true }], run: async (a) => { const packs = await api.listPackInfos(); const p = packs.find((x) => x.name.toLowerCase() === String(a.pack).toLowerCase()); if (!p) throw new Error(`No theme "${a.pack}"; the themes are ${packs.map((x) => x.name).join(", ")}.`); applyThemeCss(await api.applyPack(p.name)); await refreshBackground(); document.dispatchEvent(new CustomEvent("parzi:theme")); return `Applied the ${p.name} theme.`; } },
       { id: "appearance.wallpaper", title: "Show the Home wallpaper as a band or the full window", args: [{ name: "show", type: "string", required: true, choices: ["band", "full"] }], run: async (a) => { await theme((t) => (t.background.fill = a.show === "full" ? "full" : "band")); return `The wallpaper shows as ${a.show === "full" ? "the full window" : "a band"}.`; } },
-      { id: "appearance.cards", title: "Set how cards look", args: [{ name: "look", type: "string", required: true, choices: ["clear", "glass", "solid"] }], run: async (a) => { await theme((t) => (t.background.cards = a.look as "clear" | "glass" | "solid")); return `Cards are ${a.look}.`; } },
     ];
   }
 
@@ -1977,7 +1957,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const unOpen = onBrowserOpen((e) => openFromPage(e.tab, e.url));
     const unKey = onBrowserKey((name) => void shortcut(name));
     const unAsk = onBrowserAsk((a) => addPrompt({ ...a }));
-    const unDownload = onDownload(onDownloadEvent);
     const unActivity = watchActivity();
     const unActions = defineActions(appActions());
     selectTab(activeId);
@@ -1985,11 +1964,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void warmPages();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
-    const onDefaultMode = (e: Event) => {
-      policy = (e as CustomEvent<string>).detail ?? "";
-      permission = permissionFor(policy);
-    };
-    document.addEventListener("parzi:default-mode", onDefaultMode);
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
       if (!url) return;
@@ -2070,7 +2044,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       unActivity();
       unActions();
       unClear();
-      document.removeEventListener("parzi:default-mode", onDefaultMode);
       document.removeEventListener("parzi:open-page", onOpenPage);
       document.removeEventListener("parzi:open-artifact", onOpenArtifact);
       document.removeEventListener("parzi:pin-note", onPinNote);
@@ -2079,7 +2052,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       unDesk.then((f) => f()).catch(() => {});
       unResync.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
-      for (const un of [unPage, unOpen, unKey, unAsk, unDownload]) un.then((f) => f()).catch(() => {});
+      for (const un of [unPage, unOpen, unKey, unAsk]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
     };
   });
@@ -2107,7 +2080,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       panelOpen={infoShown || pageInfoShown}
       panelCount={familyActive}
       on:panel={() => toggleInfo()}
-      on:openSession={(e) => openSession(e.detail.id)}
     />
   {/if}
 
@@ -2162,10 +2134,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           costUsd={0}
           provider={sideMeta?.model?.split("/")[0] ?? ""}
           on:openSession={(e) => openSession(e.detail.id)}
-          on:openUrl={(e) => openPage(e.detail.url)}
           on:compact={compact}
-          reading={readerShown && fileDoc ? fileDoc.id : ""}
-          on:openFile={(e) => putFile(e.detail)}
         />
       </div>
     {:else}
@@ -2276,10 +2245,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             costUsd={meta?.cost_usd ?? 0}
             provider={meta?.model.split("/")[0] ?? ""}
             on:openSession={(e) => openSession(e.detail.id)}
-            on:openUrl={(e) => openPage(e.detail.url)}
             on:compact={compact}
-              reading={readerShown && fileDoc ? fileDoc.id : ""}
-            on:openFile={(e) => putFile(e.detail)}
           />
         </div>
       {/if}
@@ -2363,11 +2329,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           }}>{t.text}</button
         >
       {:else}
-        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: DUR }}>
+        <div class="toast" class:err={t.err} class:acts={!!t.action} transition:fade={{ duration: DUR }}>
           <span class="toast-text">{t.text}</span>
-          {#if t.progress !== undefined}
-            <span class="toast-bar" aria-hidden="true"><span style:width="{Math.round(t.progress * 100)}%" /></span>
-          {/if}
           {#if t.action}
             {@const act = t.action}
             <button
@@ -2398,7 +2361,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* The card look (clear, glass or solid) is one set of values for all of
+  /* The card look is one set of values for all of
      Parzi (theme.css, --surface and --blur); on Home it
      eases as it changes. */
   .on-home :global(:is(.info .card, .reader .card, .ob .box)) {
@@ -2421,11 +2384,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   /* Light theme, picture filling the window: Home is a dark scene (the
      theme marks data-scene). Over the picture the theme's colours swap,
      its text colour the ground and its ground the text, so the title bar
-     and the line above the composer read as on a dark theme. Glass and
-     solid cards and the composer keep the light theme's own colours: light
-     frosted glass with dark text, like light widgets on a dark wallpaper.
-     The open tab and toggles that are on are the same light glass. Clear
-     cards have no surface of their own, so they stay dark. */
+     and the line above the composer read as on a dark theme. Cards and the
+     composer keep the light theme's own colours: light frosted glass with
+     dark text, like light widgets on a dark wallpaper. The open tab and
+     toggles that are on are the same light glass. */
   :global(html[data-scene="dark"]) .over-art {
     --bg: var(--scene-bg);
     --text: var(--scene-text);
@@ -2693,22 +2655,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .toast-bar {
-    display: block;
-    flex: none;
-    width: 64px;
-    height: 4px;
-    margin-left: calc(var(--space) * 2);
-    border-radius: var(--radius-sm);
-    background: var(--line);
-    overflow: hidden;
-  }
-  .toast-bar span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    transition: width 200ms var(--ease-out);
   }
   .toast-act {
     flex: none;

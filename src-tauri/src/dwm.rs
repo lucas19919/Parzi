@@ -1,53 +1,28 @@
 #![allow(unsafe_code, reason = "Win32 window and WebView2 calls")]
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2AcceleratorKeyPressedEventArgs, ICoreWebView2Controller,
-    ICoreWebView2Deferral, ICoreWebView2DownloadOperation, ICoreWebView2Environment,
-    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
-    ICoreWebView2_15, ICoreWebView2_19, ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_4,
-    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG, COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON,
-    COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED, COREWEBVIEW2_DOWNLOAD_STATE,
-    COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
-    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
-    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, COREWEBVIEW2_PERMISSION_KIND,
-    COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
-    COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
-    COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
-    COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
-    COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
-    COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS, COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
-    COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
-    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_PHYSICAL_KEY_STATUS,
-    COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+    ICoreWebView2Environment, ICoreWebView2_15, ICoreWebView2_19, ICoreWebView2_3,
+    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, COREWEBVIEW2_PROCESS_FAILED_KIND,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
     COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
     COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_WEBSOCKET,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
 };
 use webview2_com::{
     take_pwstr, AcceleratorKeyPressedEventHandler,
-    AddScriptToExecuteOnDocumentCreatedCompletedHandler, BytesReceivedChangedEventHandler,
-    CapturePreviewCompletedHandler, ContainsFullScreenElementChangedEventHandler,
-    DOMContentLoadedEventHandler, DownloadStartingEventHandler, ExecuteScriptCompletedHandler,
+    AddScriptToExecuteOnDocumentCreatedCompletedHandler, CapturePreviewCompletedHandler,
+    ContainsFullScreenElementChangedEventHandler, ExecuteScriptCompletedHandler,
     FaviconChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
     NavigationCompletedEventHandler, NavigationStartingEventHandler,
-    NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler,
-    StateChangedEventHandler, TrySuspendCompletedHandler, WebMessageReceivedEventHandler,
-    WebResourceRequestedEventHandler, WindowCloseRequestedEventHandler,
+    NewWindowRequestedEventHandler, ProcessFailedEventHandler, TrySuspendCompletedHandler,
+    WebMessageReceivedEventHandler, WindowCloseRequestedEventHandler,
     ZoomFactorChangedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
@@ -63,23 +38,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_SHOWWINDOW,
 };
 
-use crate::downloads::State as DownloadState;
-
 static PAGE_ENV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
-static NEXT: AtomicU64 = AtomicU64::new(1);
-
-struct Asked {
-    args: ICoreWebView2PermissionRequestedEventArgs,
-    deferral: ICoreWebView2Deferral,
-    tab: String,
-}
 
 thread_local! {
-    static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
-    // Each running download stays referenced here until it ends, so its
-    // progress and finish events never depend on WebView2 keeping it alone.
-    static DOWNLOADS: RefCell<HashMap<String, ICoreWebView2DownloadOperation>> =
-        RefCell::new(HashMap::new());
     static NEW_WINDOW: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
 }
 
@@ -217,22 +178,6 @@ pub fn steer_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, action: String) -> 
     .map_err(|e| e.to_string())
 }
 
-pub fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<String, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    wv.with_webview(move |platform| {
-        let url = unsafe {
-            platform.controller().CoreWebView2().and_then(|core| {
-                let mut url = PWSTR::null();
-                core.Source(&raw mut url).map(|()| take_pwstr(url))
-            })
-        };
-        let _ = tx.send(url.map_err(|e| e.to_string()));
-    })
-    .map_err(|e| e.to_string())?;
-    rx.recv_timeout(Duration::from_secs(2))
-        .map_err(|_| "the page did not answer".to_string())?
-}
-
 unsafe fn resume(core: &ICoreWebView2) {
     if let Ok(core) = core.cast::<ICoreWebView2_3>() {
         let _ = core.Resume();
@@ -354,34 +299,6 @@ pub fn set_devtools<R: tauri::Runtime>(wv: &tauri::Webview<R>, on: bool) {
     });
 }
 
-pub fn answer_permission(id: &str, allow: bool) {
-    let Some(asked) = ASKED.with(|m| m.borrow_mut().remove(id)) else {
-        return;
-    };
-    let state = if allow {
-        COREWEBVIEW2_PERMISSION_STATE_ALLOW
-    } else {
-        COREWEBVIEW2_PERMISSION_STATE_DENY
-    };
-    unsafe {
-        let _ = asked.args.SetState(state);
-        let _ = asked.deferral.Complete();
-    }
-}
-
-pub fn drop_permissions(tab: &str) {
-    let ids: Vec<String> = ASKED.with(|m| {
-        m.borrow()
-            .iter()
-            .filter(|(_, a)| a.tab == tab)
-            .map(|(id, _)| id.clone())
-            .collect()
-    });
-    for id in ids {
-        answer_permission(&id, false);
-    }
-}
-
 pub fn user_opened(url: &str) -> bool {
     NEW_WINDOW.with(|slot| match slot.borrow_mut().take() {
         Some((asked, user)) if crate::browser::same_page(&asked, url) => user,
@@ -400,31 +317,9 @@ pub enum PageSignal {
     Fullscreen(bool),
     Zoom(f64),
     Key(&'static str),
-    Blocked(u32),
     Background(String),
     Crashed(&'static str),
     Favicon(String),
-    Permission {
-        id: String,
-        origin: String,
-        kind: &'static str,
-    },
-    DownloadStarted {
-        id: String,
-        url: String,
-        path: PathBuf,
-        total: u64,
-    },
-    DownloadProgress {
-        id: String,
-        received: u64,
-        total: u64,
-    },
-    DownloadFinished {
-        id: String,
-        state: DownloadState,
-        path: String,
-    },
     CloseRequested,
 }
 
@@ -435,14 +330,10 @@ pub enum Role {
 }
 
 pub struct Hook {
-    pub tab: String,
-    pub seed: String,
     pub role: Role,
-    pub downloads: Option<PathBuf>,
     pub devtools: bool,
 }
 
-const BLOCKED_EVERY: Duration = Duration::from_millis(400);
 const KEY_CLAIM: Duration = Duration::from_millis(1500);
 const KEY_SCRIPT: &str = r#"(() => {
   if (window.top !== window || window.__parziKeys) return;
@@ -518,10 +409,6 @@ const ANY_NAV: u64 = u64::MAX;
 
 struct Nav {
     id: Cell<Option<u64>>,
-    top: RefCell<String>,
-    filtering: Cell<bool>,
-    blocked: Cell<u32>,
-    exceptions: RefCell<Option<Rc<HashSet<String>>>>,
 }
 
 #[allow(
@@ -535,10 +422,6 @@ fn hook_page(
 ) -> windows::core::Result<()> {
     let nav = Rc::new(Nav {
         id: Cell::new(Some(ANY_NAV)),
-        top: RefCell::new(hook.seed.clone()),
-        filtering: Cell::new(crate::adblock::filtering(&hook.seed)),
-        blocked: Cell::new(0),
-        exceptions: RefCell::new(None),
     });
     let page = hook.role == Role::Page;
     let mut token = 0i64;
@@ -553,16 +436,9 @@ fn hook_page(
                 let Some(args) = args else { return Ok(()) };
                 let mut cancel = BOOL::default();
                 let mut id = 0u64;
-                let mut uri = PWSTR::null();
                 args.Cancel(&raw mut cancel)?;
                 args.NavigationId(&raw mut id)?;
-                args.Uri(&raw mut uri)?;
-                let uri = take_pwstr(uri);
                 if !cancel.as_bool() {
-                    n.filtering.set(crate::adblock::filtering(&uri));
-                    n.exceptions.borrow_mut().take();
-                    *n.top.borrow_mut() = uri;
-                    n.blocked.set(0);
                     n.id.set(Some(id));
                     if page {
                         s(PageSignal::Loading);
@@ -586,14 +462,10 @@ fn hook_page(
                 }
                 n.id.set(None);
                 let Some(core) = core else { return Ok(()) };
-                if let Some(exceptions) = n.exceptions.borrow_mut().take() {
-                    hide_generic(&core, exceptions);
-                }
                 if !page {
                     return Ok(());
                 }
                 s(loaded(&core, ok.as_bool()));
-                s(PageSignal::Blocked(n.blocked.get()));
                 let _ = core.ExecuteScript(
                     &HSTRING::from(KEY_SCRIPT),
                     &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
@@ -612,27 +484,6 @@ fn hook_page(
             })),
             &raw mut token,
         )?;
-        let n = nav.clone();
-        core.cast::<ICoreWebView2_2>()?.add_DOMContentLoaded(
-            &DOMContentLoadedEventHandler::create(Box::new(move |core, _| {
-                if let (true, Some(core)) = (n.filtering.get(), core) {
-                    let top = n.top.borrow().clone();
-                    if let Some(found) = crate::adblock::cosmetic(&top) {
-                        inject_css(&core, &found.css);
-                        if found.generic {
-                            let exceptions = Rc::new(found.exceptions);
-                            *n.exceptions.borrow_mut() = Some(exceptions.clone());
-                            hide_generic(&core, exceptions);
-                        }
-                    }
-                }
-                Ok(())
-            })),
-            &raw mut token,
-        )?;
-        hook_blocker(&core, signal.clone(), nav.clone())?;
-        hook_downloads(&core, signal.clone(), hook.downloads.clone())?;
-        hook_permissions(&core, signal.clone(), hook.tab.clone())?;
         core.add_NewWindowRequested(
             &NewWindowRequestedEventHandler::create(Box::new(|_, args| {
                 let Some(args) = args else { return Ok(()) };
@@ -802,282 +653,6 @@ unsafe fn favicon(core: &ICoreWebView2_15, signal: Rc<dyn Fn(PageSignal)>) {
             Ok(())
         })),
     );
-}
-
-unsafe fn inject_css(core: &ICoreWebView2, css: &str) {
-    if css.is_empty() {
-        return;
-    }
-    let Ok(css) = serde_json::to_string(css) else {
-        return;
-    };
-    let script = format!(
-        "(() => {{ const css = {css}; try {{ const sheet = new CSSStyleSheet(); sheet.replaceSync(css); \
-         document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]; }} catch {{ \
-         const s = document.createElement('style'); s.textContent = css; (document.head || document.documentElement).appendChild(s); }} }})()"
-    );
-    let _ = core.ExecuteScript(
-        &HSTRING::from(script),
-        &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
-    );
-}
-
-const CLASS_ID_SCRIPT: &str = "(() => { const c = new Set(), i = new Set(); \
-  for (const e of document.querySelectorAll('[class],[id]')) { if (c.size + i.size > 4000) break; \
-  if (e.id) i.add(e.id); for (const k of e.classList) c.add(k); } return [[...c], [...i]]; })()";
-
-unsafe fn hide_generic(core: &ICoreWebView2, exceptions: Rc<HashSet<String>>) {
-    let target = core.clone();
-    let _ = core.ExecuteScript(
-        &HSTRING::from(CLASS_ID_SCRIPT),
-        &ExecuteScriptCompletedHandler::create(Box::new(move |result, json| {
-            if result.is_err() {
-                return Ok(());
-            }
-            let Ok((classes, ids)) = serde_json::from_str::<(Vec<String>, Vec<String>)>(&json)
-            else {
-                return Ok(());
-            };
-            inject_css(
-                &target,
-                &crate::adblock::class_id_css(&classes, &ids, &exceptions),
-            );
-            Ok(())
-        })),
-    );
-}
-
-fn hook_blocker(
-    core: &ICoreWebView2,
-    signal: Rc<dyn Fn(PageSignal)>,
-    nav: Rc<Nav>,
-) -> windows::core::Result<()> {
-    let mut token = 0i64;
-    unsafe {
-        let env = core.cast::<ICoreWebView2_2>()?.Environment()?;
-        for filter in [w!("http://*"), w!("https://*"), w!("ws://*"), w!("wss://*")] {
-            core.AddWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?;
-        }
-        let last = Rc::new(Cell::new(Instant::now()));
-        core.add_WebResourceRequested(
-            &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
-                if !nav.filtering.get() || !crate::adblock::enabled() {
-                    return Ok(());
-                }
-                let Some(args) = args else { return Ok(()) };
-                let mut uri = PWSTR::null();
-                let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
-                args.Request()?.Uri(&raw mut uri)?;
-                args.ResourceContext(&raw mut context)?;
-                let uri = take_pwstr(uri);
-                let block = {
-                    let source = nav.top.borrow();
-                    resource_kind(context, &uri, &source)
-                        .is_some_and(|kind| crate::adblock::block_request(&uri, &source, kind))
-                };
-                if !block {
-                    return Ok(());
-                }
-                let response =
-                    env.CreateWebResourceResponse(None::<&IStream>, 403, w!("Blocked"), w!(""))?;
-                args.SetResponse(&response)?;
-                nav.blocked.set(nav.blocked.get().saturating_add(1));
-                if last.get().elapsed() >= BLOCKED_EVERY {
-                    last.set(Instant::now());
-                    signal(PageSignal::Blocked(nav.blocked.get()));
-                }
-                Ok(())
-            })),
-            &raw mut token,
-        )?;
-    }
-    Ok(())
-}
-
-fn hook_downloads(
-    core: &ICoreWebView2,
-    signal: Rc<dyn Fn(PageSignal)>,
-    dir: Option<PathBuf>,
-) -> windows::core::Result<()> {
-    let mut token = 0i64;
-    unsafe {
-        core.cast::<ICoreWebView2_4>()?.add_DownloadStarting(
-            &DownloadStartingEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else { return Ok(()) };
-                let op = args.DownloadOperation()?;
-                let mut suggested = PWSTR::null();
-                args.ResultFilePath(&raw mut suggested)?;
-                let suggested = PathBuf::from(take_pwstr(suggested));
-                let name = suggested
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let folder = dir
-                    .clone()
-                    .or_else(|| suggested.parent().map(Path::to_path_buf));
-                let Some(folder) = folder else { return Ok(()) };
-                let path = crate::downloads::target(&folder, &name);
-                args.SetResultFilePath(&HSTRING::from(path.as_os_str()))?;
-                args.SetHandled(true)?;
-                let mut uri = PWSTR::null();
-                op.Uri(&raw mut uri)?;
-                let mut total = 0i64;
-                let _ = op.TotalBytesToReceive(&raw mut total);
-                let id = crate::downloads::new_id();
-                signal(PageSignal::DownloadStarted {
-                    id: id.clone(),
-                    url: take_pwstr(uri),
-                    path,
-                    total: u64::try_from(total).unwrap_or(0),
-                });
-                let (s, at) = (signal.clone(), id.clone());
-                op.add_BytesReceivedChanged(
-                    &BytesReceivedChangedEventHandler::create(Box::new(move |op, _| {
-                        let Some(op) = op else { return Ok(()) };
-                        let (mut got, mut total) = (0i64, 0i64);
-                        op.BytesReceived(&raw mut got)?;
-                        let _ = op.TotalBytesToReceive(&raw mut total);
-                        s(PageSignal::DownloadProgress {
-                            id: at.clone(),
-                            received: u64::try_from(got).unwrap_or(0),
-                            total: u64::try_from(total).unwrap_or(0),
-                        });
-                        Ok(())
-                    })),
-                    &raw mut token,
-                )?;
-                let (s, at) = (signal.clone(), id.clone());
-                op.add_StateChanged(
-                    &StateChangedEventHandler::create(Box::new(move |op, _| {
-                        let Some(op) = op else { return Ok(()) };
-                        let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
-                        op.State(&raw mut state)?;
-                        if state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS {
-                            return Ok(());
-                        }
-                        let mut why = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
-                        let _ = op.InterruptReason(&raw mut why);
-                        let mut path = PWSTR::null();
-                        let _ = op.ResultFilePath(&raw mut path);
-                        let state = if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
-                            DownloadState::Done
-                        } else if why == COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED {
-                            DownloadState::Canceled
-                        } else {
-                            DownloadState::Failed
-                        };
-                        DOWNLOADS.with(|m| m.borrow_mut().remove(&at));
-                        s(PageSignal::DownloadFinished {
-                            id: at.clone(),
-                            state,
-                            path: take_pwstr(path),
-                        });
-                        Ok(())
-                    })),
-                    &raw mut token,
-                )?;
-                DOWNLOADS.with(|m| m.borrow_mut().insert(id, op));
-                Ok(())
-            })),
-            &raw mut token,
-        )?;
-    }
-    Ok(())
-}
-
-fn permission_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> Option<&'static str> {
-    Some(match kind {
-        COREWEBVIEW2_PERMISSION_KIND_CAMERA => "camera",
-        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => "microphone",
-        COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION => "geolocation",
-        COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS => "notifications",
-        COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS => "sensors",
-        COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ => "clipboard",
-        COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS => "downloads",
-        COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE => "files",
-        COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS => "fonts",
-        COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES => "midi",
-        COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT => "windows",
-        _ => return None,
-    })
-}
-
-fn hook_permissions(
-    core: &ICoreWebView2,
-    signal: Rc<dyn Fn(PageSignal)>,
-    tab: String,
-) -> windows::core::Result<()> {
-    let mut token = 0i64;
-    unsafe {
-        core.add_PermissionRequested(
-            &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else { return Ok(()) };
-                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
-                args.PermissionKind(&raw mut kind)?;
-                let Some(name) = permission_name(kind) else {
-                    return Ok(());
-                };
-                if let Ok(args3) = args.cast::<ICoreWebView2PermissionRequestedEventArgs3>() {
-                    let _ = args3.SetSavesInProfile(false);
-                }
-                let mut uri = PWSTR::null();
-                args.Uri(&raw mut uri)?;
-                let Some(origin) = crate::siteprefs::site_origin(&take_pwstr(uri)) else {
-                    return args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY);
-                };
-                match crate::siteprefs::decision(&origin, name) {
-                    Some(true) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW),
-                    Some(false) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY),
-                    None => {
-                        let deferral = args.GetDeferral()?;
-                        let id = format!("p{}", NEXT.fetch_add(1, Ordering::Relaxed));
-                        ASKED.with(|m| {
-                            m.borrow_mut().insert(
-                                id.clone(),
-                                Asked {
-                                    args: args.clone(),
-                                    deferral,
-                                    tab: tab.clone(),
-                                },
-                            )
-                        });
-                        signal(PageSignal::Permission {
-                            id,
-                            origin,
-                            kind: name,
-                        });
-                        Ok(())
-                    }
-                }
-            })),
-            &raw mut token,
-        )?;
-    }
-    Ok(())
-}
-
-fn resource_kind(
-    context: COREWEBVIEW2_WEB_RESOURCE_CONTEXT,
-    uri: &str,
-    top: &str,
-) -> Option<&'static str> {
-    Some(match context {
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT if crate::browser::same_page(uri, top) => {
-            return None
-        }
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT => "sub_frame",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET => "stylesheet",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE => "image",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA => "media",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT => "font",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT => "script",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST
-        | COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH => "xmlhttprequest",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING => "ping",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_WEBSOCKET => "websocket",
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT => "csp_report",
-        _ => "other",
-    })
 }
 
 fn page_color(json: &str) -> Option<String> {
@@ -1254,31 +829,6 @@ mod tests {
     }
 
     #[test]
-    fn documents_with_a_fragment_are_the_page_itself() {
-        let top = "https://example.com/docs";
-        assert_eq!(
-            resource_kind(
-                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
-                "https://example.com/docs#intro",
-                top
-            ),
-            None
-        );
-        assert_eq!(
-            resource_kind(
-                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
-                "https://ads.example.net/frame",
-                top
-            ),
-            Some("sub_frame")
-        );
-        assert_eq!(
-            resource_kind(COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT, top, top),
-            Some("script")
-        );
-    }
-
-    #[test]
     fn crashes_that_need_the_user() {
         assert_eq!(
             crash_kind(COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED),
@@ -1290,25 +840,5 @@ mod tests {
             ),
             None
         );
-    }
-
-    #[test]
-    fn every_prompted_permission_can_be_remembered() {
-        for kind in [
-            COREWEBVIEW2_PERMISSION_KIND_CAMERA,
-            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
-            COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
-            COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS,
-            COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
-            COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
-            COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
-            COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE,
-            COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS,
-            COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
-            COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT,
-        ] {
-            let name = permission_name(kind).unwrap();
-            assert!(crate::siteprefs::KINDS.contains(&name), "{name}");
-        }
     }
 }

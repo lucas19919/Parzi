@@ -4,7 +4,6 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Component, Path, PathBuf, MAIN_SEPARATOR};
 use std::process::Command;
 
-use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
@@ -16,8 +15,6 @@ const NOTE_CAP: u64 = 256 * 1024;
 const JSON_CAP: u64 = 8 * 1024 * 1024;
 const MAX_FOLDERS: usize = 200;
 const CODEX_FILES: usize = 300;
-const CHROME_EPOCH_MS: i64 = 11_644_473_600_000;
-const HISTORY_SQL: &str = "SELECT url, title, visit_count, last_visit_time FROM urls WHERE hidden = 0 ORDER BY last_visit_time DESC LIMIT 2000";
 
 const TOOLS: [(&str, &str); 6] = [
     ("claude", "Claude Code"),
@@ -28,27 +25,10 @@ const TOOLS: [(&str, &str); 6] = [
     ("gemini", "Gemini"),
 ];
 
-const BROWSERS: [(&str, &str); 3] = [
-    ("brave", "Brave"),
-    ("edge", "Microsoft Edge"),
-    ("chrome", "Google Chrome"),
-];
-
 #[derive(Debug, Clone, Serialize)]
 pub struct Scan {
-    pub browsers: Vec<BrowserSource>,
     pub tools: Vec<ToolSource>,
     pub folders: Vec<FolderCandidate>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct BrowserSource {
-    pub id: String,
-    pub name: String,
-    pub profile: String,
-    pub label: String,
-    pub bookmarks: usize,
-    pub history: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,27 +57,6 @@ pub struct FolderCandidate {
     pub exists: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct BrowserData {
-    pub bookmarks: Vec<Bookmark>,
-    pub history: Vec<Visit>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Bookmark {
-    pub title: String,
-    pub url: String,
-    pub folder: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Visit {
-    pub url: String,
-    pub title: String,
-    pub visits: i64,
-    pub last_visit: i64,
-}
-
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ImportReport {
     pub notes: usize,
@@ -110,18 +69,9 @@ pub async fn onboard_scan() -> Result<Scan, String> {
     crate::files::off_thread(|| {
         let env = Env::system()?;
         let (tools, folders) = local_scan(&env);
-        Ok(Scan {
-            browsers: scan_browsers(),
-            tools,
-            folders,
-        })
+        Ok(Scan { tools, folders })
     })
     .await
-}
-
-#[tauri::command]
-pub async fn onboard_browser(id: String, profile: String) -> Result<BrowserData, String> {
-    crate::files::off_thread(move || browser_data(&id, &profile)).await
 }
 
 #[tauri::command]
@@ -232,8 +182,10 @@ impl Env {
     }
 }
 
+#[cfg(test)]
 struct TempDir(PathBuf);
 
+#[cfg(test)]
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -1090,235 +1042,6 @@ fn import_with(env: &Env, notes: &[String], folders: &[String]) -> ImportReport 
     report
 }
 
-fn browser_root(id: &str) -> Option<PathBuf> {
-    let (base, rel): (PathBuf, &str) = if cfg!(windows) {
-        (
-            std::env::var_os("LOCALAPPDATA")?.into(),
-            match id {
-                "brave" => "BraveSoftware/Brave-Browser/User Data",
-                "edge" => "Microsoft/Edge/User Data",
-                "chrome" => "Google/Chrome/User Data",
-                _ => return None,
-            },
-        )
-    } else if cfg!(target_os = "macos") {
-        (
-            sub(&std::env::home_dir()?, "Library/Application Support"),
-            match id {
-                "brave" => "BraveSoftware/Brave-Browser",
-                "edge" => "Microsoft Edge",
-                "chrome" => "Google/Chrome",
-                _ => return None,
-            },
-        )
-    } else {
-        (
-            std::env::home_dir()?.join(".config"),
-            match id {
-                "brave" => "BraveSoftware/Brave-Browser",
-                "edge" => "microsoft-edge",
-                "chrome" => "google-chrome",
-                _ => return None,
-            },
-        )
-    };
-    Some(sub(&base, rel))
-}
-
-fn browser_profiles(root: &Path) -> Vec<String> {
-    dirs(root)
-        .into_iter()
-        .filter(|d| {
-            let n = file_name(d);
-            (n == "Default" || n.starts_with("Profile "))
-                && (d.join("Bookmarks").is_file() || d.join("History").is_file())
-        })
-        .map(|d| file_name(&d))
-        .collect()
-}
-
-fn profile_names(local_state: &Value) -> HashMap<String, String> {
-    let Some(cache) = local_state
-        .pointer("/profile/info_cache")
-        .and_then(Value::as_object)
-    else {
-        return HashMap::new();
-    };
-    cache
-        .iter()
-        .filter_map(|(dir, info)| {
-            let field = |k: &str| {
-                info.get(k)
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-            };
-            let default = info.get("is_using_default_name").and_then(Value::as_bool) == Some(true);
-            let name = match (default, field("gaia_name")) {
-                (true, Some(account)) => Some(account),
-                _ => field("name").or(field("gaia_name")),
-            }?;
-            Some((dir.clone(), one_line(name)))
-        })
-        .collect()
-}
-
-fn scan_browsers() -> Vec<BrowserSource> {
-    let mut out = Vec::new();
-    for (id, name) in BROWSERS {
-        let Some(root) = browser_root(id) else {
-            continue;
-        };
-        let names = read_json::<Value>(&root.join("Local State"), JSON_CAP)
-            .map(|v| profile_names(&v))
-            .unwrap_or_default();
-        for profile in browser_profiles(&root) {
-            let dir = root.join(&profile);
-            out.push(BrowserSource {
-                id: id.into(),
-                name: name.into(),
-                label: names
-                    .get(&profile)
-                    .cloned()
-                    .unwrap_or_else(|| profile.clone()),
-                bookmarks: load_bookmarks(&dir).len(),
-                history: dir.join("History").is_file(),
-                profile,
-            });
-        }
-    }
-    out
-}
-
-fn valid_profile(p: &str) -> bool {
-    !p.is_empty()
-        && p.len() <= 64
-        && !p.contains(['/', '\\', ':'])
-        && matches!(
-            Path::new(p).components().collect::<Vec<_>>().as_slice(),
-            [Component::Normal(_)]
-        )
-}
-
-fn browser_data(id: &str, profile: &str) -> Result<BrowserData, String> {
-    if !BROWSERS.iter().any(|(b, _)| *b == id) {
-        return Err(format!("unknown browser: {id}"));
-    }
-    if !valid_profile(profile) {
-        return Err("invalid browser profile".into());
-    }
-    let dir = browser_root(id)
-        .map(|r| r.join(profile))
-        .filter(|d| d.is_dir())
-        .ok_or("that browser profile was not found")?;
-    let history = load_history(&dir).unwrap_or_else(|e| {
-        tracing::warn!("browser history not read: {e}");
-        Vec::new()
-    });
-    Ok(BrowserData {
-        bookmarks: load_bookmarks(&dir),
-        history,
-    })
-}
-
-fn is_web(url: &str) -> bool {
-    let u = url.get(..8).unwrap_or(url).to_ascii_lowercase();
-    u.starts_with("http://") || u.starts_with("https://")
-}
-
-fn chrome_ms(t: i64) -> i64 {
-    if t <= 0 {
-        0
-    } else {
-        (t / 1000 - CHROME_EPOCH_MS).max(0)
-    }
-}
-
-fn walk_bookmarks(node: &Value, folder: &str, out: &mut Vec<Bookmark>) {
-    let name = node.get("name").and_then(Value::as_str).unwrap_or_default();
-    if node.get("type").and_then(Value::as_str) == Some("url") {
-        if let Some(url) = node
-            .get("url")
-            .and_then(Value::as_str)
-            .filter(|u| is_web(u))
-        {
-            out.push(Bookmark {
-                title: name.to_string(),
-                url: url.to_string(),
-                folder: folder.to_string(),
-            });
-        }
-        return;
-    }
-    let path = match (folder.is_empty(), name.is_empty()) {
-        (true, _) => name.to_string(),
-        (false, true) => folder.to_string(),
-        (false, false) => format!("{folder}/{name}"),
-    };
-    for child in node
-        .get("children")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        walk_bookmarks(child, &path, out);
-    }
-}
-
-fn bookmarks_from(v: &Value) -> Vec<Bookmark> {
-    let mut out = Vec::new();
-    if let Some(roots) = v.get("roots") {
-        for k in ["bookmark_bar", "other", "synced"] {
-            if let Some(node) = roots.get(k) {
-                walk_bookmarks(node, "", &mut out);
-            }
-        }
-    }
-    out
-}
-
-fn load_bookmarks(dir: &Path) -> Vec<Bookmark> {
-    read_json::<Value>(&dir.join("Bookmarks"), JSON_CAP)
-        .map(|v| bookmarks_from(&v))
-        .unwrap_or_default()
-}
-
-fn load_history(dir: &Path) -> Result<Vec<Visit>, String> {
-    let src = dir.join("History");
-    if !src.is_file() {
-        return Ok(Vec::new());
-    }
-    let tmp = TempDir(std::env::temp_dir().join(format!("parzi-history-{}", uuid::Uuid::new_v4())));
-    fs::create_dir_all(&tmp.0).map_err(|e| e.to_string())?;
-    let db = tmp.0.join("History");
-    fs::copy(&src, &db).map_err(|e| format!("could not copy the history: {e}"))?;
-    let wal = dir.join("History-wal");
-    if wal.is_file() {
-        let _ = fs::copy(&wal, tmp.0.join("History-wal"));
-    }
-    let conn = Connection::open_with_flags(
-        &db,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(HISTORY_SQL).map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok(Visit {
-                url: r.get(0)?,
-                title: r.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                visits: r.get(2)?,
-                last_visit: chrome_ms(r.get(3)?),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    let out = rows
-        .filter_map(Result::ok)
-        .filter(|v| is_web(&v.url))
-        .collect();
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1444,43 +1167,6 @@ mod tests {
     }
 
     #[test]
-    fn chromium_time_converts_to_unix_ms() {
-        assert_eq!(chrome_ms(13_300_000_000_000_000), 1_655_526_400_000);
-        assert_eq!(chrome_ms(0), 0);
-        assert_eq!(chrome_ms(5), 0);
-    }
-
-    #[test]
-    fn bookmarks_walk_keeps_folder_paths_and_web_urls() {
-        let v = serde_json::json!({"roots": {
-            "bookmark_bar": {"type": "folder", "name": "Bookmarks bar", "children": [
-                {"type": "url", "name": "Rust", "url": "https://rust-lang.org"},
-                {"type": "folder", "name": "Dev", "children": [
-                    {"type": "url", "name": "Docs", "url": "http://docs.rs"},
-                    {"type": "url", "name": "Let", "url": "javascript:alert(1)"}
-                ]}
-            ]},
-            "other": {"type": "folder", "name": "Other bookmarks", "children": [
-                {"type": "url", "name": "X", "url": "HTTPS://example.com"}
-            ]},
-            "synced": {"type": "folder", "name": "Mobile bookmarks", "children": []}
-        }});
-        let b = bookmarks_from(&v);
-        let got: Vec<(&str, &str)> = b
-            .iter()
-            .map(|b| (b.title.as_str(), b.folder.as_str()))
-            .collect();
-        assert_eq!(
-            got,
-            [
-                ("Rust", "Bookmarks bar"),
-                ("Docs", "Bookmarks bar/Dev"),
-                ("X", "Other bookmarks")
-            ]
-        );
-    }
-
-    #[test]
     fn paths_normalize_for_both_platforms() {
         assert_eq!(
             norm_with("c:/Users/x/Proj/", true).as_deref(),
@@ -1602,30 +1288,6 @@ mod tests {
             claude_encode(r"C:\Users\lucas\Desktop\Parzi"),
             "C--Users-lucas-Desktop-Parzi"
         );
-        assert!(valid_profile("Default") && valid_profile("Profile 3"));
-        for bad in ["", "..", ".", "a/b", "a\\b", "C:x", "/abs"] {
-            assert!(!valid_profile(bad), "{bad}");
-        }
-        assert!(browser_data("firefox", "Default").is_err());
-        assert!(browser_data("chrome", "../x").is_err());
-    }
-
-    #[test]
-    fn browser_profiles_go_by_their_shown_names() {
-        let state = serde_json::json!({"profile": {"info_cache": {
-            "Default": {"name": "Person 1", "is_using_default_name": true, "gaia_name": "Sam Doe"},
-            "Profile 3": {"name": "Work", "is_using_default_name": false, "gaia_name": "Sam Doe"},
-            "Profile 4": {"name": "  Side\nproject ", "gaia_name": ""},
-            "Profile 5": {"name": "", "gaia_name": ""},
-            "Profile 6": {"name": "Person 2", "is_using_default_name": true},
-        }}});
-        let names = profile_names(&state);
-        assert_eq!(names["Default"], "Sam Doe");
-        assert_eq!(names["Profile 3"], "Work");
-        assert_eq!(names["Profile 4"], "Side project");
-        assert!(!names.contains_key("Profile 5"));
-        assert_eq!(names["Profile 6"], "Person 2");
-        assert!(profile_names(&serde_json::json!({})).is_empty());
     }
 
     #[test]

@@ -73,7 +73,6 @@ export interface Tab {
   loading?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
-  blocked?: number;
   bg?: string;
   favicon?: string;
   zoom?: number;

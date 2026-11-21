@@ -6,7 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
-- A Hosts card in the session sidebar tracks local dev servers started by an agent: click a URL to open it in a tab, or Start, Restart, Stop, View logs, Open in browser, or Remove it directly without asking the agent. Discovered hosts persist across stops and restarts.
+- Parzi is smaller. Gone: the ad blocker, Bitwarden passwords, Parzi's own download handling (pages download as the browser does), the site permission bar (pages ask with the browser's own prompt), bookmark and history import with its setup step, the notifications bell and its settings, and the Files, Hosts and Changes cards. A session's tab shows how it stands instead: a spinner while it works, an amber dot when it needs you, and a green or red dot when it finished or failed and you haven't opened it yet.
 - Removed the bottom fade overlays on glass code blocks and folded artifact cards.
 - Bare localhost, IP, and local/intranet addresses with a port or path now linkify and open directly in a Parzi tab.
 - Long threads stay snappy: sessions with large histories render the recent tail first with a "Show earlier messages" button, and tab-group corners align cleanly in the tab bar.
@@ -16,9 +16,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 - Questions are calm choice cards: each answer is a tile you click to answer at once (several can be picked and sent together when the agent allows it), "Something else…" takes your own words, and Skip sits quietly by the title. No radio buttons or Submit.
 - Every card (the session, the side cards, the composer, the plan, questions, menus, tooltips) shows its rounded outline in one faint hairline, so its edge reads over a dark picture and the session's corner no longer looks like a stray strip at the top left. The dark fade under the composer is gone. Working spinners are one quiet tone everywhere.
 - Your message shows the moment you send it and stays: it no longer vanished (leaving only "Thinking") when the agent took a moment to start.
-- Math is big enough to read: fractions, sums and integrals in a sentence are drawn full size, all math is a touch larger, and a tidied message puts an equation with fractions on its own line. Settings, Providers, Formatting agent picks the model for naming and tidying (Main, then Fallback).
-- A small model names new sessions in a few words (the agent's own small one, such as Haiku, when it has one), instead of cutting the first words of your message.
-- Math in your messages reads properly: when a message holds formulas, a small model sets them as LaTeX for display, and the agent still gets exactly what you typed. The sparkle button beside the message shows it as typed.
+- Math is big enough to read: fractions, sums and integrals in a sentence are drawn full size, all math is a touch larger, and a tidied message puts an equation with fractions on its own line.
 - Only pictures a tool made show in the thread (a screenshot, a diagram): a path that merely appears in a listing or a search no longer pulls in an unrelated image, and a picture that can't load is left out instead of announced.
 - The queue is one calm card: "Queued · 3 · sends when the agent is done", click a message to edit it, drag to reorder, actions on hover.
 - A stopped turn says it once: "Stopped after 12s · 3 steps", in the same quiet line as "Worked for…". The wallpaper as a band stays a band behind sessions too.
