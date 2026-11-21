@@ -918,7 +918,7 @@ pub(crate) fn is_question_tool(name: &str) -> bool {
 pub(crate) fn is_project_tool(name: &str) -> bool {
     matches!(
         name,
-        "project.create" | "project.switch" | "project.archive" | "project.delete"
+        "project.create" | "project.switch" | "project.archive" | "project.delete" | "project.plan"
     )
 }
 
@@ -1039,6 +1039,22 @@ fn project_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "project.plan".into(),
+            description: "The project's plan: a short goal and an ordered list of targets, shown to the person above the composer. With no goal or targets it reads the plan, with each target's state (todo, working, done). Pass goal and/or the full ordered targets list to change it: add, reorder, finish ({\"title\", \"done\": true}) or drop targets. Link work to a target with `target` on session_draft or session_spawn.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "targets": {
+                        "type": "array",
+                        "items": {"type": "object", "properties": {"title": {"type": "string"}, "done": {"type": "boolean"}}, "required": ["title"]},
+                        "description": "the whole list, in order",
+                    },
+                    "project": {"type": "string", "description": "a project slug; leave out for this session's project"},
+                },
+            }),
+        },
+        ToolDef {
             name: "project.delete".into(),
             description: "Delete a project by slug: removes its project note. Mapped notes keep their frontmatter; mappings to a missing slug are ignored. The folder on disk is left alone.".into(),
             schema: serde_json::json!({
@@ -1088,6 +1104,7 @@ fn session_defs() -> Vec<ToolDef> {
                     "model": {"type": "string", "description": "An id from models.list, such as claude/opus. Leave it out to use your own model."},
                     "effort": {"type": "string"},
                     "wait": {"type": "boolean"},
+                    "target": {"type": "string", "description": "a project plan target this works on"},
                 },
                 "required": ["prompt"],
             }),
@@ -1150,6 +1167,7 @@ fn session_defs() -> Vec<ToolDef> {
                         "maxItems": 20,
                         "items": {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]},
                     },
+                    "target": {"type": "string", "description": "a project plan target this works on"},
                 },
                 "required": ["title", "brief"],
             }),
@@ -1377,6 +1395,13 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Archiving project {}",
             one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)
         ),
+        "project.plan" => {
+            if args.get("goal").is_some() || args.get("targets").is_some() {
+                "Updating the project plan".into()
+            } else {
+                "Reading the project plan".into()
+            }
+        }
         "project.delete" => format!(
             "Deleting project {}",
             one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)

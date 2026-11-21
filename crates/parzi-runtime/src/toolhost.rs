@@ -41,6 +41,7 @@ mod calls;
 mod desk_text;
 mod notes;
 mod paths;
+pub mod project_plan;
 mod relay;
 
 use calls::{
@@ -284,6 +285,9 @@ impl ToolHost {
         }
         if is_question_tool(name) {
             return self.execute_question(id, args).await;
+        }
+        if name == "project.plan" {
+            return self.execute_project_plan(args);
         }
         if is_project_tool(name) {
             if let Err(why) = self.approved(id, name, args).await {
@@ -588,13 +592,21 @@ impl ToolHost {
             .store
             .create_draft(&title, &me.project, &me.model, &me.cwd, &brief, plan)
         {
-            Ok(d) => (
-                true,
-                format!(
-                    "drafted \"{}\" ({}); the person sees it under Drafts and starts it when they choose",
-                    d.title, d.id
-                ),
-            ),
+            Ok(d) => {
+                let linked = args
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| self.link_target(t, &d.id))
+                    .unwrap_or_default();
+                (
+                    true,
+                    format!(
+                        "drafted \"{}\" ({}){linked}; the person sees it under Drafts and starts it when they choose",
+                        d.title, d.id
+                    ),
+                )
+            }
             Err(e) => (false, e.to_string()),
         }
     }
@@ -645,6 +657,23 @@ impl ToolHost {
                         },
                     )
                     .await
+                    .map(
+                        |out| match str_arg("target").filter(|t| !t.trim().is_empty()) {
+                            Some(target) => {
+                                let spawned =
+                                    serde_json::from_str::<Value>(&out).ok().and_then(|v| {
+                                        v.get("session_id")?.as_str().map(str::to_string)
+                                    });
+                                match spawned {
+                                    Some(child) => {
+                                        format!("{out}{}", self.link_target(&target, &child))
+                                    }
+                                    None => out,
+                                }
+                            }
+                            None => out,
+                        },
+                    )
             }
             "session.send" => {
                 let target = str_arg("session_id").unwrap_or_default();

@@ -9,6 +9,7 @@ pub mod hash;
 pub mod hooks;
 pub mod paths;
 pub mod plan;
+pub mod project_plan;
 pub mod store;
 pub mod system;
 pub mod text;

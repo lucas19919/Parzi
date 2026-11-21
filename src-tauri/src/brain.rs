@@ -20,6 +20,31 @@ pub async fn brain_dir() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// A project's plan for the targets row: its goal and each target's title and
+/// state, or `null` when it has none.
+#[tauri::command]
+pub async fn project_plan(
+    state: tauri::State<'_, crate::AppState>,
+    project: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let store = state.orch.store().clone();
+    crate::files::off_thread(move || {
+        Ok(parzi_runtime::toolhost::project_plan::view(
+            &store,
+            project.trim(),
+        ))
+    })
+    .await
+}
+
+/// The project plan's file, to open it.
+#[tauri::command]
+pub async fn project_plan_doc(project: String) -> Result<String, String> {
+    parzi_core::project_plan::doc_path(project.trim())
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or_else(|| format!("{} has no project plan yet", project.trim()))
+}
+
 #[tauri::command]
 pub async fn brain_read(path: String) -> Result<String, String> {
     blocking(move || brain::read(&path)).await
