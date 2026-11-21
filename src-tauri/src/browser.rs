@@ -580,7 +580,6 @@ fn agent_profile(app: &AppHandle) -> Option<std::path::PathBuf> {
 fn open_page(app: &AppHandle, window: &tauri::Window, job: &Fit) -> Option<Webview> {
     let slot = locked(&TABS).get(&job.label).cloned()?;
     let isolated = slot.agent && !crate::siteprefs::agent_sign_ins();
-    let seed = slot.url.to_string();
     let builder = page_builder(app, &job.label, &slot.tab, slot.url, isolated);
     #[cfg(windows)]
     let builder = if isolated {
@@ -609,9 +608,7 @@ fn open_page(app: &AppHandle, window: &tauri::Window, job: &Fit) -> Option<Webvi
     }
     tell(app, BROWSER, json!({ "tab": slot.tab, "loading": true }));
     #[cfg(windows)]
-    watch_page(app, &wv, slot.tab, seed);
-    #[cfg(not(windows))]
-    let _ = seed;
+    watch_page(app, &wv, slot.tab);
     Some(wv)
 }
 
@@ -851,15 +848,9 @@ fn guess_history(label: &str, url: &str) -> (bool, bool) {
 }
 
 #[cfg(windows)]
-fn hook_for(
-    app: &AppHandle,
-    tab: String,
-    seed: String,
-    role: crate::dwm::Role,
-) -> crate::dwm::Hook {
+fn hook_for(app: &AppHandle, tab: String, role: crate::dwm::Role) -> crate::dwm::Hook {
     crate::dwm::Hook {
         tab,
-        seed,
         role,
         downloads: crate::downloads::downloads_dir(app),
         devtools: crate::siteprefs::devtools(),
@@ -867,9 +858,9 @@ fn hook_for(
 }
 
 #[cfg(windows)]
-fn watch_page(app: &AppHandle, wv: &Webview, tab: String, seed: String) {
+fn watch_page(app: &AppHandle, wv: &Webview, tab: String) {
     let label = wv.label().to_string();
-    let hook = hook_for(app, tab.clone(), seed, crate::dwm::Role::Page);
+    let hook = hook_for(app, tab.clone(), crate::dwm::Role::Page);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(wv, hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -882,12 +873,7 @@ fn watch_page(app: &AppHandle, wv: &Webview, tab: String, seed: String) {
 #[cfg(windows)]
 fn watch_popup(app: &AppHandle, window: &tauri::WebviewWindow, tab: String) {
     let label = window.label().to_string();
-    let hook = hook_for(
-        app,
-        tab.clone(),
-        "about:blank".into(),
-        crate::dwm::Role::Popup,
-    );
+    let hook = hook_for(app, tab.clone(), crate::dwm::Role::Popup);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(window.as_ref(), hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -901,12 +887,7 @@ fn watch_popup(app: &AppHandle, window: &tauri::WebviewWindow, tab: String) {
 fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSignal) {
     use crate::dwm::PageSignal;
     match signal {
-        PageSignal::Loading => tell(
-            app,
-            BROWSER,
-            json!({ "tab": tab, "loading": true, "blocked": 0 }),
-        ),
-        PageSignal::Blocked(count) => tell(app, BROWSER, json!({ "tab": tab, "blocked": count })),
+        PageSignal::Loading => tell(app, BROWSER, json!({ "tab": tab, "loading": true })),
         PageSignal::Background(color) => tell(app, BROWSER, json!({ "tab": tab, "bg": color })),
         PageSignal::Loaded {
             url,

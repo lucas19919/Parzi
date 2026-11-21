@@ -479,19 +479,11 @@ export interface PageEvent {
   canGoForward?: boolean;
   fullscreen?: boolean;
   zoom?: number;
-  blocked?: number;
   bg?: string;
   ok?: boolean;
   favicon?: string;
   crashed?: "browser" | "exited" | "unresponsive";
   popupBlocked?: string;
-}
-
-export interface AdblockState {
-  enabled: boolean;
-  allowed: boolean;
-  host: string;
-  supported?: boolean;
 }
 
 export interface BrowserAsk {
@@ -545,34 +537,6 @@ export function onDownload(cb: (d: Download) => void) {
 export function onBrowserAsk(cb: (a: BrowserAsk) => void) {
   return listen<BrowserAsk>("parzi://browser-ask", (ev) => cb(ev.payload));
 }
-
-export interface VaultState {
-  status: "missing" | "unauthenticated" | "locked" | "unlocked" | string;
-  email: string;
-}
-
-export interface VaultLogin {
-  id: string;
-  name: string;
-  username: string;
-}
-
-export const vault = {
-  state: () => invoke<VaultState>("vault_state"),
-  install: () => invoke<void>("vault_install"),
-  unlock: () => invoke<VaultState>("vault_unlock"),
-  lock: () => invoke<VaultState>("vault_lock"),
-  logins: (tab: string) => invoke<{ status: string; host: string; items: VaultLogin[] }>("vault_logins", { tab }),
-  fill: (tab: string, id: string) => invoke<string>("vault_fill", { tab, id }),
-};
-
-export const BITWARDEN_INSTALL = "winget install Bitwarden.CLI";
-
-export const adblock = {
-  state: (url: string) => invoke<AdblockState>("adblock_state", { url }),
-  enable: (on: boolean) => invoke<AdblockState>("adblock_enable", { on }),
-  site: (url: string, allow: boolean) => invoke<AdblockState>("adblock_site", { url, allow }),
-};
 
 export function onBrowserOpen(cb: (e: { tab: string; url: string }) => void) {
   return listen<{ tab: string; url: string }>("parzi://browser-open", (ev) => cb(ev.payload));

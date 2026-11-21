@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { adblock, api, browserPrefs, vault, type BrowserPrefs, type VaultState } from "../api";
+  import { api, browserPrefs, type BrowserPrefs } from "../api";
   import Icon from "../Icon.svelte";
   import { permissionName } from "../pageRules";
   import { tooltip } from "../tooltip";
@@ -16,9 +16,6 @@
   export let onSetup: () => void = () => {};
   export let onReport: () => void = () => {};
 
-  let blockAds = true;
-  let pw: VaultState | null = null;
-  let pwBusy = false;
   let web: BrowserPrefs | null = null;
 
   let version = "";
@@ -38,42 +35,6 @@
   async function forgetSite(origin: string, kind: string) {
     try {
       web = await browserPrefs.forget(origin, kind);
-    } catch (e) {
-      notify(`Could not save: ${e}`, true);
-    }
-  }
-
-  async function installVault() {
-    pwBusy = true;
-    try {
-      await vault.install();
-      const recheck = () => {
-        window.removeEventListener("focus", recheck);
-        vault.state().then((s) => (pw = s)).catch(() => {});
-      };
-      window.addEventListener("focus", recheck);
-    } catch (e) {
-      pwBusy = false;
-      notify(`Could not start the install: ${e}`, true);
-    }
-  }
-
-  async function pwAction() {
-    if (!pw || pwBusy) return;
-    pwBusy = true;
-    try {
-      pw = pw.status === "unlocked" ? await vault.lock() : await vault.unlock();
-    } catch (e) {
-      notify(String(e) === "missing" ? "Bitwarden isn't installed" : String(e), true);
-      pw = await vault.state().catch(() => pw);
-    } finally {
-      pwBusy = false;
-    }
-  }
-
-  async function toggleAds() {
-    try {
-      blockAds = (await adblock.enable(!blockAds)).enabled;
     } catch (e) {
       notify(`Could not save: ${e}`, true);
     }
@@ -100,8 +61,6 @@
   ];
 
   onMount(() => {
-    adblock.state("").then((s) => (blockAds = s.enabled)).catch(() => {});
-    vault.state().then((s) => (pw = s)).catch(() => {});
     browserPrefs.get().then((p) => (web = p)).catch(() => {});
     api.appVersion().then((v) => (version = v)).catch(() => {});
     void countSessions();
@@ -158,38 +117,6 @@
 <div class="pref-section">
   <div class="rows">
     <div class="row row-title"><span>Browser</span></div>
-    <div class="row">
-      <span class="row-label">Block ads and trackers
-        {#if web && !web.windows}<small>Windows only for now.</small>{/if}
-      </span>
-      <span class="row-ctl auto"><Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} /></span>
-    </div>
-    <div class="row">
-      <span class="row-label">Passwords from Bitwarden
-        <small>
-          {#if !pw}
-            Checking…
-          {:else if pw.status === "missing"}
-            Not installed
-          {:else if pw.status === "unlocked"}
-            Unlocked{pw.email ? ` as ${pw.email}` : ""}
-          {:else if pw.status === "unauthenticated"}
-            Not signed in
-          {:else}
-            Locked{pw.email ? ` · ${pw.email}` : ""}
-          {/if}
-        </small>
-      </span>
-      <span class="row-ctl auto">
-        {#if pw?.status === "missing"}
-          <button class="btn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
-        {:else if pw}
-          <button class="btn" disabled={pwBusy} on:click={pwAction}>
-            {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
-          </button>
-        {/if}
-      </span>
-    </div>
     {#if web}
       <div class="row">
         <span class="row-label">Agent tabs use your sign-ins</span>

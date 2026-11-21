@@ -898,7 +898,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (e.loading !== undefined) patch.loading = e.loading;
     if (e.canGoBack !== undefined) patch.canGoBack = e.canGoBack;
     if (e.canGoForward !== undefined) patch.canGoForward = e.canGoForward;
-    if (e.blocked !== undefined) patch.blocked = e.blocked;
     if (e.zoom !== undefined) patch.zoom = Math.abs(e.zoom - 1) < 0.005 ? undefined : e.zoom;
     if (e.bg) patch.bg = e.bg;
     if (e.crashed) patch.crashed = e.crashed;

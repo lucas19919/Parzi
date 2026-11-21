@@ -17,7 +17,6 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 #[cfg(target_os = "windows")]
 mod dwm;
 
-mod adblock;
 mod appearance;
 mod artifact_frame;
 mod brain;
@@ -35,7 +34,6 @@ mod sessions;
 mod settings;
 mod siteprefs;
 mod updates;
-mod vault;
 mod watchdog;
 mod worktree;
 
@@ -738,7 +736,6 @@ fn main() {
                     tracing::warn!("window crash recovery not attached: {e}");
                 }
             }
-            adblock::start();
             watchdog::start(app.handle());
             browser::warm_up();
             let bus_rx = o.subscribe();
@@ -802,11 +799,6 @@ fn main() {
             siteprefs::browser_forget_site,
             downloads::browser_download_reveal,
             search::search_suggest,
-            adblock::adblock_state,
-            adblock::adblock_enable,
-            adblock::adblock_site,
-            vault::vault_state,
-            vault::vault_install,
             settings::connector_check,
             settings::connector_sign_in,
             settings::connector_forget,
@@ -823,10 +815,6 @@ fn main() {
             files::git_branches,
             files::tool_image,
             settings::shell_kill,
-            vault::vault_unlock,
-            vault::vault_lock,
-            vault::vault_logins,
-            vault::vault_fill,
             brain::brain_dir,
             brain::brain_read,
             brain::brain_write,

@@ -1,12 +1,9 @@
 <script lang="ts">
-  import { DUR, SLIDE } from "./motion";
+  import { SLIDE } from "./motion";
   import { createEventDispatcher, onMount, tick } from "svelte";
-  import { fade, fly } from "svelte/transition";
-  import { cubicOut } from "svelte/easing";
+  import { fade } from "svelte/transition";
   import Icon from "./Icon.svelte";
-  import { adblock, api, vault, BITWARDEN_INSTALL, type AdblockState, type VaultLogin } from "./api";
-  import { popover, placeAbove } from "./popover";
-  import { toast } from "./toast";
+  import { api } from "./api";
   import { covered, setOverlay, setPageArea } from "./overlay";
   import SuggestList from "./SuggestList.svelte";
   import { get } from "svelte/store";
@@ -38,12 +35,6 @@
   let alive = true;
   let reported = false;
   let chain: Promise<void> = Promise.resolve();
-  let shield: AdblockState | null = null;
-  let shieldSeq = 0;
-  let keyBtn: HTMLButtonElement | null = null;
-  let choices: VaultLogin[] = [];
-  let choiceStyle = "";
-  let filling = false;
   let form: HTMLFormElement | null = null;
   const suggest = addressSuggest({
     sources: () => ({ visits: get(history), marks: [...get(bookmarks), ...get(pins)] }),
@@ -68,7 +59,6 @@
   $: secure = url.startsWith("https://");
   $: pinned = $pins.some((p) => p.url === url);
   $: url, immersive, $covered, slot, tab.crashed, veiled, schedule();
-  $: void loadShield(hostOf(url));
   $: open = editing && $suggest.rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
   $: if (open && form) listStyle = `left:${form.offsetLeft}px;width:${form.offsetWidth}px`;
@@ -90,42 +80,6 @@
       // The snapshot pictures a page that is gone now; the next cover takes a new one.
       snapshot = "";
       snapAt = 0;
-    }
-  }
-
-  // Shield replies can arrive out of order when the address changes quickly,
-  // so only the reply to the newest request may set the shield.
-  async function loadShield(host: string) {
-    const seq = ++shieldSeq;
-    if (!host) {
-      shield = null;
-      return;
-    }
-    try {
-      const next = await adblock.state(url);
-      if (seq === shieldSeq && alive) shield = next;
-    } catch (e) {
-      if (seq !== shieldSeq || !alive) return;
-      shield = null;
-      dispatch("error", { text: String(e) });
-    }
-  }
-
-  async function toggleShield() {
-    if (!shield || !url) return;
-    if (shield.supported === false) {
-      toast("Ad blocking works on Windows only for now");
-      return;
-    }
-    const seq = ++shieldSeq;
-    try {
-      const blocking = shield.enabled && !shield.allowed;
-      const next = await adblock.site(url, blocking);
-      if (seq !== shieldSeq || !alive) return;
-      shield = next;
-      nav("reload");
-    } catch (e) {
-      dispatch("error", { text: String(e) });
     }
   }
 
@@ -177,46 +131,6 @@
         reported = true;
         dispatch("error", { text: String(e) });
       }
-    }
-  }
-
-  async function fillLogin() {
-    if (!url || filling) return;
-    filling = true;
-    try {
-      let found = await vault.logins(tab.id);
-      if (found.status === "missing") {
-        toast(`Install the Bitwarden CLI first: ${BITWARDEN_INSTALL}`, true);
-        return;
-      }
-      if (found.status !== "unlocked") {
-        toast("Unlock Bitwarden in the window that just opened");
-        await vault.unlock();
-        found = await vault.logins(tab.id);
-        if (found.status !== "unlocked") return;
-      }
-      if (!found.items.length) toast(`No saved login for ${found.host}`);
-      else if (found.items.length === 1) await fillWith(found.items[0]);
-      else {
-        choices = found.items;
-        if (keyBtn) choiceStyle = placeAbove(keyBtn, 280, true);
-      }
-    } catch (e) {
-      const text = String(e);
-      toast(text === "missing" ? `Install the Bitwarden CLI first: ${BITWARDEN_INSTALL}` : text, true);
-    } finally {
-      filling = false;
-    }
-  }
-
-  async function fillWith(login: VaultLogin) {
-    choices = [];
-    try {
-      const result = await vault.fill(tab.id, login.id);
-      if (result === "none") toast("No login form found on this page");
-      else if (result === "moved") toast("The page changed; try again");
-    } catch (e) {
-      toast(String(e), true);
     }
   }
 
@@ -307,13 +221,7 @@
     else if (yes && p.url) dispatch("openTab", { url: p.url });
   }
 
-  let hasVault = false;
-
   onMount(() => {
-    vault
-      .state()
-      .then((s) => (hasVault = s.status !== "missing"))
-      .catch(() => {});
     const ro = new ResizeObserver(schedule);
     if (slot) ro.observe(slot);
     window.addEventListener("resize", schedule);
@@ -373,38 +281,6 @@
         {/if}
         {#if tab.loading}<span class="progress" />{/if}
       </form>
-      {#if shield}
-        {@const blocking = shield.supported !== false && shield.enabled && !shield.allowed}
-        {@const count = blocking && tab.blocked ? (tab.blocked > 99 ? "99+" : String(tab.blocked)) : ""}
-        <button
-          class="nav shield"
-          class:off={!blocking}
-          aria-label={count ? `Ad blocker, ${count} blocked` : "Ad blocker"}
-          use:tooltip={shield.supported === false
-            ? "Ad blocking works on Windows only for now"
-            : blocking
-              ? `Blocking ads and trackers${tab.blocked ? ` (${tab.blocked} on this page)` : ""}. Click to allow them on ${shield.host}.`
-              : shield.enabled
-                ? `Ads allowed on ${shield.host}. Click to block them.`
-                : "The ad blocker is off. Click to turn it on."}
-          on:click={toggleShield}
-        >
-          <Icon name="shield" size={14} />
-          {#if count}<span class="count">{count}</span>{/if}
-        </button>
-      {/if}
-      {#if hasVault}
-        <button
-          bind:this={keyBtn}
-          class="nav"
-          class:busy={filling}
-          use:tooltip={"Fill a login from Bitwarden"}
-          disabled={!url.startsWith("https://")}
-          on:click={fillLogin}
-        >
-          <Icon name="key" size={14} />
-        </button>
-      {/if}
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
         <Icon name="pin" size={14} />
       </button>
@@ -445,16 +321,6 @@
   {#if open && !immersive}
     <div class="suggest" style={listStyle}>
       <SuggestList rows={$suggest.rows} active={$suggest.active} typed={$suggest.typed} on:pick={(e) => pick(e.detail.row)} on:hover={(e) => suggest.hover(e.detail.index)} />
-    </div>
-  {/if}
-  {#if choices.length}
-    <div class="logins" style={choiceStyle} data-ui-list use:popover={{ anchor: keyBtn, close: () => (choices = []) }} transition:fly={{ y: choiceStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
-      {#each choices as login (login.id)}
-        <button class="login" on:click={() => fillWith(login)}>
-          <span class="login-name">{login.name}</span>
-          {#if login.username}<span class="login-user">{login.username}</span>{/if}
-        </button>
-      {/each}
     </div>
   {/if}
   <div
@@ -549,54 +415,6 @@
   }
   .nav.on {
     color: var(--accent);
-  }
-  .nav.busy {
-    opacity: 0.5;
-  }
-  .logins {
-    width: 280px;
-    padding: var(--space);
-    overflow-y: auto;
-  }
-  .login {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space);
-    width: 100%;
-    padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--text);
-    text-align: left;
-    cursor: pointer;
-  }
-  .login:hover {
-    background: var(--line);
-  }
-  .login-name {
-    font-size: var(--fs-md);
-  }
-  .login-user {
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .shield {
-    position: relative;
-    width: auto;
-    min-width: 30px;
-    gap: var(--space);
-    padding: 0 calc(var(--space) * 2);
-    color: var(--accent);
-  }
-  .shield.off {
-    color: var(--muted);
-  }
-  .count {
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
   }
   .address {
     position: relative;
