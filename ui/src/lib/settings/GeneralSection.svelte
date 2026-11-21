@@ -2,8 +2,6 @@
   import { onMount } from "svelte";
   import { api, browserPrefs, type BrowserPrefs } from "../api";
   import Icon from "../Icon.svelte";
-  import { permissionName } from "../pageRules";
-  import { tooltip } from "../tooltip";
   import { notifyLevel, notifySounds, type NotifyLevel } from "../notifyPrefs";
   import SegControl from "./SegControl.svelte";
   import { check as checkUpdates, devChannel, dlDone, dlTotal, installUpdate, setDevChannel, updateMsg, updateState, updateVersion } from "../updateStore";
@@ -27,14 +25,6 @@
     if (!web) return;
     try {
       web = await browserPrefs.set(name, !web[name]);
-    } catch (e) {
-      notify(`Could not save: ${e}`, true);
-    }
-  }
-
-  async function forgetSite(origin: string, kind: string) {
-    try {
-      web = await browserPrefs.forget(origin, kind);
     } catch (e) {
       notify(`Could not save: ${e}`, true);
     }
@@ -128,23 +118,6 @@
         </span>
         <span class="row-ctl auto"><Switch on={web.devtools} title="Developer tools for pages" on:toggle={() => setWeb("devtools")} /></span>
       </div>
-      {#if web.sites.length}
-        <div class="row sites">
-          <span class="row-label">Site permissions</span>
-          <ul class="site-list">
-            {#each web.sites as s (s.origin + s.kind)}
-              <li class="site">
-                <span class="site-origin">{s.origin.replace(/^https:\/\//, "")}</span>
-                <span class="site-kind">{permissionName(s.kind)}</span>
-                <span class="site-state" class:allow={s.allow}>{s.allow ? "Allowed" : "Blocked"}</span>
-                <button class="forget" use:tooltip={"Forget this choice"} on:click={() => forgetSite(s.origin, s.kind)}>
-                  <Icon name="close" size={12} />
-                </button>
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/if}
     {/if}
   </div>
 </div>
@@ -187,69 +160,5 @@
     color: var(--muted);
     font-size: var(--fs-md);
     font-variant-numeric: tabular-nums;
-  }
-
-  /* ── Browser: sites with a remembered permission ── */
-
-  .row.sites {
-    flex-wrap: wrap;
-  }
-  .row.sites .site-list {
-    display: flex;
-    flex: 1 1 100%;
-    flex-direction: column;
-    margin: var(--space) 0 0;
-    padding: 0;
-    list-style: none;
-  }
-  .site {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    min-height: var(--h-field);
-    padding: 0 var(--space) 0 calc(var(--space) * 2);
-    border-radius: var(--radius);
-    font-size: var(--fs-md);
-  }
-  .site:hover {
-    background: var(--hover);
-  }
-  .site-origin {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text);
-  }
-  .site-kind {
-    flex: none;
-    color: var(--muted);
-  }
-  .site-state {
-    flex: none;
-    width: 64px;
-    color: var(--muted);
-  }
-  .site-state.allow {
-    color: var(--text);
-  }
-  .forget {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: var(--h-sm);
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .forget:hover {
-    background: var(--selected);
-    color: var(--text);
   }
 </style>

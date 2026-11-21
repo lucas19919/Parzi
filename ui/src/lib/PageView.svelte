@@ -11,8 +11,8 @@
   import { addressSuggest } from "./addressSuggest";
   import { addPin, bookmarks, history, pins, removePin } from "./browserData";
   import { prompts, removePrompt, type PagePrompt } from "./browserState";
-  import { appFor, permissionText } from "./pageRules";
-  import { hostOf, toAddress, type Tab } from "./tabs";
+  import { appFor } from "./pageRules";
+  import { toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
   import { NO_VEIL, stepVeil, type Veil } from "./veil";
 
@@ -216,8 +216,7 @@
 
   function answer(p: PagePrompt, yes: boolean) {
     removePrompt(p.id);
-    if (p.kind === "permission") api.browserPermission(p.id, yes).catch((e) => dispatch("error", { text: String(e) }));
-    else if (p.kind === "external") api.browserExternal(p.id, yes).catch((e) => dispatch("error", { text: String(e) }));
+    if (p.kind === "external") api.browserExternal(p.id, yes).catch((e) => dispatch("error", { text: String(e) }));
     else if (yes && p.url) dispatch("openTab", { url: p.url });
   }
 
@@ -298,12 +297,7 @@
     {@const p = prompt}
 
     <div class="infobar" role="status">
-      {#if p.kind === "permission"}
-        <Icon name="shield" />
-        <span class="ask"><b>{hostOf(p.origin ?? "")}</b> wants to {permissionText(p.permission ?? "")}</span>
-        <button class="btn" on:click={() => answer(p, false)}>Block</button>
-        <button class="btn primary" on:click={() => answer(p, true)}>Allow</button>
-      {:else if p.kind === "external"}
+      {#if p.kind === "external"}
         <Icon name="external" />
         <span class="ask">Open this link in {appFor(p.url ?? "")}? <span class="link">{p.url}</span></span>
         <button class="btn" on:click={() => answer(p, false)}>Cancel</button>
@@ -487,9 +481,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text);
-  }
-  .ask b {
-    font-weight: 600;
   }
   .link {
     margin-left: var(--space);

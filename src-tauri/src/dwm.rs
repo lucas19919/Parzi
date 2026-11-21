@@ -1,28 +1,17 @@
 #![allow(unsafe_code, reason = "Win32 window and WebView2 calls")]
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2AcceleratorKeyPressedEventArgs, ICoreWebView2Controller,
-    ICoreWebView2Deferral, ICoreWebView2Environment, ICoreWebView2PermissionRequestedEventArgs,
-    ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2_15, ICoreWebView2_19,
-    ICoreWebView2_3, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
-    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
-    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, COREWEBVIEW2_PERMISSION_KIND,
-    COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
-    COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
-    COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
-    COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
-    COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
-    COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS, COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
-    COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
-    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_PHYSICAL_KEY_STATUS,
-    COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+    ICoreWebView2Environment, ICoreWebView2_15, ICoreWebView2_19, ICoreWebView2_3,
+    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, COREWEBVIEW2_PROCESS_FAILED_KIND,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
     COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
     COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
 };
@@ -32,8 +21,8 @@ use webview2_com::{
     ContainsFullScreenElementChangedEventHandler, ExecuteScriptCompletedHandler,
     FaviconChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
     NavigationCompletedEventHandler, NavigationStartingEventHandler,
-    NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler,
-    TrySuspendCompletedHandler, WebMessageReceivedEventHandler, WindowCloseRequestedEventHandler,
+    NewWindowRequestedEventHandler, ProcessFailedEventHandler, TrySuspendCompletedHandler,
+    WebMessageReceivedEventHandler, WindowCloseRequestedEventHandler,
     ZoomFactorChangedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
@@ -50,16 +39,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 static PAGE_ENV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
-static NEXT: AtomicU64 = AtomicU64::new(1);
-
-struct Asked {
-    args: ICoreWebView2PermissionRequestedEventArgs,
-    deferral: ICoreWebView2Deferral,
-    tab: String,
-}
 
 thread_local! {
-    static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
     static NEW_WINDOW: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
 }
 
@@ -318,34 +299,6 @@ pub fn set_devtools<R: tauri::Runtime>(wv: &tauri::Webview<R>, on: bool) {
     });
 }
 
-pub fn answer_permission(id: &str, allow: bool) {
-    let Some(asked) = ASKED.with(|m| m.borrow_mut().remove(id)) else {
-        return;
-    };
-    let state = if allow {
-        COREWEBVIEW2_PERMISSION_STATE_ALLOW
-    } else {
-        COREWEBVIEW2_PERMISSION_STATE_DENY
-    };
-    unsafe {
-        let _ = asked.args.SetState(state);
-        let _ = asked.deferral.Complete();
-    }
-}
-
-pub fn drop_permissions(tab: &str) {
-    let ids: Vec<String> = ASKED.with(|m| {
-        m.borrow()
-            .iter()
-            .filter(|(_, a)| a.tab == tab)
-            .map(|(id, _)| id.clone())
-            .collect()
-    });
-    for id in ids {
-        answer_permission(&id, false);
-    }
-}
-
 pub fn user_opened(url: &str) -> bool {
     NEW_WINDOW.with(|slot| match slot.borrow_mut().take() {
         Some((asked, user)) if crate::browser::same_page(&asked, url) => user,
@@ -367,11 +320,6 @@ pub enum PageSignal {
     Background(String),
     Crashed(&'static str),
     Favicon(String),
-    Permission {
-        id: String,
-        origin: String,
-        kind: &'static str,
-    },
     CloseRequested,
 }
 
@@ -382,7 +330,6 @@ pub enum Role {
 }
 
 pub struct Hook {
-    pub tab: String,
     pub role: Role,
     pub devtools: bool,
 }
@@ -537,7 +484,6 @@ fn hook_page(
             })),
             &raw mut token,
         )?;
-        hook_permissions(&core, signal.clone(), hook.tab.clone())?;
         core.add_NewWindowRequested(
             &NewWindowRequestedEventHandler::create(Box::new(|_, args| {
                 let Some(args) = args else { return Ok(()) };
@@ -707,77 +653,6 @@ unsafe fn favicon(core: &ICoreWebView2_15, signal: Rc<dyn Fn(PageSignal)>) {
             Ok(())
         })),
     );
-}
-
-fn permission_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> Option<&'static str> {
-    Some(match kind {
-        COREWEBVIEW2_PERMISSION_KIND_CAMERA => "camera",
-        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => "microphone",
-        COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION => "geolocation",
-        COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS => "notifications",
-        COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS => "sensors",
-        COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ => "clipboard",
-        COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS => "downloads",
-        COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE => "files",
-        COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS => "fonts",
-        COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES => "midi",
-        COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT => "windows",
-        _ => return None,
-    })
-}
-
-fn hook_permissions(
-    core: &ICoreWebView2,
-    signal: Rc<dyn Fn(PageSignal)>,
-    tab: String,
-) -> windows::core::Result<()> {
-    let mut token = 0i64;
-    unsafe {
-        core.add_PermissionRequested(
-            &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else { return Ok(()) };
-                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
-                args.PermissionKind(&raw mut kind)?;
-                let Some(name) = permission_name(kind) else {
-                    return Ok(());
-                };
-                if let Ok(args3) = args.cast::<ICoreWebView2PermissionRequestedEventArgs3>() {
-                    let _ = args3.SetSavesInProfile(false);
-                }
-                let mut uri = PWSTR::null();
-                args.Uri(&raw mut uri)?;
-                let Some(origin) = crate::siteprefs::site_origin(&take_pwstr(uri)) else {
-                    return args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY);
-                };
-                match crate::siteprefs::decision(&origin, name) {
-                    Some(true) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW),
-                    Some(false) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY),
-                    None => {
-                        let deferral = args.GetDeferral()?;
-                        let id = format!("p{}", NEXT.fetch_add(1, Ordering::Relaxed));
-                        ASKED.with(|m| {
-                            m.borrow_mut().insert(
-                                id.clone(),
-                                Asked {
-                                    args: args.clone(),
-                                    deferral,
-                                    tab: tab.clone(),
-                                },
-                            )
-                        });
-                        signal(PageSignal::Permission {
-                            id,
-                            origin,
-                            kind: name,
-                        });
-                        Ok(())
-                    }
-                }
-            })),
-            &raw mut token,
-        )?;
-    }
-    Ok(())
 }
 
 fn page_color(json: &str) -> Option<String> {
@@ -965,25 +840,5 @@ mod tests {
             ),
             None
         );
-    }
-
-    #[test]
-    fn every_prompted_permission_can_be_remembered() {
-        for kind in [
-            COREWEBVIEW2_PERMISSION_KIND_CAMERA,
-            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
-            COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
-            COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS,
-            COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
-            COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
-            COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
-            COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE,
-            COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS,
-            COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
-            COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT,
-        ] {
-            let name = permission_name(kind).unwrap();
-            assert!(crate::siteprefs::KINDS.contains(&name), "{name}");
-        }
     }
 }

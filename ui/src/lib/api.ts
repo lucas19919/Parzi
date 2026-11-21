@@ -308,7 +308,6 @@ export const api = {
   browserFocus: (tab: string) => invoke<void>("browser_focus", { tab }),
   browserRecover: (tab: string) => invoke<void>("browser_recover", { tab }),
   browserExternal: (id: string, open: boolean) => invoke<void>("browser_external", { id, open }),
-  browserPermission: (id: string, allow: boolean) => invoke<void>("browser_permission", { id, allow }),
   browserSnapshot: (tab: string) => invoke<string>("browser_snapshot", { tab }),
   searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
@@ -487,31 +486,21 @@ export interface PageEvent {
 }
 
 export interface BrowserAsk {
-  kind: "permission" | "external";
+  kind: "external";
   id: string;
   tab: string;
-  origin?: string;
-  permission?: string;
   url?: string;
-}
-
-export interface SitePermission {
-  origin: string;
-  kind: string;
-  allow: boolean;
 }
 
 export interface BrowserPrefs {
   devtools: boolean;
   agentSignIns: boolean;
-  sites: SitePermission[];
   windows: boolean;
 }
 
 export const browserPrefs = {
   get: () => invoke<BrowserPrefs>("browser_prefs"),
   set: (name: "devtools" | "agentSignIns", on: boolean) => invoke<BrowserPrefs>("browser_set_pref", { name, on }),
-  forget: (origin: string, kind: string | null = null) => invoke<BrowserPrefs>("browser_forget_site", { origin, kind }),
 };
 
 export function onBrowserAsk(cb: (a: BrowserAsk) => void) {

@@ -61,7 +61,7 @@ if (mockView === "manager") {
   document.querySelector<HTMLElement>(".topbar .manager-btn")?.click();
 }
 if (mockView === "page") {
-  await emit("parzi://browser-ask", { kind: "permission", id: "p1", tab: "t-page", origin: "https://meet.google.com", permission: "camera" });
+  await emit("parzi://browser-ask", { kind: "external", id: "x1", tab: "t-page", url: "zoommtg://zoom.us/join?confno=1" });
 }
 await emit("parzi://run-event", {
   kind: "approval",

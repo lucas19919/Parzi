@@ -1,8 +1,10 @@
-use std::sync::OnceLock;
+use std::path::PathBuf;
+use std::sync::{OnceLock, PoisonError, RwLock};
 use std::time::Duration;
 
 use parzi_core::config::ParziConfig;
 use parzi_providers::ProviderStatus;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
@@ -355,9 +357,124 @@ pub async fn warm_agent(state: State<'_, AppState>, provider: String) -> Result<
     Ok(())
 }
 
+/// Settings for web pages, kept in `browser.json` under the keys they always
+/// had. Older files also hold remembered site permissions; those are ignored.
+const PAGE_PREFS_FILE: &str = "browser.json";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PagePrefs {
+    pub devtools: bool,
+    pub agent_sign_ins: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PagePrefsView {
+    devtools: bool,
+    agent_sign_ins: bool,
+    windows: bool,
+}
+
+static PAGE_PREFS: RwLock<Option<PagePrefs>> = RwLock::new(None);
+
+fn page_prefs_path() -> Option<PathBuf> {
+    parzi_core::paths::parzi_dir()
+        .ok()
+        .map(|d| d.join(PAGE_PREFS_FILE))
+}
+
+fn load_page_prefs() -> PagePrefs {
+    page_prefs_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn page_prefs() -> PagePrefs {
+    if let Some(p) = PAGE_PREFS
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+    {
+        return p.clone();
+    }
+    let mut slot = PAGE_PREFS.write().unwrap_or_else(PoisonError::into_inner);
+    slot.get_or_insert_with(load_page_prefs).clone()
+}
+
+pub fn devtools() -> bool {
+    page_prefs().devtools
+}
+
+pub fn agent_sign_ins() -> bool {
+    page_prefs().agent_sign_ins
+}
+
+fn save_page_prefs() -> Result<(), String> {
+    static SAVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = SAVE.lock().unwrap_or_else(PoisonError::into_inner);
+    let path = page_prefs_path().ok_or("no Parzi folder")?;
+    let text = serde_json::to_vec_pretty(&page_prefs()).map_err(|e| e.to_string())?;
+    parzi_core::error::atomic_write(&path, &text).map_err(|e| e.to_string())
+}
+
+fn page_prefs_view(p: &PagePrefs) -> PagePrefsView {
+    PagePrefsView {
+        devtools: p.devtools,
+        agent_sign_ins: p.agent_sign_ins,
+        windows: cfg!(windows),
+    }
+}
+
+#[tauri::command]
+pub fn browser_prefs() -> PagePrefsView {
+    page_prefs_view(&page_prefs())
+}
+
+#[tauri::command]
+pub async fn browser_set_pref(
+    app: AppHandle,
+    name: String,
+    on: bool,
+) -> Result<PagePrefsView, String> {
+    let prefs = {
+        let mut slot = PAGE_PREFS.write().unwrap_or_else(PoisonError::into_inner);
+        let prefs = slot.get_or_insert_with(load_page_prefs);
+        match name.as_str() {
+            "devtools" => prefs.devtools = on,
+            "agentSignIns" => prefs.agent_sign_ins = on,
+            _ => return Err(format!("unknown browser setting {name}")),
+        }
+        prefs.clone()
+    };
+    tauri::async_runtime::spawn_blocking(save_page_prefs)
+        .await
+        .map_err(|e| e.to_string())??;
+    if name == "devtools" {
+        crate::browser::apply_devtools(&app, on);
+    }
+    Ok(page_prefs_view(&prefs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_prefs_keep_their_keys_and_default_off() {
+        let p: PagePrefs = serde_json::from_str("{}").unwrap();
+        assert!(!p.devtools && !p.agent_sign_ins);
+        let old =
+            r#"{"devtools":true,"agent_sign_ins":true,"sites":{"https://a.com":{"camera":true}}}"#;
+        let p: PagePrefs = serde_json::from_str(old).unwrap();
+        assert!(
+            p.devtools && p.agent_sign_ins,
+            "a file from before keeps its values"
+        );
+        let back: PagePrefs = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
+    }
 
     #[test]
     fn a_set_or_edited_agent_program_is_confirmed() {

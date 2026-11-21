@@ -28,7 +28,6 @@ static SHOWN: Mutex<String> = Mutex::new(String::new());
 static LRU: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static RESTING: Mutex<BTreeMap<String, Rest>> = Mutex::new(BTreeMap::new());
 static OFFERS: Mutex<BTreeMap<String, Offer>> = Mutex::new(BTreeMap::new());
-static ASKING: Mutex<BTreeMap<String, (String, String)>> = Mutex::new(BTreeMap::new());
 static WORKER: OnceLock<Sender<Work>> = OnceLock::new();
 
 #[derive(Clone)]
@@ -579,7 +578,7 @@ fn agent_profile(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 fn open_page(app: &AppHandle, window: &tauri::Window, job: &Fit) -> Option<Webview> {
     let slot = locked(&TABS).get(&job.label).cloned()?;
-    let isolated = slot.agent && !crate::siteprefs::agent_sign_ins();
+    let isolated = slot.agent && !crate::settings::agent_sign_ins();
     let builder = page_builder(app, &job.label, &slot.tab, slot.url, isolated);
     #[cfg(windows)]
     let builder = if isolated {
@@ -712,7 +711,7 @@ fn page_builder(
     let (nav_app, nav_tab) = (app.clone(), tab.to_string());
     let (open_app, open_tab, title_tab) = (app.clone(), tab.to_string(), tab.to_string());
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
-        .devtools(crate::siteprefs::devtools())
+        .devtools(crate::settings::devtools())
         .zoom_hotkeys_enabled(true)
         .background_color(backdrop())
         .on_navigation(move |url| allow_navigation(&nav_app, &nav_tab, url))
@@ -810,18 +809,17 @@ fn guess_history(label: &str, url: &str) -> (bool, bool) {
 }
 
 #[cfg(windows)]
-fn hook_for(tab: String, role: crate::dwm::Role) -> crate::dwm::Hook {
+fn hook_for(role: crate::dwm::Role) -> crate::dwm::Hook {
     crate::dwm::Hook {
-        tab,
         role,
-        devtools: crate::siteprefs::devtools(),
+        devtools: crate::settings::devtools(),
     }
 }
 
 #[cfg(windows)]
 fn watch_page(app: &AppHandle, wv: &Webview, tab: String) {
     let label = wv.label().to_string();
-    let hook = hook_for(tab.clone(), crate::dwm::Role::Page);
+    let hook = hook_for(crate::dwm::Role::Page);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(wv, hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -834,7 +832,7 @@ fn watch_page(app: &AppHandle, wv: &Webview, tab: String) {
 #[cfg(windows)]
 fn watch_popup(app: &AppHandle, window: &tauri::WebviewWindow, tab: String) {
     let label = window.label().to_string();
-    let hook = hook_for(tab.clone(), crate::dwm::Role::Popup);
+    let hook = hook_for(crate::dwm::Role::Popup);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(window.as_ref(), hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -883,14 +881,6 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
         }
         PageSignal::Favicon(icon) => {
             tell(app, BROWSER, json!({ "tab": tab, "favicon": icon }));
-        }
-        PageSignal::Permission { id, origin, kind } => {
-            locked(&ASKING).insert(id.clone(), (origin.clone(), kind.to_string()));
-            tell(
-                app,
-                ASK,
-                json!({ "kind": "permission", "id": id, "tab": tab, "origin": origin, "permission": kind }),
-            );
         }
         PageSignal::CloseRequested => {
             let (app, label) = (app.clone(), label.to_string());
@@ -961,24 +951,6 @@ pub async fn browser_external(id: String, open: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn browser_permission(app: AppHandle, id: String, allow: bool) -> Result<(), String> {
-    let asked = locked(&ASKING).remove(&id);
-    if let Some((origin, kind)) = asked {
-        crate::siteprefs::remember(origin, kind, allow).await?;
-    }
-    #[cfg(windows)]
-    {
-        app.run_on_main_thread(move || crate::dwm::answer_permission(&id, allow))
-            .map_err(|e| e.to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (app, id);
-        Ok(())
-    }
-}
-
 pub fn apply_devtools(app: &AppHandle, on: bool) {
     for (label, wv) in app.webviews() {
         if label.starts_with(PAGE_PREFIX) || label.starts_with(POPUP_PREFIX) {
@@ -992,7 +964,7 @@ pub fn apply_devtools(app: &AppHandle, on: bool) {
 
 pub fn warm_up() {
     std::thread::spawn(|| {
-        let _ = crate::siteprefs::get();
+        let _ = crate::settings::page_prefs();
     });
 }
 
@@ -1132,11 +1104,6 @@ pub fn browser_close(app: AppHandle, tab: &str) -> Result<(), String> {
     locked(&OFFERS).retain(|_, o| o.tab != tab);
     #[cfg(not(windows))]
     locked(&GUESSES).remove(&label);
-    #[cfg(windows)]
-    {
-        let tab = tab.to_string();
-        let _ = app.run_on_main_thread(move || crate::dwm::drop_permissions(&tab));
-    }
     match app.get_webview(&label) {
         Some(wv) => wv.close().map_err(|e| e.to_string()),
         None => Ok(()),

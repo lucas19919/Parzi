@@ -415,11 +415,6 @@ const browserPrefs = {
   devtools: false,
   agentSignIns: false,
   windows: true,
-  sites: [
-    { origin: "https://meet.google.com", kind: "camera", allow: true },
-    { origin: "https://meet.google.com", kind: "microphone", allow: true },
-    { origin: "https://news.example.com", kind: "notifications", allow: false },
-  ],
 };
 
 const mockHosts = [
@@ -608,10 +603,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   browser_set_pref: (a) => {
     if (a.name === "devtools") browserPrefs.devtools = !!a.on;
     if (a.name === "agentSignIns") browserPrefs.agentSignIns = !!a.on;
-    return browserPrefs;
-  },
-  browser_forget_site: (a) => {
-    browserPrefs.sites = browserPrefs.sites.filter((s) => !(s.origin === a.origin && (!a.kind || s.kind === a.kind)));
     return browserPrefs;
   },
   onboard_scan: () => scan,

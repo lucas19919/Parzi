@@ -4,8 +4,6 @@ import {
   appFor,
   iconFor,
   originOf,
-  permissionName,
-  permissionText,
   popClosed,
   popReopenable,
   pushClosed,
@@ -71,10 +69,7 @@ test("favicons: a reported icon wins, else the site's /favicon.ico", () => {
   assert.deepEqual(Object.keys(capped), ["https://s2.com", "https://s3.com", "https://s4.com"]);
 });
 
-test("prompts name the permission and the app in plain words", () => {
-  assert.equal(permissionText("camera"), "use your camera");
-  assert.equal(permissionText("teleport"), "use a browser feature");
-  assert.equal(permissionName("geolocation"), "Location");
+test("prompts name the app in plain words", () => {
   assert.equal(appFor("zoommtg://zoom.us/join?confno=1"), "Zoom");
   assert.equal(appFor("mailto:a@b.c"), "your email app");
   assert.equal(appFor("foo+bar:thing"), "the app for foo+bar links");

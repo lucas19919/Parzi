@@ -31,8 +31,6 @@ const MAP = {
   wrench: "wrench",
   folder: "folder",
   project: "layers",
-  shield: "shield",
-  key: "key-round",
   clock: "clock",
   bot: "bot",
   file: "file",

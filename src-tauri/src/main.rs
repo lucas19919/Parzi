@@ -31,7 +31,6 @@ mod remote;
 mod search;
 mod sessions;
 mod settings;
-mod siteprefs;
 mod updates;
 mod watchdog;
 mod worktree;
@@ -792,10 +791,8 @@ fn main() {
             browser::browser_focus,
             browser::browser_recover,
             browser::browser_external,
-            browser::browser_permission,
-            siteprefs::browser_prefs,
-            siteprefs::browser_set_pref,
-            siteprefs::browser_forget_site,
+            settings::browser_prefs,
+            settings::browser_set_pref,
             search::search_suggest,
             settings::connector_check,
             settings::connector_sign_in,

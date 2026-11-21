@@ -3,9 +3,7 @@ import { writable } from "svelte/store";
 export interface PagePrompt {
   id: string;
   tab: string;
-  kind: "permission" | "external" | "popup";
-  origin?: string;
-  permission?: string;
+  kind: "external" | "popup";
   url?: string;
 }
 
