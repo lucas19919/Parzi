@@ -154,7 +154,7 @@ fixed: `harness.rs` now returns `Dispatch::Failed`.
 | Spin out agents on any ACP | `session_spawn` with `models_list`. | `wait` polls the store for up to 180 s inside the parent's tool call. ACP has no `session/load`, so a follow-up turn in one run starts empty. A non-gated child refuses to start in read-only mode. |
 | Switch agents easily | Switch model keeps the thread. | The handoff is lossy (12k characters, tool output cut to 500), A→B→A loses A, and the message is duplicated. |
 
-## Status (2026-11-22, branch `cut-down`)
+## Status (2026-11-22, merged into main)
 
 | Step | State | Left |
 | --- | --- | --- |
