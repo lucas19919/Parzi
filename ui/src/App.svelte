@@ -1082,12 +1082,14 @@
 
   /** Sends given words (and files) from a tab as the next message, leaving
    *  the draft in its composer as it is. */
-  function sendText(target: Tab, text: string, files: string[] = []) {
-    return send({ target, text, files });
+  function sendText(target: Tab, text: string, files: string[] = [], resend = false) {
+    return send({ target, text, files, resend });
   }
 
-  /** Sends the composer's draft, or given words from a tab (sendText). */
-  async function send(given?: { target: Tab; text: string; files: string[] }) {
+  /** Sends the composer's draft, or given words from a tab (sendText). With
+   *  `resend`, the words are the session's last message, already in the
+   *  thread: the engine sends it again without recording it twice. */
+  async function send(given?: { target: Tab; text: string; files: string[]; resend?: boolean }) {
     const target = given?.target ?? tab;
     target.composer = ensureComposer(target.composer);
     const draft = target.composer;
@@ -1138,12 +1140,24 @@
     }
     const wasDraft = threads.find((t) => t.id === target.sessionId)?.status === "draft";
     if (target.sessionId && otherAgent && !wasDraft) toast(`${nameOf(agentOf(draft.model))} takes over this thread, with the conversation so far`);
-    act({ type: "begin", key, text: prompt, users: fresh ? 0 : usersOf(key) });
+    const resend = !!given?.resend && !fresh;
+    // A resend adds no message to the thread, so nothing waits for one.
+    act({ type: "begin", key, text: prompt, users: fresh ? 0 : usersOf(key) - (resend ? 1 : 0) });
     if (!given) forgetDraft(target);
     clearDraft();
     void scrollToBottom(true);
     try {
-      const sid = await api.sendMessage({
+      if (resend && target.sessionId) {
+        await api.resendLast({
+          sessionId: target.sessionId,
+          model: draft.model,
+          cwd: where,
+          effort: draft.effort,
+          attachments: files,
+          mode: permission,
+        });
+      }
+      const sid = resend && target.sessionId ? target.sessionId : await api.sendMessage({
         sessionId: fresh ? null : target.sessionId,
         model: draft.model,
         prompt,
@@ -1496,7 +1510,7 @@
       .replace(/\n?\[attached: [^\]]+\]/, "")
       .replace(/\n*<side-task[^>]*>[\s\S]*?<\/side-task>\n*/, "")
       .trimEnd();
-    void sendText(tab, text, attachedPaths(last.text));
+    void sendText(tab, text, attachedPaths(last.text), true);
   }
 
   async function remove(id: string) {

@@ -22,7 +22,8 @@ test("showing a page does not take focus from the shell", () => {
   const call = src("api.ts").match(/invoke<void>\("browser_show", \{([^}]*)\}\)/);
   assert.ok(call, "api.ts calls browser_show");
   assert.equal(call[1].includes("focus"), false);
-  const rust = readFileSync(new URL("../../src-tauri/src/browser.rs", import.meta.url), "utf8");
+  // Line endings normalised: a Windows checkout has CRLF.
+  const rust = readFileSync(new URL("../../src-tauri/src/browser.rs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const between = (from: string, to: string) => rust.slice(rust.indexOf(from), rust.indexOf(to, rust.indexOf(from)));
   const show = between("pub fn browser_show(", "\n}\n");
   const mount = between("fn mount_page(", "\n}\n");

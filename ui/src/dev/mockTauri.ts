@@ -659,6 +659,9 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return { label: "box", user: "dev", host: "box.example.net", version: "0.1.32", linked_at: Date.now(), alive: true, synced_at: Date.now(), device: "pc" };
   },
   // ?late=1: a new session's run has not recorded the message yet when the app reloads.
+  resend_last: (a) => {
+    if (runMs) startRun(a.sessionId as string, "");
+  },
   send_message: (a) => {
     const sid = (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : params.get("late") ? "s-new" : "s1");
     if (runMs) startRun(sid, a.prompt as string);

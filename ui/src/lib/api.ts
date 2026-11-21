@@ -237,6 +237,16 @@ export const api = {
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),
   rewindThread: (id: string, nth: number) => invoke<SessionMeta>("rewind_thread", { id, nth }),
+  /** Sends the session's last message again to `model`, without a second copy in the thread. */
+  resendLast: (a: { sessionId: string; model: string; cwd: string; effort: string; attachments: string[]; mode: string }) =>
+    invoke<void>("resend_last", {
+      sessionId: a.sessionId,
+      model: a.model,
+      cwd: a.cwd,
+      effort: a.effort,
+      attachments: a.attachments,
+      mode: a.mode,
+    }),
   /** Answers a proposed plan: yes saves it as the plan; the card goes either way. */
   answerPlanProposal: (id: string, accept: boolean) => invoke<SessionMeta>("answer_plan_proposal", { id, accept }),
   compactThread: (id: string) => invoke<string>("compact_thread", { id }),
