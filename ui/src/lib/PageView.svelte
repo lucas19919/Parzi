@@ -14,10 +14,19 @@
   import { appFor } from "./pageRules";
   import { toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
+  import { qrPath } from "./qr";
   import { NO_VEIL, stepVeil, type Veil } from "./veil";
 
   export let tab: Tab;
   export let immersive = false;
+  /** Full screen over a session: offer laptop and phone sizes and a QR code. */
+  export let devices = false;
+  /** The address a phone can open for this page, when its server prints one. */
+  export let phoneLink: string | null = null;
+
+  let device: "laptop" | "phone" = "laptop";
+  let qrOpen = false;
+  $: qr = qrOpen && phoneLink ? qrPath(phoneLink) : null;
 
   const dispatch = createEventDispatcher<{
     navigate: { url: string };
@@ -284,6 +293,26 @@
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
         <Icon name="pin" size={14} />
       </button>
+      {#if devices}
+        <div class="devices">
+          <button class="nav" class:on={device === "laptop"} aria-pressed={device === "laptop"} use:tooltip={"Laptop width"} on:click={() => (device = "laptop")}>
+            <Icon name="laptop" size={14} />
+          </button>
+          <button class="nav" class:on={device === "phone"} aria-pressed={device === "phone"} use:tooltip={"Phone width"} on:click={() => (device = "phone")}>
+            <Icon name="phone" size={14} />
+          </button>
+        </div>
+        <button
+          class="nav"
+          class:on={qrOpen}
+          aria-pressed={qrOpen}
+          disabled={!phoneLink}
+          use:tooltip={phoneLink ? "Open on your phone" : "No address a phone can reach: start the dev server with --host"}
+          on:click={() => (qrOpen = !qrOpen)}
+        >
+          <Icon name="qr" size={14} />
+        </button>
+      {/if}
       <button
         class="nav"
         use:tooltip={"Open outside Parzi, in the system browser"}
@@ -318,8 +347,10 @@
       <SuggestList rows={$suggest.rows} active={$suggest.active} typed={$suggest.typed} on:pick={(e) => pick(e.detail.row)} on:hover={(e) => suggest.hover(e.detail.index)} />
     </div>
   {/if}
+  <div class="stage">
   <div
     class="slot"
+    class:phone={devices && device === "phone"}
     class:empty={!url}
     class:dark={immersive}
     style={!immersive && tab.bg && !tab.crashed ? `background:${tab.bg}` : ""}
@@ -348,6 +379,17 @@
         {#if snapshot}<img class="snap blur" src={snapshot} alt="" draggable="false" />{/if}
       </div>
     {/if}
+  </div>
+  {#if qr && phoneLink}
+    <aside class="qr" aria-label="Open on your phone">
+      <svg viewBox="-2 -2 {qr.size + 4} {qr.size + 4}" role="img" aria-label="QR code for {phoneLink}">
+        <rect x="-2" y="-2" width={qr.size + 4} height={qr.size + 4} fill="#fff" />
+        <path d={qr.d} fill="#000" />
+      </svg>
+      <p class="qr-url">{phoneLink}</p>
+      <p class="qr-hint">Scan it with your phone's camera. The phone has to be on the same network or tailnet.</p>
+    </aside>
+  {/if}
   </div>
 </div>
 
@@ -487,6 +529,52 @@
     margin-left: var(--space);
     color: var(--muted);
   }
+  .stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: var(--gap);
+    margin: 0 var(--gap) var(--gap);
+  }
+  .slot.phone {
+    flex: 0 1 390px;
+    margin-inline: auto;
+  }
+  .devices {
+    display: flex;
+    gap: var(--space);
+  }
+  .qr {
+    flex: none;
+    width: 220px;
+    align-self: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space);
+    padding: calc(var(--space) * 3);
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
+    border-radius: var(--radius);
+  }
+  .qr svg {
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-in);
+  }
+  .qr-url {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .qr-hint {
+    margin: 0;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
   .slot {
     position: relative;
     flex: 1;
@@ -494,7 +582,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0 var(--gap) var(--gap);
     border: 1px solid var(--line);
     border-radius: var(--radius-in);
     overflow: hidden;

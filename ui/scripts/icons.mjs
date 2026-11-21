@@ -52,6 +52,9 @@ const MAP = {
   checkCircle: "circle-check",
   xCircle: "circle-x",
   play: "play",
+  phone: "smartphone",
+  laptop: "laptop",
+  qr: "qr-code",
 };
 
 const dir = new URL("../node_modules/lucide-static/", import.meta.url);

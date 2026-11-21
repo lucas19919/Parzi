@@ -54,6 +54,7 @@
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
   import { attachedPaths } from "./lib/format";
+  import { phoneFor } from "./lib/qr";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -390,6 +391,18 @@
   let coverTarget = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: coverComposer = coverOn && (cover === "page" || cover === "file");
+  // The address a phone can open for the page shown full screen: the same
+  // page on the network address its dev server printed, if it printed one.
+  let coverPhone: string | null = null;
+  $: void phoneLinkFor(coverOn && cover === "page" ? coverTarget : "", shown);
+  async function phoneLinkFor(target: string, session: string | null) {
+    if (!target || !session) {
+      coverPhone = null;
+      return;
+    }
+    const hosts = await api.shellHosts(session).catch(() => []);
+    coverPhone = phoneFor(target, hosts.flatMap((h) => h.urls ?? []));
+  }
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
   $: onHome = showWallpaper;
@@ -2128,6 +2141,8 @@
                 {#key coverPage.id}
                   <PageView
                     tab={coverPage}
+                    devices
+                    phoneLink={coverPhone}
                     on:navigate={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
                     on:error={(e) => toast(e.detail.text, true)}
                     on:openTab={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
