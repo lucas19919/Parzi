@@ -2143,10 +2143,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           costUsd={0}
           provider={sideMeta?.model?.split("/")[0] ?? ""}
           on:openSession={(e) => openSession(e.detail.id)}
-          on:openUrl={(e) => openPage(e.detail.url)}
           on:compact={compact}
-          reading={readerShown && fileDoc ? fileDoc.id : ""}
-          on:openFile={(e) => putFile(e.detail)}
         />
       </div>
     {:else}
@@ -2257,10 +2254,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             costUsd={meta?.cost_usd ?? 0}
             provider={meta?.model.split("/")[0] ?? ""}
             on:openSession={(e) => openSession(e.detail.id)}
-            on:openUrl={(e) => openPage(e.detail.url)}
             on:compact={compact}
-              reading={readerShown && fileDoc ? fileDoc.id : ""}
-            on:openFile={(e) => putFile(e.detail)}
           />
         </div>
       {/if}
