@@ -256,19 +256,12 @@ export const api = {
 
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
   listFiles: (root: string, query: string) => invoke<string[]>("list_files", { root, query }),
-  /** One level of a folder: folders first, then files. */
-  listDir: (path: string) => invoke<{ name: string; dir: boolean }[]>("list_dir", { path }),
   gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
   gitBranches: (cwd: string) => invoke<{ current: string; all: string[] }>("git_branches", { cwd }),
-  gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
-  gitDiff: (cwd: string, path: string) => invoke<string>("git_diff", { cwd, path }),
-  branchPrs: (cwd: string) => invoke<PrInfo[]>("branch_prs", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   artifactFrame: (html: string) => invoke<string>("artifact_frame", { html }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
-  /** The system file picker; the file the person picks is read, wherever it is. */
-  pickTextFile: (start?: string) => invoke<{ path: string; content: string } | null>("pick_text_file", { start: start || null }),
   toolImage: (session: string, path: string) => invoke<string>("tool_image", { session, path }),
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
@@ -281,9 +274,6 @@ export const api = {
   acpRegistry: () => invoke<RegistryAgent[]>("acp_registry"),
   shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
   shellHosts: (session: string) => invoke<HostJob[]>("shell_hosts", { session }),
-  shellRestartHost: (session: string, id: string) => invoke<HostJob>("shell_restart_host", { session, id }),
-  shellRemoveHost: (session: string, id: string) => invoke<boolean>("shell_remove_host", { session, id }),
-  shellLogs: (session: string, id: string) => invoke<ShellLogTail | null>("shell_logs", { session, id }),
   shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),
   contextParts: (cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { cwd }),
   connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
@@ -365,32 +355,6 @@ export interface HostJob {
   exit: number | null;
   started: number;
   ms: number;
-}
-
-export interface ShellLogTail {
-  text: string;
-  next_offset: number;
-  running: boolean;
-  exit: number | null;
-}
-
-export interface GitStatus {
-  branch: string;
-  upstream: boolean;
-  ahead: number;
-  behind: number;
-  changed: number;
-  untracked: number;
-  added: number;
-  removed: number;
-  last_subject: string;
-  last_time: number;
-  /** Changed and new files, relative to `top`. */
-  files?: string[];
-  /** The repository's root folder. */
-  top?: string;
-  /** Lines added and removed per tracked file, against HEAD. */
-  stats?: { path: string; added: number; removed: number }[];
 }
 
 export interface NoteMeta {
@@ -561,16 +525,5 @@ export function deskSync(tabs: DeskTab[], rev: number, active: string) {
 
 export function onDesk(cb: (cmd: DeskCmd) => void) {
   return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
-}
-
-/** An open pull request for a folder's repository (`branch_prs`). */
-export interface PrInfo {
-  number: number;
-  title: string;
-  url: string;
-  head: string;
-  state: "open" | "closed" | "merged";
-  draft: boolean;
-  checks: "pass" | "fail" | "pending" | "none";
 }
 

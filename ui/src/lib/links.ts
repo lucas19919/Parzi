@@ -14,7 +14,7 @@ async function copyText(text: string, label: string) {
 async function openFile(href: string) {
   const link = fileLink(href);
   if (link.kind === "note") {
-    pinNote(link.path);
+    openNote(link.path);
   } else if (link.kind === "refuse") {
     toast(link.reason, true);
   } else {
@@ -23,9 +23,9 @@ async function openFile(href: string) {
   }
 }
 
-function pinNote(path: string) {
+function openNote(path: string) {
   const unlined = path.replace(/:\d+(?::\d+)?$/, "");
-  document.dispatchEvent(new CustomEvent<string>("parzi:pin-note", { detail: unlined }));
+  document.dispatchEvent(new CustomEvent<string>("parzi:open-note", { detail: unlined }));
 }
 
 /**
@@ -53,7 +53,7 @@ export async function handleLinkClick(e: MouseEvent, folder = "", noteDir: strin
 
   if (href.startsWith("brain://") || href.startsWith("parzi:note/")) {
     const rawPath = href.replace(/^(brain:\/\/|parzi:note\/)/, "");
-    pinNote(safeDecode(rawPath).replace(/\\/g, "/"));
+    openNote(safeDecode(rawPath).replace(/\\/g, "/"));
     return true;
   }
 
@@ -67,12 +67,12 @@ export async function handleLinkClick(e: MouseEvent, folder = "", noteDir: strin
     if (!path) return true;
     const vaultRoot = /^(projects|notes|widgets)\//i.test(path);
     if (noteDir !== null && !vaultRoot && !/^([a-z]:\/|\/)/i.test(path)) {
-      pinNote(joinPath(noteDir || ".", path));
+      openNote(joinPath(noteDir || ".", path));
       return true;
     }
     const note = vaultRoot || (!folder && /\.md$/i.test(path));
     if (note) {
-      pinNote(path);
+      openNote(path);
     } else if (isBranchLike(path)) {
       // A real branch copies; anything else falls through to a file open.
       let branch = false;

@@ -1968,11 +1968,11 @@
       if (doc?.content) openArtifact(doc);
     };
     document.addEventListener("parzi:open-artifact", onOpenArtifact);
-    const onPinNote = (e: Event) => {
+    const onOpenNote = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
       if (path) void openFullNote(path);
     };
-    document.addEventListener("parzi:pin-note", onPinNote);
+    document.addEventListener("parzi:open-note", onOpenNote);
     const onOpenFile = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
       if (path) void openFullFile(path);
@@ -2037,7 +2037,7 @@
       unClear();
       document.removeEventListener("parzi:open-page", onOpenPage);
       document.removeEventListener("parzi:open-artifact", onOpenArtifact);
-      document.removeEventListener("parzi:pin-note", onPinNote);
+      document.removeEventListener("parzi:open-note", onOpenNote);
       document.removeEventListener("parzi:open-file", onOpenFile);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
