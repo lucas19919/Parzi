@@ -287,6 +287,12 @@ pub async fn answer_plan_proposal(
     accept: bool,
 ) -> Result<SessionMeta, String> {
     read_only(&id)?;
+    if remote_id(&id).is_some() {
+        return Err(
+            "Answer this plan by sending a message: plan cards on the server's sessions can't be answered here yet."
+                .into(),
+        );
+    }
     state
         .orch
         .answer_proposal(&id, accept)

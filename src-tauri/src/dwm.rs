@@ -287,13 +287,14 @@ pub fn wake_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
 
 /// Makes a page a phone through Chrome's own device mode: its screen size
 /// and pixel density (scaled down by `fit` to the space it has), its user
-/// agent, and touch for the mouse. `None` makes it a desktop page again. The
-/// page reloads so it starts over with the phone's user agent.
+/// agent, and touch for the mouse. `None` makes it a desktop page again.
+/// `reload` loads the page again, for a new user agent.
 pub fn emulate_page<R: tauri::Runtime>(
     wv: &tauri::Webview<R>,
     device: Option<crate::browser::Device>,
+    reload: bool,
 ) {
-    let calls: Vec<(&'static str, serde_json::Value)> = match &device {
+    let mut calls: Vec<(&'static str, serde_json::Value)> = match &device {
         Some(d) => vec![
             (
                 "Emulation.setDeviceMetricsOverride",
@@ -337,6 +338,10 @@ pub fn emulate_page<R: tauri::Runtime>(
             ),
         ],
     };
+    // Through the same DevTools channel, so it runs after the overrides.
+    if reload {
+        calls.push(("Page.reload", serde_json::json!({})));
+    }
     let _ = wv.with_webview(move |platform| unsafe {
         let Ok(core) = platform.controller().CoreWebView2() else {
             return;
@@ -357,7 +362,6 @@ pub fn emulate_page<R: tauri::Runtime>(
                 tracing::debug!("{method} could not be sent: {e}");
             }
         }
-        let _ = core.Reload();
     });
 }
 
@@ -484,10 +488,6 @@ pub fn watch_shell<R: tauri::Runtime>(
 
 const ANY_NAV: u64 = u64::MAX;
 
-struct Nav {
-    id: Cell<Option<u64>>,
-}
-
 #[allow(
     clippy::too_many_lines,
     reason = "one place attaches every page handler"
@@ -497,9 +497,9 @@ fn hook_page(
     hook: &Hook,
     signal: Rc<dyn Fn(PageSignal)>,
 ) -> windows::core::Result<()> {
-    let nav = Rc::new(Nav {
-        id: Cell::new(Some(ANY_NAV)),
-    });
+    // The navigation the page is on, so a late completion of an older one
+    // is ignored.
+    let nav = Rc::new(Cell::new(Some(ANY_NAV)));
     let page = hook.role == Role::Page;
     let mut token = 0i64;
     unsafe {
@@ -516,7 +516,7 @@ fn hook_page(
                 args.Cancel(&raw mut cancel)?;
                 args.NavigationId(&raw mut id)?;
                 if !cancel.as_bool() {
-                    n.id.set(Some(id));
+                    n.set(Some(id));
                     if page {
                         s(PageSignal::Loading);
                     }
@@ -534,10 +534,10 @@ fn hook_page(
                     args.NavigationId(&raw mut id)?;
                     let _ = args.IsSuccess(&raw mut ok);
                 }
-                if !matches!(n.id.get(), Some(cur) if cur == id || cur == ANY_NAV) {
+                if !matches!(n.get(), Some(cur) if cur == id || cur == ANY_NAV) {
                     return Ok(());
                 }
-                n.id.set(None);
+                n.set(None);
                 let Some(core) = core else { return Ok(()) };
                 if !page {
                     return Ok(());
@@ -627,7 +627,7 @@ fn hook_page(
         let (s, n) = (signal.clone(), nav.clone());
         core.add_HistoryChanged(
             &HistoryChangedEventHandler::create(Box::new(move |core, _| {
-                if let (None, Some(core)) = (n.id.get(), core) {
+                if let (None, Some(core)) = (n.get(), core) {
                     s(loaded(&core, true));
                 }
                 Ok(())

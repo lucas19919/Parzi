@@ -55,6 +55,8 @@
   import { deskRows, type DeskCmd } from "./lib/desk";
   import { attachedPaths } from "./lib/format";
 
+  // Phones are emulated through WebView2's device mode, so only on Windows.
+  const phonesWork = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
@@ -2128,7 +2130,7 @@
                 {#key coverPage.id}
                   <PageView
                     tab={coverPage}
-                    devices
+                    devices={phonesWork}
                     on:navigate={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
                     on:error={(e) => toast(e.detail.text, true)}
                     on:openTab={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}

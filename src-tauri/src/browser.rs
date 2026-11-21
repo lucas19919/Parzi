@@ -475,28 +475,31 @@ pub fn browser_show(
 #[tauri::command]
 pub fn browser_emulate(app: AppHandle, tab: String, device: Option<Device>) -> Result<(), String> {
     let label = page_label(&tab)?;
-    let changed = {
+    let before = {
         let mut devices = locked(&DEVICES);
-        let before = devices.get(&label).cloned();
         match &device {
             Some(d) => devices.insert(label.clone(), d.clone()),
             None => devices.remove(&label),
-        };
-        before != device
-    };
-    if changed {
-        if let Some(wv) = app.get_webview(&label) {
-            apply_device(&wv, device);
         }
+    };
+    if before == device {
+        return Ok(());
+    }
+    // A new user agent (phone to desktop, iPhone to Android) needs the page
+    // loaded again; a new size or fit does not.
+    let agent = |d: &Option<Device>| d.as_ref().map(|d| d.user_agent.clone());
+    let reload = agent(&before) != agent(&device);
+    if let Some(wv) = app.get_webview(&label) {
+        apply_device(&wv, device, reload);
     }
     Ok(())
 }
 
-fn apply_device(wv: &Webview, device: Option<Device>) {
+fn apply_device(wv: &Webview, device: Option<Device>, reload: bool) {
     #[cfg(windows)]
-    crate::dwm::emulate_page(wv, device);
+    crate::dwm::emulate_page(wv, device, reload);
     #[cfg(not(windows))]
-    let _ = (wv, device);
+    let _ = (wv, device, reload);
 }
 
 #[tauri::command]
@@ -651,8 +654,9 @@ fn open_page(app: &AppHandle, window: &tauri::Window, job: &Fit) -> Option<Webvi
     tell(app, BROWSER, json!({ "tab": slot.tab, "loading": true }));
     #[cfg(windows)]
     watch_page(app, &wv, slot.tab);
+    // Set before the first request, the phone applies to it: no reload.
     if let Some(device) = locked(&DEVICES).get(&job.label).cloned() {
-        apply_device(&wv, Some(device));
+        apply_device(&wv, Some(device), false);
     }
     Some(wv)
 }
@@ -775,25 +779,48 @@ fn page_builder(
     let builder = {
         let builder = builder.incognito(isolated);
         let (load_app, load_tab, load_label) = (app.clone(), tab.to_string(), label.to_string());
-        builder.on_page_load(move |_wv, payload| {
-            let body = match payload.event() {
-                tauri::webview::PageLoadEvent::Started => {
-                    json!({ "tab": load_tab, "loading": true })
+        let dl_app = app.clone();
+        builder
+            .on_page_load(move |_wv, payload| {
+                let body = match payload.event() {
+                    tauri::webview::PageLoadEvent::Started => {
+                        json!({ "tab": load_tab, "loading": true })
+                    }
+                    tauri::webview::PageLoadEvent::Finished => {
+                        let url = payload.url().as_str().to_string();
+                        let (back, forward) = guess_history(&load_label, &url);
+                        json!({
+                            "tab": load_tab,
+                            "loading": false,
+                            "url": url,
+                            "canGoBack": back,
+                            "canGoForward": forward,
+                        })
+                    }
+                };
+                tell(&load_app, BROWSER, body);
+            })
+            // Without a handler WebKit cancels downloads; this saves them to the
+            // Downloads folder, as a browser would.
+            .on_download(move |_wv, event| {
+                if let tauri::webview::DownloadEvent::Requested { url, destination } = event {
+                    let name = destination
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .filter(|n| !n.is_empty())
+                        .or_else(|| {
+                            url.path_segments()
+                                .and_then(Iterator::last)
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_else(|| "download".into());
+                    let Ok(dir) = dl_app.path().download_dir() else {
+                        return false;
+                    };
+                    *destination = dir.join(name);
                 }
-                tauri::webview::PageLoadEvent::Finished => {
-                    let url = payload.url().as_str().to_string();
-                    let (back, forward) = guess_history(&load_label, &url);
-                    json!({
-                        "tab": load_tab,
-                        "loading": false,
-                        "url": url,
-                        "canGoBack": back,
-                        "canGoForward": forward,
-                    })
-                }
-            };
-            tell(&load_app, BROWSER, body);
-        })
+                true
+            })
     };
     builder
 }

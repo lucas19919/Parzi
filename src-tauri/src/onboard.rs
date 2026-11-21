@@ -182,16 +182,6 @@ impl Env {
     }
 }
 
-#[cfg(test)]
-struct TempDir(PathBuf);
-
-#[cfg(test)]
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 enum Place {
     Flat(String),
     Skill(String),
@@ -1045,6 +1035,14 @@ fn import_with(env: &Env, notes: &[String], folders: &[String]) -> ImportReport 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TempDir(PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn tmp() -> TempDir {
         let p = std::env::temp_dir().join(format!("parzi-onboard-{}", uuid::Uuid::new_v4()));
