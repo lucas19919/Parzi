@@ -14,28 +14,33 @@
   import { appFor } from "./pageRules";
   import { toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
-  import { BEZEL, PHONES, phoneFit, type DeviceId } from "./devices";
+  import { PHONES, phoneFit, phoneFor, viewport, type DeviceId, type PhoneId } from "./devices";
+  import PhoneFrame from "./PhoneFrame.svelte";
   import { NO_VEIL, stepVeil, type Veil } from "./veil";
 
   export let tab: Tab;
   export let immersive = false;
-  /** Full screen over a session: offer laptop, iPhone and Android. */
+  /** Full screen over a session: offer laptop, iPhone, Android and a foldable iPhone. */
   export let devices = false;
 
   // A phone is emulated for real (screen, pixel density, user agent, touch)
-  // and drawn in a plain frame, scaled down to the room the page has.
+  // and drawn as the phone, scaled down to the room the page has. The page
+  // gets the screen below the status bar and above the home indicator.
   let device: DeviceId = "laptop";
-  const PHONE_IDS: ("iphone" | "android")[] = ["iphone", "android"];
+  let closed = false;
+  const PHONE_IDS: PhoneId[] = ["iphone", "android", "fold"];
   let roomW = 0;
   let roomH = 0;
-  $: phone = devices && device !== "laptop" ? PHONES[device] : null;
+  $: phone = devices && device !== "laptop" ? phoneFor(device, closed) : null;
+  $: view = phone ? viewport(phone) : null;
   $: fit = phone ? phoneFit(phone, { width: roomW, height: roomH }) : 1;
+  $: screenBg = tab.bg || "rgb(255, 255, 255)";
   // What the page is emulating, and what was last asked for ("" is the
   // laptop): a quick switch back cancels the switch still waiting.
   let emulated = "";
   let wanted = "";
   let emulateTimer: ReturnType<typeof setTimeout> | undefined;
-  $: syncDevice(tab.id, phone ? { width: phone.width, height: phone.height, scale: phone.scale, user_agent: phone.userAgent, fit } : null);
+  $: syncDevice(tab.id, phone && view ? { width: view.width, height: view.height, scale: phone.scale, user_agent: phone.userAgent, fit } : null);
   function syncDevice(id: string, d: Parameters<typeof api.browserEmulate>[1]) {
     const key = d ? `${id}:${JSON.stringify(d)}` : "";
     if (key === wanted) return;
@@ -311,11 +316,17 @@
             <Icon name="laptop" size={14} />
           </button>
           {#each PHONE_IDS as id (id)}
-            <button class="nav label" class:on={device === id} aria-pressed={device === id} use:tooltip={`As on ${id === "iphone" ? "an iPhone" : "an Android phone"}`} on:click={() => (device = id)}>
+            <button class="nav label" class:on={device === id} aria-pressed={device === id} use:tooltip={PHONES[id].tip} on:click={() => (device = id)}>
               <Icon name="phone" size={14} />{PHONES[id].label}
             </button>
           {/each}
         </div>
+        {#if device === "fold"}
+          <div class="devices" data-ui-segmented>
+            <button class="nav label" class:on={!closed} aria-pressed={!closed} use:tooltip={"Unfolded: the inner screen"} on:click={() => (closed = false)}>Open</button>
+            <button class="nav label" class:on={closed} aria-pressed={closed} use:tooltip={"Folded: the outer screen"} on:click={() => (closed = true)}>Closed</button>
+          </div>
+        {/if}
       {/if}
       <button
         class="nav"
@@ -352,19 +363,15 @@
     </div>
   {/if}
   <div class="stage" class:framed={!!phone} bind:clientWidth={roomW} bind:clientHeight={roomH}>
-  <div
-    class="frame"
-    class:on={!!phone}
-    style={phone ? `padding:${BEZEL * fit}px;border-radius:${44 * fit}px` : ""}
-  >
+  <PhoneFrame {phone} {fit} bg={screenBg}>
   <div
     class="slot"
     class:phone={!!phone}
-    style:width={phone ? `${phone.width * fit}px` : null}
-    style:height={phone ? `${phone.height * fit}px` : null}
-    class:empty={!url}
-    class:dark={immersive}
-    style={!immersive && tab.bg && !tab.crashed ? `background:${tab.bg}` : ""}
+    style:width={view ? `${view.width * fit}px` : null}
+    style:height={view ? `${view.height * fit}px` : null}
+    class:empty={!url && !phone}
+    class:dark={immersive && !phone}
+    style={phone ? `background:${screenBg}` : !immersive && tab.bg && !tab.crashed ? `background:${tab.bg}` : ""}
     bind:this={slot}
   >
     {#if !url}
@@ -391,7 +398,7 @@
       </div>
     {/if}
   </div>
-  </div>
+  </PhoneFrame>
   </div>
 </div>
 
@@ -538,26 +545,17 @@
     gap: var(--gap);
     margin: 0 var(--gap) var(--gap);
   }
-  .frame {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-  }
-  /* A phone: centred, in a plain frame that scales with it. */
+  /* A phone: centred, drawn by PhoneFrame. The page is a sharp rectangle
+     exactly its viewport times the fit, since the native page view is sized
+     to it; the phone's bars hide nothing. */
   .stage.framed {
     align-items: center;
     justify-content: center;
   }
-  .frame.on {
-    flex: none;
-    background: var(--surface);
-    border: 1px solid var(--edge);
-    -webkit-backdrop-filter: var(--blur);
-    backdrop-filter: var(--blur);
-  }
   .slot.phone {
     flex: none;
-    border-radius: var(--radius-in);
+    border: none;
+    border-radius: 0;
   }
   .nav.label {
     width: auto;
