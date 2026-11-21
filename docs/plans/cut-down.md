@@ -154,6 +154,24 @@ fixed: `harness.rs` now returns `Dispatch::Failed`.
 | Spin out agents on any ACP | `session_spawn` with `models_list`. | `wait` polls the store for up to 180 s inside the parent's tool call. ACP has no `session/load`, so a follow-up turn in one run starts empty. A non-gated child refuses to start in read-only mode. |
 | Switch agents easily | Switch model keeps the thread. | The handoff is lossy (12k characters, tool output cut to 500), A→B→A loses A, and the message is duplicated. |
 
+## Status (2026-11-22, branch `cut-down`)
+
+| Step | State | Left |
+| --- | --- | --- |
+| 1. Stop the bleeding | Done | Watch the logs for false "turn is quiet" warnings |
+| 2. Cut | Done | |
+| 3. One tool per job | Done, first pass | Merge `ask_user` with `ui_offer_replies`, and the session tools, if it holds up |
+| 4. One turn engine | First pass | One shared turn engine behind the three drivers; one meaning for usage; no text matching in `run.rs`; a richer handover than 12k characters. Needs live agents to verify |
+| 5. One send state | Done | |
+| 6. The session layout | Done | Agents' own browser pages are still tabs (the engine tracks them through the tab list) |
+| 7. Plans | Done | |
+| 8. Changeable environment | Project and folder done | Moving a session between this computer and the server |
+| 9. Test on any device | Phone emulator done (Windows) | Dev servers on the server don't show here (SSH port forwarding) |
+| 10. Usage for every agent | Claude and Codex | OpenCode, Grok, Antigravity and Cursor report no limits |
+
+Not verified yet: a run of the real app (only the mock window was checked),
+live agents, and the macOS build (edited, not compiled).
+
 ## Build order
 
 The pieces depend on each other in two tracks. The **engine** track lives in
@@ -266,9 +284,9 @@ leaving its tab.
 
 ### 9. Test on any device
 
-- Keep the LAN address that dev servers print.
-- Laptop and phone sizes in the full-screen page view.
-- A QR code for your real phone, with Tailscale Serve when it's installed.
+- Laptop, iPhone and Android in the full-screen page view, emulated for
+  real through WebView2's device mode (screen, pixel density, user agent,
+  touch). A QR code was tried and dropped in favour of the emulator.
 - Forward a server session's dev servers over SSH.
 
 ### 10. Usage for every agent
