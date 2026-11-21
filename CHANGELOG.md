@@ -6,6 +6,9 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Try a page on your phone: a page opened full screen over a session can switch between laptop and phone width, and its QR button holds the same page on your network address for your phone's camera. Dev servers that print a network address (Vite's "Network:" line, a Tailscale address) keep it for this.
+- Projects have a plan: a short goal and an ordered list of targets that agents keep with `project_plan`. The open targets show above the composer, with a dot on the one being worked on; work can be linked to a target when it is drafted or handed to a helper.
+- A proposed plan no longer holds the agent in the middle of a tool call: the agent stops, the plan waits on the session (even across a restart), and Accept, Not now or your own words go to it as your next message. A plan's full document is kept with the session, so the Plan pin keeps working.
 - A session's side column has four cards in a fixed order: Environment (move a stopped session to another project or folder, such as a worktree on another branch), Context, Usage (each limit of the agent in use and when it resets) and Running (what the agent did, step by step). Above the composer sit the session's pins (its dev servers and its plan) and the project's open targets. Links, pins and web searches open full screen over the session with the composer still there, instead of in a new tab.
 - Antigravity turns no longer hang for up to 20 minutes after replying: Antigravity reports its file reads finished only when the whole prompt ends, and Parzi no longer waits on those once the reply is written.
 - Agents carry less: big connectors (GitHub, IsarOS) are listed by name until an agent asks for their tools, Parzi's own instructions are a third of their old length, and a few duplicate window tools are gone. Every agent now gets the repository's instructions, whether the repo keeps them in CLAUDE.md or AGENTS.md.
