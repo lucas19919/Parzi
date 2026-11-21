@@ -328,11 +328,15 @@
     void loadBranch(folder);
     void loadProject(folder);
   }
-  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.group ?? "", t.cwd ?? ""])]);
+  // The page open over a session is on the desk too, under the id the desk
+  // gave it, so the command line can find, focus and close it.
+  $: deskTabs = coverPage ? [...tabs, coverPage] : tabs;
+  $: deskActive = coverPageOn && coverPage ? coverPage.id : activeId;
+  $: tabsKey = JSON.stringify([deskActive, deskTabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.group ?? "", t.cwd ?? ""])]);
   let lastTabsKey = "";
   $: if (tabsKey !== lastTabsKey) {
     lastTabsKey = tabsKey;
-    syncDesk(tabs, activeId);
+    syncDesk(deskTabs, deskActive);
     saveTabs(tabs, activeId);
   }
   $: pageVisible = tab.kind === "page";
@@ -378,6 +382,15 @@
   let coverTarget = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: coverComposer = coverOn && (cover === "page" || cover === "file");
+  $: coverPageOn = coverOn && cover === "page" && !!coverPage;
+  // Full screen in the page over a session (a video, say) takes the whole
+  // window: the composer and Back give way until it ends.
+  $: pageFull = immersive && coverPageOn;
+  let lastCoverPageOn = false;
+  $: if (coverPageOn !== lastCoverPageOn) {
+    lastCoverPageOn = coverPageOn;
+    if (!coverPageOn && immersive && !pageVisible) void setImmersive(false);
+  }
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
   $: onHome = showWallpaper;
@@ -861,11 +874,12 @@
   }
 
   /** A web page full screen over the current tab. A new link gets a fresh
-   *  page rather than the last one's history. */
-  function openFullPage(url: string) {
+   *  page rather than the last one's history. `id` is the one the desk
+   *  gave a page the command line opened. */
+  function openFullPage(url: string, id?: string) {
     if (!url) return;
     dropCoverPage();
-    coverPage = pageTab(url);
+    coverPage = pageTab(url, id);
     coverTarget = url;
     showCover("page");
   }
@@ -910,7 +924,13 @@
   }
 
   function openFromPage(opener: string, url: string) {
-    const from = tabs.find((t) => t.id === opener);
+    const from = pageById(opener);
+    // The page over a session keeps its place: what it opens in a new
+    // window goes to the system browser.
+    if (from && from === coverPage) {
+      api.openConfirmedUrl(url).catch(toastError);
+      return;
+    }
     if (!from?.owner) {
       openFullPage(url);
       return;
@@ -921,6 +941,10 @@
   }
 
   /** A page tab, or the page open over the thread. */
+  function pageById(id: string): Tab | null {
+    return coverPage?.id === id ? coverPage : (tabs.find((t) => t.id === id) ?? null);
+  }
+
   function patchPage(id: string, patch: Partial<Tab>) {
     if (coverPage?.id === id) coverPage = { ...coverPage, ...patch };
     else patchTab(id, patch);
@@ -944,7 +968,7 @@
   const pendingTitles = new Map<string, string>();
 
   function onPage(e: PageEvent) {
-    const t = coverPage?.id === e.tab ? coverPage : tabs.find((x) => x.id === e.tab);
+    const t = pageById(e.tab);
     if (!t) return;
     const patch: Partial<Tab> = {};
     if (e.loading !== undefined) patch.loading = e.loading;
@@ -976,7 +1000,7 @@
       }
     }
     patchPage(e.tab, patch);
-    if (e.fullscreen !== undefined && e.tab === activeId) void setImmersive(e.fullscreen);
+    if (e.fullscreen !== undefined && (e.tab === activeId || (coverPageOn && e.tab === coverPage?.id))) void setImmersive(e.fullscreen);
   }
 
   function browse(url: string) {
@@ -1760,11 +1784,17 @@
     // background; any other page opens over the current tab.
     if (cmd.op === "open" && cmd.url) {
       if (cmd.owner) openPage(cmd.url, cmd.id, cmd.owner, !cmd.focus);
-      else openFullPage(cmd.url);
+      else openFullPage(cmd.url, cmd.id);
     }
-    else if (cmd.op === "navigate" && cmd.id && cmd.url) patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
-    else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
-    else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
+    else if (cmd.op === "navigate" && cmd.id && cmd.url) patchPage(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
+    else if (cmd.op === "focus" && cmd.id) {
+      if (coverPage?.id === cmd.id) showCover("page");
+      else selectTab(cmd.id);
+    }
+    else if (cmd.op === "close" && cmd.id) {
+      if (coverPage?.id === cmd.id) clearCover();
+      else closeTab(cmd.id);
+    }
     else if (cmd.op === "show") showFromDesk(cmd);
     else if (cmd.op === "call" && cmd.id) void answerCall(cmd.id, cmd.call ?? {});
     else if (cmd.op === "theme") {
@@ -2074,8 +2104,8 @@
         {/if}
         <SessionInfo
           session={sideId}
-          project={sideMeta?.project ?? ""}
-          projectTitle={sideMeta?.project ?? ""}
+          project={sessionProject}
+          {projectTitle}
           folder={sideMeta?.cwd ?? ""}
           branch={sideMeta?.branch ?? ""}
           remoteHost=""
@@ -2096,6 +2126,7 @@
           provider={sideMeta?.model?.split("/")[0] ?? ""}
           on:openSession={(e) => openSession(e.detail.id)}
           on:compact={compact}
+          on:moved={(e) => relocated(e.detail.meta)}
         />
       </div>
     {:else}
@@ -2103,7 +2134,7 @@
         <div class="stagerow" class:solo={!hasSession && !coverOn} out:fade|local={{ duration: motion.duration }}>
           {#if hasSession || coverOn}
           <section class="session" out:fade|local={{ duration: motion.duration }}>
-            {#if coverOn || parent}
+            {#if (coverOn || parent) && !pageFull}
               <button
                 class="back icon-btn"
                 aria-label={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
@@ -2119,10 +2150,11 @@
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
               </div>
             {:else if coverOn && cover === "page" && coverPage}
-              <div class="cover under-dock" style:--dock="{dockHeight}px" transition:fade|global={motion}>
+              <div class="cover" class:under-dock={!pageFull} style:--dock="{dockHeight}px" transition:fade|global={motion}>
                 {#key coverPage.id}
                   <PageView
                     tab={coverPage}
+                    {immersive}
                     devices={phonesWork}
                     on:navigate={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
                     on:error={(e) => toast(e.detail.text, true)}
@@ -2232,7 +2264,7 @@
         </div>
       {/if}
 
-      {#if !coverOn || coverComposer}
+      {#if (!coverOn || coverComposer) && !pageFull}
       <div
         class="composer"
         class:docked={hasSession || coverOn}

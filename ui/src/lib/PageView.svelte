@@ -9,7 +9,7 @@
   import { get } from "svelte/store";
   import type { Suggestion } from "./suggest";
   import { addressSuggest } from "./addressSuggest";
-  import { addPin, bookmarks, history, pins, removePin } from "./browserData";
+  import { bookmarks, history, pins } from "./browserData";
   import { prompts, removePrompt, type PagePrompt } from "./browserState";
   import { appFor } from "./pageRules";
   import { toAddress, type Tab } from "./tabs";
@@ -30,15 +30,20 @@
   let roomH = 0;
   $: phone = devices && device !== "laptop" ? PHONES[device] : null;
   $: fit = phone ? phoneFit(phone, { width: roomW, height: roomH }) : 1;
+  // What the page is emulating, and what was last asked for ("" is the
+  // laptop): a quick switch back cancels the switch still waiting.
   let emulated = "";
+  let wanted = "";
   let emulateTimer: ReturnType<typeof setTimeout> | undefined;
   $: syncDevice(tab.id, phone ? { width: phone.width, height: phone.height, scale: phone.scale, user_agent: phone.userAgent, fit } : null);
   function syncDevice(id: string, d: Parameters<typeof api.browserEmulate>[1]) {
-    const key = `${id}:${JSON.stringify(d)}`;
-    if (key === emulated || (!d && !emulated)) return;
+    const key = d ? `${id}:${JSON.stringify(d)}` : "";
+    if (key === wanted) return;
+    wanted = key;
     clearTimeout(emulateTimer);
+    if (key === emulated) return;
     emulateTimer = setTimeout(() => {
-      emulated = d ? key : "";
+      emulated = key;
       api.browserEmulate(id, d).catch((e) => dispatch("error", { text: String(e) }));
     }, 150);
   }
@@ -83,7 +88,6 @@
   $: trackLoad(url, !!tab.loading);
   $: veiled = !!url && !tab.crashed && !!tab.loading && veil.fresh;
   $: secure = url.startsWith("https://");
-  $: pinned = $pins.some((p) => p.url === url);
   $: url, immersive, $covered, slot, tab.crashed, veiled, schedule();
   $: open = editing && $suggest.rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
@@ -235,11 +239,6 @@
     }
   }
 
-  function togglePin() {
-    if (pinned) removePin(url);
-    else addPin(url, tab.title);
-  }
-
   function answer(p: PagePrompt, yes: boolean) {
     removePrompt(p.id);
     if (p.kind === "external") api.browserExternal(p.id, yes).catch((e) => dispatch("error", { text: String(e) }));
@@ -306,9 +305,6 @@
         {/if}
         {#if tab.loading}<span class="progress" />{/if}
       </form>
-      <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
-        <Icon name="pin" size={14} />
-      </button>
       {#if devices}
         <div class="devices">
           <button class="nav" class:on={device === "laptop"} aria-pressed={device === "laptop"} use:tooltip={"As on a laptop"} on:click={() => (device = "laptop")}>
