@@ -194,6 +194,7 @@ impl Orchestrator {
     /// Sends the session's last message again, to the agent picked now (a
     /// retry after a usage limit, say). It is already in the thread, so it is
     /// not recorded a second time. Errors when the session has no message.
+    #[allow(clippy::too_many_arguments)]
     pub async fn resend_last(
         &self,
         id: &str,
