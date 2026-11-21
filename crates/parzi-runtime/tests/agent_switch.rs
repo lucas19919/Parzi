@@ -75,4 +75,42 @@ async fn another_agent_takes_over_the_same_thread_with_its_history() {
     );
     let threads = store.list().unwrap();
     assert_eq!(threads.len(), 1, "no second session");
+
+    // Back to Claude: it resumes its own session and hears only what happened
+    // while it was away, not the whole thread again.
+    orch.send_to(
+        &meta.id,
+        "check the tests",
+        None,
+        "",
+        "low",
+        vec![],
+        Some("claude".into()),
+        None,
+    )
+    .await
+    .expect("switching back is not refused");
+    settle(&store, &meta.id).await;
+    let back = claude.seen().pop().expect("claude ran again");
+    assert_eq!(
+        back.resume
+            .as_ref()
+            .and_then(|r| r.get("session_id"))
+            .and_then(|v| v.as_str()),
+        Some("claude-1"),
+        "its own session resumes: {:?}",
+        back.resume
+    );
+    assert!(
+        back.prompt.contains("<while-you-were-away>"),
+        "{}",
+        back.prompt
+    );
+    assert!(back.prompt.contains("Carrying on with the parser."));
+    assert!(
+        !back.prompt.contains("The parser is half done"),
+        "what it said itself is not repeated"
+    );
+    assert!(!back.prompt.contains("<earlier-conversation>"));
+    assert!(back.prompt.ends_with("check the tests"));
 }

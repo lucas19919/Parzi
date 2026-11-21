@@ -632,6 +632,32 @@ fn park_live(mut l: Live) {
 fn can_resume(init: &Value) -> bool {
     init.pointer("/agentCapabilities/sessionCapabilities/resume")
         .is_some_and(|v| !v.is_null())
+        || init
+            .pointer("/agentCapabilities/loadSession")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
+/// A conversation update replayed by session/load: what was said and done
+/// before. The commands list and the like still count.
+fn is_replay(m: &Incoming) -> bool {
+    let Incoming::Notification { method, params } = m else {
+        return false;
+    };
+    method == "session/update"
+        && matches!(
+            params
+                .pointer("/update/sessionUpdate")
+                .and_then(Value::as_str),
+            Some(
+                "user_message_chunk"
+                    | "agent_message_chunk"
+                    | "agent_thought_chunk"
+                    | "tool_call"
+                    | "tool_call_update"
+                    | "plan"
+            )
+        )
 }
 
 fn park(program: PathBuf, conn: Conn) {
@@ -1284,9 +1310,13 @@ async fn drive(
         .pointer("/mcpCapabilities/http")
         .and_then(Value::as_bool)
         == Some(true);
-    let can_resume = caps
+    let resume_rpc = caps
         .pointer("/sessionCapabilities/resume")
         .is_some_and(|v| !v.is_null());
+    // session/load is the stable way back into a session: the agent replays
+    // the conversation first, which Parzi already has and drops.
+    let load_rpc = caps.get("loadSession").and_then(Value::as_bool) == Some(true);
+    let can_resume = resume_rpc || load_rpc;
     let images_ok = caps
         .pointer("/promptCapabilities/image")
         .and_then(Value::as_bool)
@@ -1333,8 +1363,13 @@ async fn drive(
         commands = r.commands;
         fresh = false;
     } else if let Some(id) = earlier.filter(|_| can_resume) {
+        let method = if resume_rpc {
+            "session/resume"
+        } else {
+            "session/load"
+        };
         let resume = peer.request_within(
-            "session/resume",
+            method,
             json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
             limit,
         );
@@ -1342,6 +1377,19 @@ async fn drive(
         match resumed {
             None => return Ok(TurnEnd::Interrupted),
             Some(Ok(v)) => {
+                if !resume_rpc {
+                    // The replay came before the answer, so it is all here:
+                    // held already, or still queued.
+                    while let Ok(m) = incoming.try_recv() {
+                        match m {
+                            Incoming::Request { id, method, params } => {
+                                answers.answer(id, &method, params).await;
+                            }
+                            other => held.push(other),
+                        }
+                    }
+                    held.retain(|m| !is_replay(m));
+                }
                 session = v;
                 sid = id;
                 fresh = false;
@@ -2566,6 +2614,71 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(end, TurnEnd::Interrupted);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_agent_without_resume_loads_its_session_and_the_replay_is_dropped() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let load = read(&mut lines).await;
+            assert_eq!(load["method"], "session/load");
+            assert_eq!(load["params"]["sessionId"], "S0");
+            let note = |u: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S0", "update": u}});
+            send(&mut w, note(json!({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "old question"}}))).await;
+            send(&mut w, note(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "old answer"}}))).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": load["id"], "result": {}}),
+            )
+            .await;
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["params"]["sessionId"], "S0");
+            send(&mut w, note(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "new answer"}}))).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut s = spec(Some(json!({"session_id": "S0"})));
+        s.model = None;
+        let load_only = json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true}});
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &load_only,
+            agent("opencode").unwrap(),
+            &s,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        let mut said = String::new();
+        while let Ok(e) = rx.try_recv() {
+            if let ProviderEvent::TextDelta(t) | ProviderEvent::Message(t) = e {
+                said.push_str(&t);
+            }
+        }
+        assert!(said.contains("new answer"), "{said}");
+        assert!(
+            !said.contains("old answer"),
+            "the replay is not said again: {said}"
+        );
         server.await.unwrap();
     }
 

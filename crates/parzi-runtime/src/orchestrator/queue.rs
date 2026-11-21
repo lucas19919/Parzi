@@ -29,6 +29,22 @@ struct RunSidecar {
     report_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last: Option<Posture>,
+    /// Other agents' own sessions on this thread, kept for when it switches
+    /// back to them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    parked: Vec<Parked>,
+    /// Set when an agent comes back to its parked session: the event it left
+    /// at, so it hears what happened while it was away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    catch_up: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Parked {
+    provider: String,
+    resume: serde_json::Value,
+    /// How many events the thread had when this agent left it.
+    at: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +74,8 @@ impl RunSidecar {
             && self.session.is_none()
             && self.report_to.is_none()
             && self.last.is_none()
+            && self.parked.is_empty()
+            && self.catch_up.is_none()
     }
 }
 
@@ -157,6 +175,41 @@ pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
 #[must_use]
 pub fn run_session(session_id: &str) -> Option<VendorSession> {
     load_sidecar(session_id).session
+}
+
+/// Another agent takes the thread over. The one leaving keeps its own session
+/// parked, at `events_now`, and the one arriving gets back the session it
+/// parked earlier, if any, so going from A to B and back to A resumes A.
+pub(crate) fn switch_agent(session_id: &str, to: &str, events_now: usize) {
+    edit_sidecar(session_id, |s| {
+        if let Some(cur) = s.session.take() {
+            if cur.provider == to {
+                s.session = Some(cur);
+                return;
+            }
+            s.parked.retain(|p| p.provider != cur.provider);
+            s.parked.push(Parked {
+                provider: cur.provider,
+                resume: cur.resume,
+                at: events_now,
+            });
+        }
+        s.catch_up = None;
+        if let Some(i) = s.parked.iter().position(|p| p.provider == to) {
+            let back = s.parked.remove(i);
+            s.session = Some(VendorSession {
+                provider: back.provider,
+                resume: back.resume,
+            });
+            s.catch_up = Some(back.at);
+        }
+    });
+}
+
+/// Where a returning agent left the thread, once: the first turn after the
+/// switch reads it.
+pub(crate) fn take_catch_up(session_id: &str) -> Option<usize> {
+    edit_sidecar(session_id, |s| s.catch_up.take())
 }
 
 fn edit_sidecar<R>(session_id: &str, f: impl FnOnce(&mut RunSidecar) -> R) -> R {
@@ -438,5 +491,40 @@ impl Pump {
             Ok(super::launch::Started::Queued) => Dispatch::Queued,
             Err(e) => Dispatch::Failed(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bound(provider: &str, id: &str) -> VendorSession {
+        VendorSession {
+            provider: provider.into(),
+            resume: serde_json::json!({ "session_id": id }),
+        }
+    }
+
+    #[test]
+    fn switching_back_resumes_the_agent_s_own_session() {
+        let sid = uuid::Uuid::new_v4().to_string();
+        let dir = parzi_core::paths::sessions_dir().unwrap().join(&sid);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_run_session(&sid, Some(bound("claude", "c1")));
+
+        switch_agent(&sid, "codex", 10);
+        assert_eq!(run_session(&sid), None, "codex has no session here yet");
+        assert_eq!(take_catch_up(&sid), None);
+        set_run_session(&sid, Some(bound("codex", "x1")));
+
+        switch_agent(&sid, "claude", 25);
+        assert_eq!(run_session(&sid), Some(bound("claude", "c1")));
+        assert_eq!(take_catch_up(&sid), Some(10), "it left at event 10");
+        assert_eq!(take_catch_up(&sid), None, "read once");
+
+        switch_agent(&sid, "codex", 30);
+        assert_eq!(run_session(&sid), Some(bound("codex", "x1")));
+        assert_eq!(take_catch_up(&sid), Some(25));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

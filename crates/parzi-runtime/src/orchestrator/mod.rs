@@ -5,7 +5,7 @@ mod queue;
 mod wake;
 
 pub use queue::{run_note, BUDGET_NOTE};
-pub(crate) use queue::{run_session, set_run_note, set_run_session, VendorSession};
+pub(crate) use queue::{run_session, set_run_note, set_run_session, take_catch_up, VendorSession};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

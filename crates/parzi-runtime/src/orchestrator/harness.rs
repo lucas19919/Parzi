@@ -30,9 +30,14 @@ impl Pump {
         )))
     }
 
+    /// Waits for a session's run to settle. It wakes on that session's run
+    /// events rather than polling; the store is the truth, so each wake (and
+    /// a slow recheck, for a status written after the last event) reads it.
     async fn await_settled(&self, session_id: &str) -> Option<SessionMeta> {
-        let ticks = HARNESS_WAIT_SECS * 4;
-        for _ in 0..ticks {
+        let mut events = self.bus.subscribe();
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(HARNESS_WAIT_SECS);
+        loop {
             match self.store.get(session_id) {
                 Ok(m)
                     if matches!(
@@ -43,10 +48,27 @@ impl Pump {
                     return Some(m)
                 }
                 Err(_) => return None,
-                _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+                _ => {}
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return None;
+            }
+            let recheck = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            let wake = recheck.min(deadline);
+            loop {
+                tokio::select! {
+                    got = events.recv() => match got {
+                        Ok((sid, _)) if sid == session_id => break,
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            tokio::time::sleep_until(wake).await;
+                            break;
+                        }
+                    },
+                    () = tokio::time::sleep_until(wake) => break,
+                }
             }
         }
-        None
     }
 
     fn reply_json(&self, session_id: &str, meta: &SessionMeta, note: Option<&str>) -> String {

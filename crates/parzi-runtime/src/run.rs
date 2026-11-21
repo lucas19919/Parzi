@@ -98,6 +98,44 @@ struct Turn {
     started: HashMap<String, Instant>,
 }
 
+/// The thread as lines another agent can read: what was said, and each tool
+/// call and its result, shortened.
+fn transcript_lines(events: &[Event]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::User { text } => Some(format!("user: {text}")),
+            Event::Assistant { text, .. } => Some(format!("assistant: {text}")),
+            Event::ToolCall { name, args, .. } => {
+                let a: String = fold(&args.to_string()).chars().take(200).collect();
+                Some(format!("tool_call: {name} {a}"))
+            }
+            Event::ToolResult {
+                name, ok, output, ..
+            } => {
+                let out: String = output.chars().take(500).collect();
+                Some(format!("tool_result({name}, ok={ok}): {out}"))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The newest lines that fit in `max` characters, oldest first.
+fn newest_within(lines: Vec<String>, max: usize) -> Vec<String> {
+    let mut kept: Vec<String> = vec![];
+    let mut size = 0;
+    for line in lines.into_iter().rev() {
+        size += line.len();
+        if size > max {
+            break;
+        }
+        kept.push(line);
+    }
+    kept.reverse();
+    kept
+}
+
 fn cancel_notice(text: &str) -> bool {
     let t = text.trim().to_ascii_lowercase();
     !t.is_empty() && t.len() <= 100 && (t.contains("cancelled") || t.contains("canceled"))
@@ -419,6 +457,10 @@ impl EngineRun {
             if let Some(p) = self.plan_note() {
                 parts.push(p);
             }
+        } else if let Some(at) = crate::orchestrator::take_catch_up(&self.p.session_id) {
+            if let Some(h) = self.while_away(at, prompt) {
+                parts.push(h);
+            }
         }
         for a in self.p.attachments.iter().filter(|a| !a.is_image()) {
             parts.push(format!(
@@ -447,10 +489,34 @@ impl EngineRun {
             })
             .collect();
         Some(format!(
-            "<session-plan>\nThis session's plan so far ({} of {} done). Keep it current with todo.write.\n{}\n</session-plan>",
+            "<session-plan>\nThis session's plan so far ({} of {} done). Keep it current with plan_write.\n{}\n</session-plan>",
             plan.done(),
             plan.items.len(),
             lines.join("\n")
+        ))
+    }
+
+    /// What happened on the thread after event `at`, for an agent coming back
+    /// to its own session after another agent worked on it.
+    fn while_away(&self, at: usize, prompt: &str) -> Option<String> {
+        let events = self.p.store.events_from(&self.p.session_id, at).ok()?;
+        let mut lines = transcript_lines(&events);
+        let own = format!("user: {}", user_event_text(prompt, &self.p.attachments));
+        if lines.last() == Some(&own) {
+            lines.pop();
+        }
+        if lines.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "<while-you-were-away>
+Another agent worked on this thread since your last turn. What happened:
+{}
+</while-you-were-away>",
+            newest_within(lines, HISTORY_CHARS).join(
+                "
+"
+            )
         ))
     }
 
@@ -466,25 +532,7 @@ impl EngineRun {
             Some(Event::Checkpoint { summary, .. }) => Some(summary.trim().to_string()),
             _ => None,
         };
-        let mut lines: Vec<String> = events[from..]
-            .iter()
-            .filter_map(|e| match e {
-                Event::User { text } => Some(format!("user: {text}")),
-                Event::Assistant { text, .. } => Some(format!("assistant: {text}")),
-                Event::Checkpoint { .. } => None,
-                Event::ToolCall { name, args, .. } => {
-                    let a: String = fold(&args.to_string()).chars().take(200).collect();
-                    Some(format!("tool_call: {name} {a}"))
-                }
-                Event::ToolResult {
-                    name, ok, output, ..
-                } => {
-                    let out: String = output.chars().take(500).collect();
-                    Some(format!("tool_result({name}, ok={ok}): {out}"))
-                }
-                _ => None,
-            })
-            .collect();
+        let mut lines = transcript_lines(&events[from..]);
         let own = format!("user: {}", user_event_text(prompt, &self.p.attachments));
         if lines.last() == Some(&own) {
             lines.pop();
@@ -492,16 +540,7 @@ impl EngineRun {
         if summary.is_none() && !lines.iter().any(|l| l.starts_with("assistant: ")) {
             return None;
         }
-        let mut kept: Vec<String> = vec![];
-        let mut size = 0;
-        for line in lines.into_iter().rev() {
-            size += line.len();
-            if size > HISTORY_CHARS {
-                break;
-            }
-            kept.push(line);
-        }
-        kept.reverse();
+        let mut kept = newest_within(lines, HISTORY_CHARS);
         if let Some(s) = summary {
             kept.insert(0, format!("summary of everything before: {s}"));
         }

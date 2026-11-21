@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, RunCause, RunEndKind, SessionMeta, SessionStatus};
+use parzi_core::store::{Event, RunCause, RunEndKind, SessionMeta, SessionStatus, SessionStore};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -13,7 +13,7 @@ use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 use parzi_providers::display_name;
 
 use super::queue::{
-    clear_queued, run_session, set_posture, set_run_note, set_run_session, Posture, Pump, QueuedRun,
+    clear_queued, run_session, set_posture, set_run_note, switch_agent, Posture, Pump, QueuedRun,
 };
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
@@ -310,6 +310,7 @@ impl Orchestrator {
 
     async fn route(
         cfg: &ParziConfig,
+        store: &SessionStore,
         session_id: &str,
         spec: &str,
     ) -> Result<(String, Option<String>)> {
@@ -339,13 +340,15 @@ impl Orchestrator {
                 display_name(&provider)
             )));
         }
-        // Another agent takes the thread over: the old agent's own session
-        // can't be resumed by it, so the binding goes and the new agent starts
-        // fresh with the transcript replayed (EngineRun::history). The thread,
-        // its id and its history stay one Parzi session.
+        // Another agent takes the thread over. The old agent's own session is
+        // parked for when the thread comes back to it; the new agent resumes
+        // its own parked session if it has one (hearing what happened while
+        // it was away), else starts fresh with the transcript replayed
+        // (EngineRun::history). The thread stays one Parzi session.
         if let Some(b) = bound.filter(|b| *b != provider) {
             tracing::info!(session = %session_id, from = %b, to = %provider, "agent switch: the thread carries over");
-            set_run_session(session_id, None);
+            let events_now = store.event_count(session_id).unwrap_or(0);
+            switch_agent(session_id, &provider, events_now);
         }
         let model = model.or_else(|| Some(entry.default_model).filter(|m| !m.trim().is_empty()));
         Ok((provider, model))
@@ -515,7 +518,8 @@ impl Orchestrator {
         seen: usize,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let snap = p.cfg_snapshot();
-        let (provider_id, model) = Self::route(&snap, &q.session_id, &q.model_spec).await?;
+        let (provider_id, model) =
+            Self::route(&snap, &p.store, &q.session_id, &q.model_spec).await?;
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
             ParziError::Store(format!("{provider_id} is not on this build's roster"))
         })?;
