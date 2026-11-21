@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- A session's side column has four cards in a fixed order: Environment (move a stopped session to another project or folder, such as a worktree on another branch), Context, Usage (each limit of the agent in use and when it resets) and Running (what the agent did, step by step). Above the composer sit the session's pins (its dev servers and its plan) and the project's open targets. Links, pins and web searches open full screen over the session with the composer still there, instead of in a new tab.
 - Antigravity turns no longer hang for up to 20 minutes after replying: Antigravity reports its file reads finished only when the whole prompt ends, and Parzi no longer waits on those once the reply is written.
 - Agents carry less: big connectors (GitHub, IsarOS) are listed by name until an agent asks for their tools, Parzi's own instructions are a third of their old length, and a few duplicate window tools are gone. Every agent now gets the repository's instructions, whether the repo keeps them in CLAUDE.md or AGENTS.md.
 - Switching agents and back resumes the first agent's own session, and it hears only what happened while it was away. ACP agents that can load a session (but not resume one) now pick up where they left off.

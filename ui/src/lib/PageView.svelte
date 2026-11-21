@@ -22,6 +22,7 @@
   const dispatch = createEventDispatcher<{
     navigate: { url: string };
     error: { text: string };
+    /** A blocked pop-up the person chose to open: it takes this page's place. */
     openTab: { url: string };
     recover: void;
     resume: void;
@@ -306,7 +307,7 @@
         <Icon name="browser" />
         <span class="ask">Blocked a pop-up <span class="link">{p.url}</span></span>
         {#if /^https?:\/\//i.test(p.url ?? "")}
-          <button class="btn" on:click={() => answer(p, true)}>Open in a tab</button>
+          <button class="btn" on:click={() => answer(p, true)}>Open</button>
         {/if}
         <button class="nav" use:tooltip={"Dismiss"} on:click={() => answer(p, false)}><Icon name="close" /></button>
       {/if}
