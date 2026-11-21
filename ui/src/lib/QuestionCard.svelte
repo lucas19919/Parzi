@@ -1,43 +1,35 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import Icon from "./Icon.svelte";
-  import type { Question } from "./api";
+  import type { Proposal, Question } from "./api";
   import { LINE_WORDS, questionParts } from "./questionText";
 
-  export let question: Question;
+  /** A question from a tool call, answered with a choice or your own words. */
+  export let question: Question | null = null;
+  /** Or a plan the agent proposed (the session's proposal): one Accept;
+   *  changes are typed in the composer, which declines it (App.svelte). */
+  export let proposal: Proposal | null = null;
 
-  const dispatch = createEventDispatcher<{ answer: { text: string } }>();
+  const dispatch = createEventDispatcher<{ answer: { text: string }; accept: void }>();
   const SKIPPED = "Skipped: decide yourself and say what you assumed.";
 
   let picked = new Set<number>();
   let text = "";
   let shownKey = "";
   let field: HTMLTextAreaElement | null = null;
-  $: if (question.key !== shownKey) {
+  $: if (question && question.key !== shownKey) {
     shownKey = question.key;
     picked = new Set();
     text = "";
     if (!question.options.length) void tick().then(() => field?.focus());
   }
 
-  $: parts = questionParts(question.question);
-  // A plan to approve (plan.write with propose): the plan arrives as data in
-  // details[0] (plan_tools::proposal_json). One Accept; changes are typed in
-  // the composer, which answers this question (App.svelte).
-  type Proposal = { summary?: string | null; steps: { title: string; detail?: string | null }[]; doc?: string | null };
-  $: proposal = ((): Proposal | null => {
-    if (question.options[0] !== "Use this plan") return null;
-    try {
-      const v = JSON.parse(question.details?.[0] ?? "");
-      return v && v.plan === true && Array.isArray(v.steps) ? (v as Proposal) : null;
-    } catch {
-      return null;
-    }
-  })();
+  $: parts = questionParts(question?.question ?? "");
   const openDoc = (path: string) => document.dispatchEvent(new CustomEvent("parzi:open-file", { detail: path }));
-  $: multi = !!question.multi;
-  $: details = question.details ?? [];
-  $: chosen = [...picked].sort((a, b) => a - b).map((i) => question.options[i]);
+  $: options = question?.options ?? [];
+  $: multi = !!question?.multi;
+  $: details = question?.details ?? [];
+  $: chosen = [...picked].sort((a, b) => a - b).map((i) => options[i]);
   $: answer = [...chosen, ...(text.trim() ? [text.trim()] : [])].join(", ");
 
   function send(value: string) {
@@ -46,7 +38,7 @@
 
   /** One choice answers at once; with several, a click toggles. */
   function pick(i: number) {
-    if (!multi) return send(question.options[i]);
+    if (!multi) return send(options[i]);
     picked = new Set(picked);
     if (picked.has(i)) picked.delete(i);
     else picked.add(i);
@@ -74,7 +66,7 @@
   </div>
   {#if proposal.summary}<p class="summary">{proposal.summary}</p>{/if}
   <ul class="steps">
-    {#each proposal.steps as step, i (i)}
+    {#each proposal.items as step, i (i)}
       <li>
         <span class="ring" aria-hidden="true" />
         <span class="step">
@@ -85,10 +77,10 @@
     {/each}
   </ul>
   <div class="accept-row">
-    <button class="btn primary accept" on:click={() => send("Use this plan")}>Accept</button>
+    <button class="btn primary accept" on:click={() => dispatch("accept")}>Accept</button>
   </div>
 </div>
-{:else}
+{:else if question}
 <div class="q" role="group" aria-label="Question">
   <div class="head">
     <span class="title">{parts.head}</span>
@@ -108,7 +100,7 @@
     </ul>
   {/if}
   <div class="tiles" role={multi ? "group" : "list"} data-ui-list>
-    {#each question.options as opt, i (i)}
+    {#each options as opt, i (i)}
       <button
         class="tile"
         class:on={picked.has(i)}
@@ -129,7 +121,7 @@
         bind:value={text}
         rows="1"
         aria-label="Your answer"
-        placeholder={question.options.length ? "Something else…" : "Your answer…"}
+        placeholder={options.length ? "Something else…" : "Your answer…"}
         on:input={(e) => grow(e.currentTarget)}
         on:keydown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {

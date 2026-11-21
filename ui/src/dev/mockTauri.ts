@@ -106,13 +106,6 @@ if (params.get("proposal")) {
   }
 }
 
-const prs = [
-  { number: 42, title: "Name sessions from the prompt, and let agents rename them", url: "https://github.com/lucas19919/Parzi/pull/42", head: "plan/names", state: "open", draft: false, checks: "pass" },
-  { number: 44, title: "PR badges on plan items", url: "https://github.com/lucas19919/Parzi/pull/44", head: "plan/prs", state: "open", draft: false, checks: "fail" },
-  { number: 39, title: "Remove the Work view", url: "https://github.com/lucas19919/Parzi/pull/39", head: "plan/strip", state: "merged", draft: false, checks: "pass" },
-  { number: 31, title: "Old experiment", url: "https://github.com/lucas19919/Parzi/pull/31", head: "try/webgpu", state: "closed", draft: false, checks: "none" },
-];
-
 const ANSWER = [
   "**Typing stalls because three things run on every keystroke; caching them takes a key from 38 ms to 4 ms.** [1](https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserver) [2](https://svelte.dev/docs/svelte/$derived)",
   "",
@@ -494,7 +487,6 @@ function startRun(sid: string, prompt: string) {
 }
 
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-  branch_prs: () => prs,
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,
   get_thread: (a) => {
@@ -564,28 +556,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     { id: "sh-1", cmd: "npm run dev", background: true, running: true, exit: null, started: now - 8_220_000, ms: 8_220_000, urls: ["http://localhost:1420"], host_id: "host-1" },
   ],
   shell_hosts: () => mockHosts.map((h) => ({ ...h })),
-  shell_restart_host: (a) => {
-    const h = mockHosts.find((x) => x.id === a.id);
-    if (!h) throw new Error("host not found");
-    h.running = true;
-    h.exit = null;
-    h.job_id = `sh-${Date.now()}`;
-    h.started = Date.now();
-    h.ms = 0;
-    return { ...h };
-  },
-  shell_remove_host: (a) => {
-    const idx = mockHosts.findIndex((x) => x.id === a.id);
-    if (idx < 0) return false;
-    mockHosts.splice(idx, 1);
-    return true;
-  },
-  shell_logs: () => ({
-    text: "VITE v6.0.0 ready in 280 ms\n\n  ➜  Local:   http://localhost:1420/\n",
-    next_offset: 64,
-    running: true,
-    exit: null,
-  }),
   shell_kill: (a) => {
     const h = mockHosts.find((x) => x.job_id === a.id);
     if (h) {
@@ -664,20 +634,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
   read_text_file: (a) => `# ${String(a.path).split(/[\\/]/).pop()}\n\nA file for the mock backend. See [the sibling](./sibling.md), main.rs and github.com/parzi.\n`,
   git_branch: () => "main",
-  git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600, top: "D:\\Repos\\Parzi", files: ["ui/src/lib/FilePanel.svelte", "src-tauri/src/files.rs", "CHANGELOG.md", "docs/notes.md"], stats: [{ path: "ui/src/lib/FilePanel.svelte", added: 160, removed: 41 }, { path: "src-tauri/src/files.rs", added: 48, removed: 16 }, { path: "CHANGELOG.md", added: 6, removed: 0 }] }),
-  git_diff: (a) => `diff --git a/${a.path} b/${a.path}\n--- a/${a.path}\n+++ b/${a.path}\n@@ -1,3 +1,4 @@\n context line\n-old line\n+new line\n+another new line\n`,
-  list_dir: (a) => {
-    const at = String(a.path).replace(/\\/g, "/");
-    const tree: Record<string, { name: string; dir: boolean }[]> = {
-      "": [{ name: "crates", dir: true }, { name: "docs", dir: true }, { name: "src-tauri", dir: true }, { name: "ui", dir: true }, { name: "CHANGELOG.md", dir: false }, { name: "Cargo.toml", dir: false }, { name: "README.md", dir: false }],
-      docs: [{ name: "plans", dir: true }, { name: "releasing.md", dir: false }],
-      "docs/plans": [{ name: "mobile.md", dir: false }],
-      ui: [{ name: "src", dir: true }, { name: "package.json", dir: false }],
-    };
-    const key = Object.keys(tree).find((k) => k && at.endsWith(`/${k}`)) ?? "";
-    return tree[key] ?? [];
-  },
-  pick_text_file: () => ({ path: "C:\\Users\\me\\Desktop\\todo.md", content: "# Todo\n\n- Try reading a file in the side bar\n" }),
   list_files: (a) => ["README.md", "CHANGELOG.md", "ui/src/App.svelte", "ui/src/lib/FilePanel.svelte", "ui/src/lib/Omnibar.svelte", "ui/src/lib/Thread.svelte", "src-tauri/src/files.rs", "crates/parzi-core/src/theme.rs", "docs/releasing.md"].filter((f) => f.toLowerCase().includes(String(a.query ?? "").toLowerCase())),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
   browser_prefs: () => browserPrefs,

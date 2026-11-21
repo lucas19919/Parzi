@@ -32,7 +32,7 @@
     const [sid, slug] = [session, project];
     const [h, p] = await Promise.all([
       sid ? api.shellHosts(sid).catch(() => [] as HostJob[]) : [],
-      // Until the engine has project plans the command is missing: no row.
+      // A project without a plan, or one that can't be read: no row.
       slug ? api.projectPlan(slug).catch(() => null) : null,
     ]);
     if (sid !== session || slug !== project) return;

@@ -54,6 +54,7 @@ export function persisted<T>(key: string, fallback: T): Writable<T> {
 }
 
 export const history = persisted<Visit[]>("parzi.history.v1", []);
+/** Sites pinned in earlier versions: still offered as address suggestions. */
 export const pins = persisted<Pin[]>("parzi.pins.v1", []);
 
 export function recordVisit(url: string, title = "") {
@@ -68,14 +69,6 @@ export function recordVisit(url: string, title = "") {
 
 export function titleVisit(url: string, title: string) {
   history.update((all) => all.map((v) => (v.url === url ? { ...v, title } : v)));
-}
-
-export function addPin(url: string, title: string) {
-  pins.update((all) => (all.some((p) => p.url === url) ? all : [...all, { url, title }].slice(0, 12)));
-}
-
-export function removePin(url: string) {
-  pins.update((all) => all.filter((p) => p.url !== url));
 }
 
 const TABS_KEY = "parzi.tabs.v1";

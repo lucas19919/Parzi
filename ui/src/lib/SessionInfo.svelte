@@ -136,7 +136,7 @@
         </button>
       {/if}
     {:else}
-      <div class="info-line" title={folder}>
+      <div class="info-line" use:tooltip={folder}>
         <Icon name={project ? "project" : "folder"} size={12} />
         <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
       </div>
