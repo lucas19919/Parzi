@@ -854,17 +854,30 @@ mod tests {
     #[test]
     fn lexical_normalize_floors_at_root() {
         let norm = |s: &str| normalize_lexical(Path::new(s));
-        assert_eq!(norm("C:\\proj\\a\\..\\b"), PathBuf::from("C:\\proj\\b"));
-        assert_eq!(norm("C:\\..\\x"), PathBuf::from("C:\\x"));
+        #[cfg(windows)]
+        {
+            assert_eq!(norm("C:\\proj\\a\\..\\b"), PathBuf::from("C:\\proj\\b"));
+            assert_eq!(norm("C:\\..\\x"), PathBuf::from("C:\\x"));
+        }
+        assert_eq!(norm("/proj/a/../b"), PathBuf::from("/proj/b"));
+        assert_eq!(norm("/../x"), PathBuf::from("/x"));
         assert_eq!(norm("/a/./b"), PathBuf::from("/a/b"));
     }
 
     #[test]
     fn containment_is_prefix_based() {
-        let roots = vec![PathBuf::from("C:\\parzi")];
-        assert!(contained_in(Path::new("C:\\parzi\\a.md"), &roots));
-        assert!(!contained_in(Path::new("C:\\other\\a.md"), &roots));
-        assert!(!contained_in(Path::new("C:\\parzi-evil\\a.md"), &roots));
+        // A path in this platform's own form: C:\parzi on Windows, /parzi elsewhere.
+        let at = |s: &str| {
+            if cfg!(windows) {
+                PathBuf::from(format!("C:\\{}", s.replace('/', "\\")))
+            } else {
+                PathBuf::from(format!("/{s}"))
+            }
+        };
+        let roots = vec![at("parzi")];
+        assert!(contained_in(&at("parzi/a.md"), &roots));
+        assert!(!contained_in(&at("other/a.md"), &roots));
+        assert!(!contained_in(&at("parzi-evil/a.md"), &roots));
     }
 
     #[test]
