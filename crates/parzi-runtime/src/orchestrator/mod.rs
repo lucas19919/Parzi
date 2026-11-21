@@ -171,19 +171,6 @@ impl Orchestrator {
         *self.asker.lock().await = Some(asker);
     }
 
-    fn shells_for(&self, sid: &str) -> Arc<crate::shell::ShellRegistry> {
-        let mut shells = self
-            .shells
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(reg) = shells.get(sid) {
-            return reg.clone();
-        }
-        let reg = Arc::new(crate::shell::ShellRegistry::new(sid));
-        shells.insert(sid.to_string(), reg.clone());
-        reg
-    }
-
     pub fn shell_jobs(&self, sid: &str) -> Vec<crate::shell::ShellJob> {
         let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
         reg.map(|r| r.jobs()).unwrap_or_default()
