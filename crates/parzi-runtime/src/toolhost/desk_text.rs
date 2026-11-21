@@ -1,7 +1,7 @@
 //! Page and desk tool results as text an agent reads, and page arguments
 //! made the values the window expects.
 
-use parzi_core::text::{clip, short_id};
+use parzi_core::text::clip;
 use serde_json::Value;
 
 use crate::tools::{lenient_bool, lenient_u64};
@@ -74,87 +74,4 @@ pub(super) fn page_text(v: &Value) -> String {
         out.push_str(&format!("text {offset}-{next} of {total} chars, the end"));
     }
     out
-}
-
-fn front_tab(v: &Value) -> Option<Value> {
-    match v.get("active")? {
-        a @ Value::Object(_) => Some(a.clone()),
-        Value::String(id) if !id.is_empty() => {
-            let tab = v
-                .get("tabs")
-                .and_then(Value::as_array)?
-                .iter()
-                .find(|t| t.get("id").and_then(Value::as_str) == Some(id))?;
-            let kind = match tab.get("kind").and_then(Value::as_str) {
-                Some("browser") | None => "page",
-                Some(k) => k,
-            };
-            Some(serde_json::json!({
-                "id": id,
-                "kind": kind,
-                "title": tab.get("title").cloned().unwrap_or_default(),
-            }))
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn desk_state_text(v: &Value) -> String {
-    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    let mut out = vec![format!(
-        "window: {}",
-        if v.get("focused").and_then(Value::as_bool) == Some(true) {
-            "the human has it in front"
-        } else {
-            "in the background"
-        }
-    )];
-    if let Some(active) = front_tab(v) {
-        out.push(format!(
-            "the human is on: {} {:?}",
-            s(&active, "kind"),
-            clip(&s(&active, "title"), 80)
-        ));
-    }
-    let folder = s(v, "folder");
-    if !folder.is_empty() {
-        let project = v
-            .pointer("/project/slug")
-            .and_then(Value::as_str)
-            .map(|p| format!(" (project {p})"))
-            .unwrap_or_default();
-        out.push(format!("its folder: {folder}{project}"));
-    }
-    let tabs: Vec<String> = v
-        .get("tabs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|t| {
-            format!(
-                "- {} {:?} {}",
-                s(t, "id"),
-                clip(&s(t, "title"), 80),
-                s(t, "url")
-            )
-        })
-        .collect();
-    out.push(if tabs.is_empty() {
-        "your page tabs: none".into()
-    } else {
-        format!("your page tabs:\n{}", tabs.join("\n"))
-    });
-    let running: Vec<String> = v
-        .get("running")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|r| format!("- {} {}", short_id(&s(r, "id")), clip(&s(r, "title"), 60)))
-        .collect();
-    out.push(if running.is_empty() {
-        "running sessions: none".into()
-    } else {
-        format!("running sessions:\n{}", running.join("\n"))
-    });
-    out.join("\n")
 }

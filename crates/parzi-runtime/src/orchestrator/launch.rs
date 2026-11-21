@@ -356,9 +356,8 @@ impl Orchestrator {
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
         for u in [
             "ui.show_artifact",
+            "ui.show_file",
             "ui.offer_replies",
-            "todo.write",
-            "github.issue",
             "models.list",
             "ask.user",
             "shell.exec",
@@ -555,6 +554,17 @@ impl Orchestrator {
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
         let mut instructions = system_parts(&cwd);
+        if provider_id != "claude" {
+            if let Some(files) =
+                parzi_core::system::claude_files_for_others(std::path::Path::new(&cwd))
+            {
+                instructions.push(format!(
+                    "# Repository instructions
+
+{files}"
+                ));
+            }
+        }
         if let Some(note) = p.mcp.status_note() {
             instructions.push(note);
         }
@@ -751,7 +761,7 @@ mod tests {
             "project.create",
             "plan.read",
             "plan.write",
-            "todo.write",
+            "ui.show_file",
         ] {
             assert!(allowed.iter().any(|a| a == t), "missing {t}");
         }

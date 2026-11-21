@@ -352,12 +352,54 @@ pub(crate) fn is_wait_tool(name: &str) -> bool {
     name == "wait"
 }
 
+/// Reaching the tools of connectors too big to list with every turn.
+pub(crate) fn is_connector_tool(name: &str) -> bool {
+    matches!(name, "connector.tools" | "connector.call")
+}
+
+/// `connector.tools` and `connector.call`, offered when some connectors are
+/// listed by name only. The description names them, so the agent knows what
+/// it can ask for.
+#[must_use]
+pub(crate) fn connector_defs(deferred: &[(String, usize)]) -> Vec<ToolDef> {
+    let names: Vec<String> = deferred
+        .iter()
+        .map(|(server, n)| format!("{server} ({n} tools)"))
+        .collect();
+    let names = names.join(", ");
+    vec![
+        ToolDef {
+            name: "connector.tools".into(),
+            description: format!(
+                "Lists one connector's tools with their inputs. These connectors are on but their tools are not listed, to save room: {names}. Ask for one when the task needs it, then run a tool with connector.call."
+            ),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"connector": {"type": "string", "description": "a connector named above"}},
+                "required": ["connector"],
+            }),
+        },
+        ToolDef {
+            name: "connector.call".into(),
+            description: "Runs a tool that connector.tools listed, with the same approvals as any connector tool.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "description": "the tool's name exactly as connector.tools listed it"},
+                    "arguments": {"type": "object", "description": "its inputs"},
+                },
+                "required": ["tool"],
+            }),
+        },
+    ]
+}
+
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
-    is_ui_tool(name)
+    is_connector_tool(name)
+        || is_ui_tool(name)
         || is_browser_tool(name)
         || is_desk_tool(name)
         || is_session_tool(name)
-        || is_github_tool(name)
         || is_models_tool(name)
         || is_question_tool(name)
         || is_project_tool(name)
@@ -373,7 +415,6 @@ pub fn all_defs() -> Vec<ToolDef> {
     d.extend(desk_defs());
     d.extend(brain_defs());
     d.extend(session_defs());
-    d.extend(github_defs());
     d.extend(team_defs());
     d.extend(question_defs());
     d.extend(plan_defs());
@@ -625,44 +666,15 @@ pub(crate) fn is_browser_tool(name: &str) -> bool {
 fn desk_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
-            name: "desk.state".into(),
-            description: "What the Parzi window shows: your own page tabs, the title of the tab the human is on, whether the window has focus, the sessions running now, and the folder and project of the human's current tab.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {},
-            }),
-        },
-        ToolDef {
-            name: "desk.open".into(),
-            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance), or home. A session opens as a background tab and never switches the human to it.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "what": {"type": "string", "enum": ["session", "settings", "home"]},
-                    "id": {"type": "string"},
-                    "section": {"type": "string"},
-                },
-                "required": ["what"],
-            }),
-        },
-        ToolDef {
-            name: "app.actions".into(),
-            description: "What you can do in Parzi's own window right now, as named actions with their arguments: tabs, sessions, the composer (model, effort, permission), the side bar and its files, settings, the theme and more. query narrows the list. Run one with app_do. For anything not listed, use app_screen and app_click.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-            }),
-        },
-        ToolDef {
             name: "app.do".into(),
-            description: "Run one of Parzi's named actions (see app_actions) with its arguments, the same way the person's click would. Returns what it did.".into(),
+            description: "Do something in Parzi's own window the way the person's click would: tabs, sessions, the composer (model, effort, permission), the side bar and its files, settings, the theme and more. Call it with no action to list the actions and their arguments (query narrows the list). For anything not listed, use app_screen and app_click.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "description": "an id from app_actions, such as tabs.new"},
+                    "action": {"type": "string", "description": "an action id, such as tabs.new; leave out to list them"},
                     "args": {"type": "object"},
+                    "query": {"type": "string", "description": "with no action: only actions matching this"},
                 },
-                "required": ["action"],
             }),
         },
         ToolDef {
@@ -714,17 +726,6 @@ fn desk_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "desk.notify".into(),
-            description: "Tell the human something with a notification in the Parzi window; when the window is in the background its taskbar button flashes too. Keep it to one short line.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string"},
-                },
-                "required": ["text"],
-            }),
-        },
-        ToolDef {
             name: "desk.screenshot".into(),
             description: "Screenshot the Parzi window itself (its tabs, threads and panels; page tabs show as blank) as a JPEG under ~/.parzi/shots. Returns the path to open with your own vision.".into(),
             schema: serde_json::json!({
@@ -736,10 +737,7 @@ fn desk_defs() -> Vec<ToolDef> {
 }
 
 pub(crate) fn is_desk_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot" | "desk.theme"
-    ) || is_app_tool(name)
+    matches!(name, "desk.screenshot" | "desk.theme") || is_app_tool(name)
 }
 
 /// Agents using Parzi's own window: its named actions and its controls.
@@ -762,9 +760,6 @@ pub const DESK_TOOLS: &[&str] = &[
     "browser.wait",
     "browser.shot",
     "browser.close",
-    "desk.state",
-    "desk.open",
-    "desk.notify",
     "desk.screenshot",
     "desk.theme",
     "app.actions",
@@ -833,27 +828,6 @@ pub fn is_brain_tool(name: &str) -> bool {
         name,
         "brain.search" | "brain.read" | "brain.write" | "brain.delete"
     )
-}
-
-pub(crate) fn is_github_tool(name: &str) -> bool {
-    matches!(name, "github.issue")
-}
-
-fn github_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "github.issue".into(),
-        description: "File a GitHub issue, through the person's GitHub CLI (gh). They approve each one first: it is public. repo is owner/name (Parzi's own bugs: lucas19919/Parzi); without it, the repository of this session's folder. The body is markdown: what happened, the steps, what was expected, and the version. Images cannot be attached here: describe them, and name their files so the person can drop them into the issue. Answers the issue's URL, or, when gh is missing or signed out, a prefilled link to open for the person with browser.open.".into(),
-        schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "body": {"type": "string", "description": "markdown"},
-                "repo": {"type": "string", "description": "owner/name"},
-                "labels": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["title", "body"],
-        }),
-    }]
 }
 
 pub(crate) fn is_models_tool(name: &str) -> bool {
@@ -1334,11 +1308,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             )
         ),
         "browser.close" => "Closing a tab".into(),
-        "desk.state" => "Looking at the window".into(),
-        "desk.open" => format!(
-            "Opening {}",
-            str_arg("what").unwrap_or_else(|| "a view".into())
-        ),
         "app.actions" => "Looking at what Parzi can do".into(),
         "app.screen" => "Looking at Parzi's window".into(),
         "app.do" => match str_arg("confirm") {
@@ -1361,15 +1330,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             }
             None => "Reading the theme".into(),
         },
-        "desk.notify" => format!(
-            "Notifying: {}",
-            one_line(&str_arg("text").unwrap_or_default(), 60)
-        ),
         "desk.screenshot" => "Taking a screenshot of the window".into(),
-        "github.issue" => format!(
-            "Filing an issue: {}",
-            one_line(&str_arg("title").unwrap_or_default(), 60)
-        ),
         "models.list" => "Listing models".into(),
         "shell.start" => format!(
             "Starting {}",
@@ -1488,8 +1449,21 @@ fn short_tool_name(name: &str) -> &str {
 }
 
 const NAMESPACES: &[&str] = &[
-    "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "models",
-    "ask", "todo", "github", "app",
+    "ui",
+    "browser",
+    "desk",
+    "brain",
+    "session",
+    "plan",
+    "shell",
+    "project",
+    "image",
+    "models",
+    "ask",
+    "todo",
+    "github",
+    "app",
+    "connector",
 ];
 
 /// The MCP server agents reach Parzi's own tools on.
@@ -1670,8 +1644,8 @@ mod tests {
             assert!(!window_tool_offered(t, false, false), "{t} with no window");
             assert!(window_tool_offered(t, true, true), "{t} on Windows");
         }
-        assert!(window_tool_offered("desk.notify", true, false));
-        assert!(window_tool_offered("desk.open", true, false));
+        assert!(window_tool_offered("desk.theme", true, false));
+        assert!(window_tool_offered("app.do", true, false));
         assert!(!window_tool_offered("desk.screenshot", true, false));
         assert!(!window_tool_offered("browser.read", true, false));
         assert!(window_tool_offered("brain.read", false, false));
@@ -1680,9 +1654,16 @@ mod tests {
             .chain(desk_defs())
             .map(|d| d.name)
             .collect();
-        assert_eq!(all.len(), DESK_TOOLS.len());
-        assert!(all.iter().all(|n| DESK_TOOLS.contains(&n.as_str())));
-        assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
+        // app.actions stays enabled with no tool of its own: app.do with no
+        // action reaches it.
+        let listed: Vec<&str> = DESK_TOOLS
+            .iter()
+            .copied()
+            .filter(|t| *t != "app.actions")
+            .collect();
+        assert_eq!(all.len(), listed.len());
+        assert!(all.iter().all(|n| listed.contains(&n.as_str())));
+        assert_eq!(display_name("mcp__parzi__desk_theme"), "desk.theme");
         for d in all_defs() {
             assert_eq!(
                 from_mcp(&to_mcp(&d.name)),

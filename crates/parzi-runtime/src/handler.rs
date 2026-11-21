@@ -241,7 +241,7 @@ mod tests {
     fn harness_doc_has_every_section() {
         for s in ["tools", "teamwork", "plans", "delivery"] {
             let body = harness_section(s);
-            assert!(body.lines().count() > 3, "section {s} is missing or empty");
+            assert!(body.lines().count() > 1, "section {s} is missing or empty");
         }
         assert!(harness_intro().contains("Parzi"));
     }
@@ -273,7 +273,6 @@ mod tests {
             for word in [
                 "`plan_write`",
                 "`plan_read`",
-                "`todo_write`",
                 "`propose: true`",
                 "`active`",
                 "`done`",

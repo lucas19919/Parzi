@@ -331,40 +331,11 @@ impl Drop for TurnFiles {
     }
 }
 
+/// The repository's CLAUDE.md files, or its AGENTS.md when it has none:
+/// Claude runs without reading either itself.
 fn claude_md(cwd: &Path) -> Option<String> {
-    const NAMES: [&str; 3] = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"];
-    const MAX_CHARS: usize = 40_000;
-    let home = dirs::home_dir();
-    let mut dirs: Vec<&Path> = cwd.ancestors().collect();
-    dirs.reverse();
-    let mut out = String::new();
-    for dir in dirs {
-        for name in NAMES {
-            if name == ".claude/CLAUDE.md" && home.as_deref() == Some(dir) {
-                continue;
-            }
-            let path = dir.join(name);
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if text.trim().is_empty() {
-                continue;
-            }
-            out.push_str(&format!(
-                "Contents of {} (the repository's instructions):\n\n{}\n\n",
-                path.display(),
-                text.trim()
-            ));
-        }
-    }
-    if out.is_empty() {
-        return None;
-    }
-    if out.chars().count() > MAX_CHARS {
-        out = out.chars().take(MAX_CHARS).collect();
-        out.push_str("\n…(the rest of the CLAUDE.md files was cut)");
-    }
-    Some(out.trim_end().to_string())
+    use parzi_core::system::{repo_instructions, AGENTS_FILES, CLAUDE_FILES};
+    repo_instructions(cwd, &CLAUDE_FILES).or_else(|| repo_instructions(cwd, &AGENTS_FILES))
 }
 
 fn effort(e: &str) -> &str {

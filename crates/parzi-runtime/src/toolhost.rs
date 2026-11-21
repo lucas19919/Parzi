@@ -16,9 +16,9 @@ use crate::ask_text::makes_media;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     bool_arg, category, current_name, display_name, int_arg, is_brain_tool, is_browser_tool,
-    is_desk_tool, is_github_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
-    is_session_tool, is_shell_tool, is_ui_tool, is_wait_tool, window_tool_offered, ApprovalMode,
-    Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
+    is_desk_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool, is_session_tool,
+    is_shell_tool, is_ui_tool, is_wait_tool, window_tool_offered, ApprovalMode, Approver,
+    AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -39,7 +39,6 @@ pub struct ToolHostParts {
 
 mod calls;
 mod desk_text;
-mod fetch;
 mod notes;
 mod paths;
 mod relay;
@@ -48,8 +47,7 @@ use calls::{
     answered, command_text, denied, fitted_name, legacy_args, no_such_tool, refusal_text,
     shell_detour, Refusal, VENDOR_SHELL,
 };
-use desk_text::{desk_state_text, page_args, page_done, page_text};
-use fetch::url_encode;
+use desk_text::{page_args, page_done, page_text};
 use notes::execute_brain;
 use paths::{land, named_paths, show_target, worktree_relative, write_targets, SECRET_FILE};
 
@@ -109,6 +107,10 @@ impl ToolHost {
                 let (attached, pages) = (crate::desk::attached(), crate::desk::page_tools_ready());
                 let mut defs = self.p.tools.defs();
                 defs.retain(|d| window_tool_offered(&d.name, attached, pages));
+                let deferred = self.relay().await.deferred();
+                if !deferred.is_empty() {
+                    defs.extend(crate::tools::connector_defs(deferred));
+                }
                 defs
             })
             .await
@@ -117,6 +119,17 @@ impl ToolHost {
 
     pub async fn call(&self, name: &str, args: &Value) -> (bool, String) {
         let name = current_name(name);
+        // app.do with no action lists the actions: app.actions in the window.
+        let name = if name == "app.do"
+            && args
+                .get("action")
+                .and_then(Value::as_str)
+                .is_none_or(|a| a.trim().is_empty())
+        {
+            "app.actions"
+        } else {
+            name
+        };
         let mut args = legacy_args(name, args);
         let fitted = fitted_name(name, &args).map(|(fit, note)| {
             args = fit;
@@ -126,6 +139,13 @@ impl ToolHost {
         let id = uuid::Uuid::new_v4().to_string();
         if name == "ui.show_file" {
             return self.show_file(args).await;
+        }
+        if name == "connector.tools" {
+            return self.connector_tools(args).await;
+        }
+        if name == "connector.call" {
+            let (ok, content) = self.connector_call(args).await;
+            return (ok, crate::mcp_relay::text_of(&content));
         }
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
@@ -187,7 +207,6 @@ impl ToolHost {
                     | "browser.press"
                     | "browser.select"
                     | "browser.close"
-                    | "desk.open"
                     | "desk.screenshot"
                     | "app.do"
                     | "app.click"
@@ -262,12 +281,6 @@ impl ToolHost {
                 }
             }
             return self.execute_session_tool(name, args).await;
-        }
-        if is_github_tool(name) {
-            if let Err(why) = self.asked_unless_full(id, name, args).await {
-                return self.refused(name, why);
-            }
-            return self.execute_github_issue(args).await;
         }
         if is_question_tool(name) {
             return self.execute_question(id, args).await;
@@ -704,92 +717,6 @@ impl ToolHost {
             .map(|m| m.model)
             .unwrap_or_default();
         crate::bench::text(&self.p.cfg, &statuses, &own)
-    }
-
-    async fn execute_github_issue(&self, args: &Value) -> (bool, String) {
-        let text = |k: &str| {
-            args.get(k)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .unwrap_or("")
-        };
-        let (title, body, repo) = (text("title"), text("body"), text("repo"));
-        if title.is_empty() {
-            return (false, "an issue needs a title".into());
-        }
-        let by_hand = |why: &str| {
-            if repo.is_empty() {
-                return (false, format!("{why}. Name the repo (owner/name) to get a link the person can file it from."));
-            }
-            let body = clip(body, 6000);
-            let url = format!(
-                "https://github.com/{repo}/issues/new?title={}&body={}",
-                url_encode(title),
-                url_encode(&body)
-            );
-            (
-                false,
-                format!("{why}. Open this for the person to file it themselves: {url}"),
-            )
-        };
-        let Some(gh) = parzi_providers::process::which("gh") else {
-            return by_hand("The GitHub CLI (gh) is not installed");
-        };
-        let file =
-            std::env::temp_dir().join(format!("parzi-issue-{}.md", uuid::Uuid::new_v4().simple()));
-        if let Err(e) = std::fs::write(&file, body) {
-            return (false, format!("could not write the issue's body: {e}"));
-        }
-        let mut cmd = tokio::process::Command::new(gh);
-        cmd.args(["issue", "create", "--title", title, "--body-file"])
-            .arg(&file)
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true);
-        if !repo.is_empty() {
-            cmd.args(["--repo", repo]);
-        }
-        for l in args
-            .get("labels")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(l) = l.as_str().map(str::trim).filter(|l| !l.is_empty()) {
-                cmd.args(["--label", l]);
-            }
-        }
-        let cwd = Path::new(&self.p.tools.cwd);
-        if cwd.is_dir() {
-            cmd.current_dir(cwd);
-        }
-        #[cfg(windows)]
-        cmd.creation_flags(0x0800_0000);
-        let out = tokio::time::timeout(Duration::from_secs(60), cmd.output()).await;
-        let _ = std::fs::remove_file(&file);
-        let out = match out {
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) => return (false, format!("gh did not run: {e}")),
-            Err(_) => {
-                return (
-                    false,
-                    "gh took over a minute; the issue may not exist".into(),
-                )
-            }
-        };
-        let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        if out.status.success() {
-            let url = said
-                .lines()
-                .rev()
-                .find(|l| l.starts_with("https://"))
-                .unwrap_or(&said);
-            return (true, format!("filed: {url}"));
-        }
-        if err.contains("auth login") || err.contains("not logged") {
-            return by_hand("The GitHub CLI (gh) is not signed in");
-        }
-        (false, format!("gh could not file it: {}", clip(&err, 600)))
     }
 
     /// A plan is the person's: a write that adds, drops or rewords work is
@@ -1614,50 +1541,6 @@ impl ToolHost {
                 .to_string()
         };
         match name {
-            "desk.state" => {
-                let body = serde_json::json!({ "session": self.p.session_id });
-                match self.desk_call("desk.state", body).await {
-                    Ok(v) => (true, desk_state_text(&v)),
-                    Err(e) => (false, e),
-                }
-            }
-            "desk.open" => {
-                let what = s("what");
-                let id = match (what.as_str(), s("id")) {
-                    ("session", id) if id.is_empty() => self.p.session_id.clone(),
-                    (_, id) => id,
-                };
-                let body = serde_json::json!({
-                    "session": self.p.session_id,
-                    "what": what,
-                    "id": id,
-                    "section": s("section"),
-                });
-                match self.desk_call("desk.open", body).await {
-                    Ok(v) => (
-                        true,
-                        v.get("done")
-                            .and_then(Value::as_str)
-                            .unwrap_or("opened")
-                            .to_string(),
-                    ),
-                    Err(e) => (false, e),
-                }
-            }
-            "desk.notify" => {
-                let text = s("text");
-                if text.is_empty() {
-                    return (false, "desk.notify needs a `text`".into());
-                }
-                let body = serde_json::json!({
-                    "session": self.p.session_id,
-                    "text": clip(&text, 200),
-                });
-                match self.desk_call("desk.notify", body).await {
-                    Ok(_) => (true, "the human was notified".into()),
-                    Err(e) => (false, e),
-                }
-            }
             "desk.theme" => {
                 let mut body = serde_json::json!({ "session": self.p.session_id });
                 for k in [
@@ -2235,31 +2118,6 @@ mod tests {
             ),
             "the wait's deadline follows the timeout it was given"
         );
-    }
-
-    #[test]
-    fn desk_state_shows_titles_not_strangers_urls() {
-        let v = serde_json::json!({
-            "focused": false,
-            "active": {"kind": "page", "title": "Bank"},
-            "tabs": [{"id": "t1", "title": "Docs", "url": "https://docs.rs"}],
-            "running": [{"id": "0123456789", "title": "Fix it"}],
-            "folder": "C:/src/app",
-            "project": {"slug": "app"},
-        });
-        let out = desk_state_text(&v);
-        assert!(out.contains("in the background"));
-        assert!(out.contains("page \"Bank\""));
-        assert!(out.contains("https://docs.rs"));
-        assert!(out.contains("- 01234567 Fix it"));
-        assert!(out.contains("C:/src/app (project app)"));
-        let by_id = serde_json::json!({
-            "active": "t9",
-            "tabs": [{"id": "t9", "kind": "browser", "title": "Bank", "url": "https://bank"}],
-        });
-        assert!(desk_state_text(&by_id).contains("the human is on: page \"Bank\""));
-        let none = serde_json::json!({"active": null, "tabs": []});
-        assert!(!desk_state_text(&none).contains("the human is on"));
     }
 
     #[test]

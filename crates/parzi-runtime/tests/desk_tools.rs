@@ -113,7 +113,7 @@ async fn page_tools_without_a_window_say_so() {
     home("desktools");
     let asked = Arc::new(Counter::default());
     let h = host(ApprovalMode::Auto, false, asked.clone());
-    for tool in ["browser.read", "browser.click", "desk.state"] {
+    for tool in ["browser.read", "browser.click", "desk.theme"] {
         let (ok, out) = h.call(tool, &json!({})).await;
         assert!(!ok, "{tool}: {out}");
         assert!(out.contains("needs the Parzi window"), "{tool}: {out}");

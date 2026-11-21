@@ -33,6 +33,43 @@ impl ToolHost {
             .await
     }
 
+    /// `connector.tools`: one deferred connector's tools, as JSON.
+    pub(crate) async fn connector_tools(&self, args: &Value) -> (bool, String) {
+        let name = args.get("connector").and_then(Value::as_str).unwrap_or("");
+        let relay = self.relay().await;
+        match relay.catalog(name) {
+            Some(tools) => (true, tools.to_string()),
+            None => {
+                let on: Vec<&str> = relay.deferred().iter().map(|(s, _)| s.as_str()).collect();
+                (
+                    false,
+                    format!(
+                        "no connector `{name}` with tools in this session; ask for one of: {}",
+                        on.join(", ")
+                    ),
+                )
+            }
+        }
+    }
+
+    /// `connector.call`: a deferred connector's tool, run like any relayed one.
+    pub(crate) async fn connector_call(&self, args: &Value) -> (bool, Vec<Value>) {
+        let tool = args.get("tool").and_then(Value::as_str).unwrap_or("");
+        let inputs = args
+            .get("arguments")
+            .filter(|a| a.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        self.call_relayed(tool, &inputs).await.unwrap_or_else(|| {
+            (
+                false,
+                said(format!(
+                    "no tool `{tool}`: call connector.tools first and use a name it lists"
+                )),
+            )
+        })
+    }
+
     /// Runs the connector tool an agent named `asked`; `None` when this run
     /// offers no tool of that name.
     pub(crate) async fn call_relayed(

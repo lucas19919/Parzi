@@ -274,6 +274,16 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
                     "result": {"content": content, "isError": !ok},
                 }));
             }
+            if own.as_deref() == Some("connector.call") {
+                // Kept apart from host.call so pictures a connector returns
+                // reach the agent as pictures, not text.
+                let (ok, content) = host.connector_call(&args).await;
+                return Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {"content": content, "isError": !ok},
+                }));
+            }
             let name = own.unwrap_or_else(|| from_mcp(asked));
             let started = std::time::Instant::now();
             // These wait on people or long commands by design; the rest should be quick.

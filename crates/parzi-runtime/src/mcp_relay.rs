@@ -15,6 +15,10 @@ const DESCRIPTION_MAX: usize = 2048;
 const SCHEMA_MAX: usize = 16 * 1024;
 pub(crate) const TEXT_MAX: usize = 100 * 1024;
 pub(crate) const MEDIA_MAX: usize = 4 * 1024 * 1024;
+/// How much connector tool listing goes out with every turn. Connectors past
+/// it are listed by name only, and the agent asks for their tools when it
+/// needs them (`connector.tools`, then `connector.call`).
+pub(crate) const INLINE_BUDGET: usize = 16 * 1024;
 
 /// One connector tool as this session's agent sees it.
 #[derive(Debug, Clone)]
@@ -28,6 +32,8 @@ pub(crate) struct Relayed {
 #[derive(Debug, Default)]
 pub(crate) struct Relay {
     tools: Vec<Relayed>,
+    /// Connectors whose tools are not listed each turn, with their tool count.
+    deferred: Vec<(String, usize)>,
 }
 
 impl Relay {
@@ -49,15 +55,73 @@ impl Relay {
                 tool: t.name.clone(),
             })
             .collect();
-        Self { tools }
+        let mut relay = Self {
+            tools,
+            deferred: Vec::new(),
+        };
+        relay.defer_past(INLINE_BUDGET);
+        relay
+    }
+
+    /// Lists the smallest connectors in full while they fit in `budget`
+    /// characters of listing, and defers the rest.
+    fn defer_past(&mut self, budget: usize) {
+        let mut sizes: Vec<(String, usize, usize)> = Vec::new();
+        for t in &self.tools {
+            let size = t.entry.to_string().len();
+            match sizes.iter_mut().find(|(s, ..)| *s == t.server) {
+                Some((_, n, bytes)) => {
+                    *n += 1;
+                    *bytes += size;
+                }
+                None => sizes.push((t.server.clone(), 1, size)),
+            }
+        }
+        sizes.sort_by_key(|(server, _, bytes)| (*bytes, server.clone()));
+        let mut used = 0;
+        self.deferred.clear();
+        for (server, n, bytes) in sizes {
+            if used + bytes <= budget {
+                used += bytes;
+            } else {
+                self.deferred.push((server, n));
+            }
+        }
+        self.deferred.sort();
+    }
+
+    fn is_deferred(&self, server: &str) -> bool {
+        self.deferred.iter().any(|(s, _)| s == server)
+    }
+
+    /// Connectors listed by name only, with how many tools each has.
+    pub fn deferred(&self) -> &[(String, usize)] {
+        &self.deferred
+    }
+
+    /// One connector's tools as the agent would see them listed, for
+    /// `connector.tools`.
+    pub fn catalog(&self, server: &str) -> Option<Value> {
+        let tools: Vec<&Value> = self
+            .tools
+            .iter()
+            .filter(|t| t.server == server)
+            .map(|t| &t.entry)
+            .collect();
+        (!tools.is_empty()).then(|| json!(tools))
     }
 
     pub fn find(&self, name: &str) -> Option<&Relayed> {
         self.tools.iter().find(|t| t.name == name)
     }
 
+    /// The tools listed with every turn: all of them but the deferred
+    /// connectors'.
     pub fn entries(&self) -> impl Iterator<Item = &Value> {
-        self.tools.iter().map(|t| &t.entry)
+        self.tools
+            .iter()
+            .filter(|t| !self.is_deferred(&t.server))
+            .map(|t| &t.entry)
     }
 }
 
@@ -381,6 +445,42 @@ mod tests {
         n.len() <= NAME_MAX
             && n.chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    }
+
+    fn tool(server: &str, name: &str, words: usize) -> McpTool {
+        McpTool {
+            server: server.into(),
+            name: name.into(),
+            title: String::new(),
+            description: "word ".repeat(words),
+            read_only: false,
+            destructive: false,
+            input_schema: json!({"type": "object", "properties": {}}),
+            annotations: Value::Null,
+        }
+    }
+
+    #[test]
+    fn big_connectors_wait_until_asked_for() {
+        let mut tools = vec![tool("diagrams", "render", 50)];
+        tools.extend((0..60).map(|i| tool("github", &format!("t{i}"), 100)));
+        let relay = Relay::build(tools);
+        assert_eq!(relay.deferred(), &[("github".to_string(), 60)]);
+        let listed: Vec<&str> = relay.entries().filter_map(|e| e["name"].as_str()).collect();
+        assert_eq!(listed, ["diagrams__render"]);
+        assert!(relay.find("github__t3").is_some(), "still callable");
+        assert_eq!(
+            relay.catalog("github").unwrap().as_array().unwrap().len(),
+            60
+        );
+        assert!(relay.catalog("nope").is_none());
+    }
+
+    #[test]
+    fn small_sets_are_listed_whole() {
+        let relay = Relay::build(vec![tool("a", "x", 10), tool("b", "y", 10)]);
+        assert!(relay.deferred().is_empty());
+        assert_eq!(relay.entries().count(), 2);
     }
 
     #[test]

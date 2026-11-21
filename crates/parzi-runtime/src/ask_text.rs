@@ -164,7 +164,6 @@ fn named(shown: &str, args: &Value) -> Option<(String, String, DetailKind)> {
     }
     let (action, key, kind) = match shown {
         "WebSearch" | "web_search" => ("search the web", "query", DetailKind::Text),
-        "github.issue" => ("file a GitHub issue", "title", DetailKind::Text),
         "project.create" => ("create a project", "title", DetailKind::Text),
         "project.switch" => ("move this session to a project", "slug", DetailKind::Text),
         "project.archive" => ("archive a project", "slug", DetailKind::Text),
@@ -247,10 +246,6 @@ mod tests {
         assert_eq!(
             say("other", json!({"title": "Search X for posts"})),
             ("use a tool".into(), "Search X for posts".into())
-        );
-        assert_eq!(
-            say("parzi__github_issue", json!({"title": "Bug"})),
-            ("file a GitHub issue".into(), "Bug".into())
         );
         assert_eq!(
             say("linear.create_issue", json!({"title": "Crash on start"})),
