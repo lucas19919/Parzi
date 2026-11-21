@@ -206,6 +206,17 @@ pub(crate) fn switch_agent(session_id: &str, to: &str, events_now: usize) {
     });
 }
 
+/// Every agent's own session on this thread is dropped: after a move to
+/// another folder none of them can be resumed, and the next agent starts
+/// fresh with the thread handed over.
+pub(crate) fn forget_agent_sessions(session_id: &str) {
+    edit_sidecar(session_id, |s| {
+        s.session = None;
+        s.parked.clear();
+        s.catch_up = None;
+    });
+}
+
 /// Where a returning agent left the thread, once: the first turn after the
 /// switch reads it.
 pub(crate) fn take_catch_up(session_id: &str) -> Option<usize> {

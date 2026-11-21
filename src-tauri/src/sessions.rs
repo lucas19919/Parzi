@@ -277,6 +277,26 @@ pub async fn rewind_thread(
     state.orch.rewind(&id, nth).map_err(|e| e.to_string())
 }
 
+/// Moves a session to another folder (a project, or a branch's worktree) and
+/// project, from the Environment card.
+#[tauri::command]
+pub async fn set_session_environment(
+    state: State<'_, AppState>,
+    id: String,
+    cwd: String,
+    project: Option<String>,
+) -> Result<SessionMeta, String> {
+    read_only(&id)?;
+    if remote_id(&id).is_some() {
+        return Err("Moving a session works on this computer's sessions for now.".into());
+    }
+    state
+        .orch
+        .set_environment(&id, &cwd, project.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn read_only(id: &str) -> Result<(), String> {
     if mirror_id(id).is_some() {
         return Err(

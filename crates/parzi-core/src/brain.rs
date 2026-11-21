@@ -166,7 +166,13 @@ pub fn delete_project(slug: &str) -> Result<String> {
 
 #[must_use]
 pub fn context_for(cwd: &Path) -> Option<BrainContext> {
-    Vault::open().ok()?.context(cwd)
+    Vault::open().ok()?.context(cwd, None)
+}
+
+/// The notes for a session: its own project when it names one that exists,
+/// else the project whose folder holds `cwd`.
+pub fn context_for_session(cwd: &Path, project: Option<&str>) -> Option<BrainContext> {
+    Vault::open().ok()?.context(cwd, project)
 }
 
 pub fn overflow() -> Result<BTreeMap<String, Vec<String>>> {
@@ -507,17 +513,21 @@ impl Vault {
     }
 
     #[must_use]
-    fn context(&self, cwd: &Path) -> Option<BrainContext> {
+    fn context(&self, cwd: &Path, named: Option<&str>) -> Option<BrainContext> {
         if !self.root.is_dir() {
             return None;
         }
         let notes = self.scan();
         let all = projects_of(&notes);
-        let project = deepest(
-            &cwd.to_string_lossy(),
-            all.iter().map(|p| (p.slug.as_str(), p.folder.as_str())),
-        )
-        .and_then(|at| all.into_iter().nth(at));
+        let at = named
+            .and_then(|slug| all.iter().position(|p| p.slug == slug))
+            .or_else(|| {
+                deepest(
+                    &cwd.to_string_lossy(),
+                    all.iter().map(|p| (p.slug.as_str(), p.folder.as_str())),
+                )
+            });
+        let project = at.and_then(|at| all.into_iter().nth(at));
         assemble(&notes, project)
     }
 
@@ -1836,7 +1846,7 @@ mod tests {
         v.write("n.md", "---\nprojects: [all]\n---\nx").unwrap();
         let both = |cwd: &Path| {
             let routed = v.project_at(&shown(cwd));
-            let ctx = v.context(cwd).and_then(|c| c.project).map(|p| p.slug);
+            let ctx = v.context(cwd, None).and_then(|c| c.project).map(|p| p.slug);
             assert_eq!(routed, ctx, "{}", cwd.display());
             routed
         };
@@ -1943,7 +1953,7 @@ mod tests {
             )
             .unwrap();
         }
-        let ctx = v.context(&folder).unwrap();
+        let ctx = v.context(&folder, None).unwrap();
         let first = v.list().into_iter().find(|m| m.path == "n00.md").unwrap();
         assert_eq!(first.title.chars().count(), TITLE_MAX);
         assert!(first.title.ends_with('…'));
@@ -2008,7 +2018,7 @@ mod tests {
         )
         .unwrap();
         v.write("notes/other.md", "Unrelated.").unwrap();
-        let ctx = v.context(&folder.join("src")).unwrap();
+        let ctx = v.context(&folder.join("src"), None).unwrap();
         assert_eq!(ctx.project.as_ref().map(|p| p.slug.as_str()), Some("demo"));
         assert_eq!(ctx.attached, ["notes/style.md", "notes/me.md"]);
         assert_eq!(ctx.listed, ["notes/release.md", "notes/machines.md"]);
@@ -2047,10 +2057,10 @@ mod tests {
     #[test]
     fn context_without_a_project_carries_only_notes_for_every_session() {
         let (d, v) = vault();
-        assert!(v.context(Path::new("")).is_none());
+        assert!(v.context(Path::new(""), None).is_none());
         v.write("notes/plain.md", "nothing global").unwrap();
-        assert!(v.context(Path::new("")).is_none());
-        assert!(v.context(d.path()).is_none());
+        assert!(v.context(Path::new(""), None).is_none());
+        assert!(v.context(d.path(), None).is_none());
         v.write(
             "notes/me.md",
             "---\nprojects: [all]\npinned: true\n---\nI prefer short answers.",
@@ -2061,7 +2071,7 @@ mod tests {
             "---\nprojects: [ALL]\ndescription: Which CLIs are installed\n---\nlong body",
         )
         .unwrap();
-        let ctx = v.context(Path::new("")).unwrap();
+        let ctx = v.context(Path::new(""), None).unwrap();
         assert!(ctx.project.is_none());
         assert_eq!(ctx.attached, ["notes/me.md"]);
         assert_eq!(ctx.listed, ["notes/tools.md"]);
@@ -2071,8 +2081,8 @@ mod tests {
                 "{CONTEXT_HEAD}\n\n## me (notes/me.md)\n\nI prefer short answers.\n\n## On demand\n- notes/tools.md — tools: Which CLIs are installed"
             )
         );
-        assert_eq!(v.context(d.path()).unwrap(), ctx);
-        assert_eq!(v.context(Path::new("  ")).unwrap(), ctx);
+        assert_eq!(v.context(d.path(), None).unwrap(), ctx);
+        assert_eq!(v.context(Path::new("  "), None).unwrap(), ctx);
     }
 
     #[test]
@@ -2094,7 +2104,7 @@ mod tests {
             .unwrap();
         v.write("e.md", "---\nprojects: [demo]\n---\nnot pinned")
             .unwrap();
-        let ctx = v.context(&folder).unwrap();
+        let ctx = v.context(&folder, None).unwrap();
         assert_eq!(ctx.attached, ["a.md", "b.md", "d.md"]);
         assert_eq!(ctx.listed, ["c.md", "e.md"]);
         assert_eq!(ctx.overflow, ["c.md"]);
@@ -2106,7 +2116,7 @@ mod tests {
         for i in 0..50 {
             v.write(&format!("more/n{i:02}.md"), "[[demo]]").unwrap();
         }
-        let ctx = v.context(&folder).unwrap();
+        let ctx = v.context(&folder, None).unwrap();
         assert_eq!(ctx.listed.len(), 52);
         assert!(ctx.chars <= CONTEXT_CAP, "{}", ctx.chars);
         let shown = ctx.text.matches("\n- more/").count();
@@ -2140,11 +2150,11 @@ mod tests {
             ),
         )
         .unwrap();
-        let ctx = v.context(&folder).unwrap();
+        let ctx = v.context(&folder, None).unwrap();
         assert_eq!(ctx.attached, ["zzz.md"]);
         assert_eq!(ctx.overflow, ["aaa.md"]);
         assert!(ctx.text.contains("\n- aaa.md — aaa (pinned, too long"));
-        let bare = v.context(d.path()).unwrap();
+        let bare = v.context(d.path(), None).unwrap();
         assert_eq!(bare.attached, ["aaa.md"]);
         assert!(bare.overflow.is_empty());
         assert_eq!(v.overflow()["aaa.md"], ["demo"]);
@@ -2155,7 +2165,7 @@ mod tests {
             std::fs::create_dir_all(&folder).unwrap();
             v.project_upsert(Some("demo"), "Demo", folder.to_str().unwrap())
                 .unwrap();
-            let used = v.context(&folder).unwrap().chars;
+            let used = v.context(&folder, None).unwrap().chars;
             let section = "\n\n## p (p.md)\n\n".chars().count();
             let fill = CONTEXT_CAP - used - section - pad;
             v.write(
@@ -2170,7 +2180,7 @@ mod tests {
                 v.write(&format!("n/{i:02}.md"), "---\nprojects: [demo]\n---\nshort")
                     .unwrap();
             }
-            let ctx = v.context(&folder).unwrap();
+            let ctx = v.context(&folder, None).unwrap();
             assert!(ctx.chars <= CONTEXT_CAP, "pad {pad}: {}", ctx.chars);
             assert!(ctx.text.contains("\n\n## On demand"), "pad {pad}");
             assert!(ctx.text.ends_with(" more (brain_list)"), "pad {pad}");
@@ -2205,19 +2215,44 @@ mod tests {
         .unwrap();
         v.write("outer.md", "---\nprojects: [outer]\n---\nouter only")
             .unwrap();
-        let ctx = v.context(&inner.join("src")).unwrap();
+        let ctx = v.context(&inner.join("src"), None).unwrap();
         assert_eq!(ctx.project.as_ref().unwrap().slug, "inner");
         assert_eq!(ctx.attached, ["local.md", "both.md", "global.md"]);
         assert!(ctx.listed.is_empty());
         assert_eq!(ctx.text.matches("(both.md)").count(), 1);
         assert!(!ctx.text.contains("## On demand"));
-        let top = v.context(&outer).unwrap();
+        let top = v.context(&outer, None).unwrap();
         assert_eq!(top.project.as_ref().unwrap().slug, "outer");
         assert_eq!(top.attached, ["both.md", "global.md"]);
         assert_eq!(top.listed, ["outer.md"]);
         assert!(Vault::at(d.path().join("missing"))
-            .context(&inner)
+            .context(&inner, None)
             .is_none());
+    }
+
+    #[test]
+    fn a_session_s_own_project_wins_over_its_folder() {
+        let (d, v) = vault();
+        let app = d.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        v.project_upsert(Some("app"), "App", app.to_str().unwrap())
+            .unwrap();
+        v.project_upsert(
+            Some("site"),
+            "Site",
+            d.path().join("site").to_str().unwrap(),
+        )
+        .unwrap();
+        let by_folder = v.context(&app, None).unwrap();
+        assert_eq!(by_folder.project.as_ref().unwrap().slug, "app");
+        let named = v.context(&app, Some("site")).unwrap();
+        assert_eq!(named.project.as_ref().unwrap().slug, "site");
+        let gone = v.context(&app, Some("archived")).unwrap();
+        assert_eq!(
+            gone.project.as_ref().unwrap().slug,
+            "app",
+            "falls back to the folder"
+        );
     }
 
     #[test]
@@ -2436,7 +2471,7 @@ mod tests {
         );
         assert_eq!(v.project_at(f).as_deref(), Some("demo"));
 
-        let ctx = v.context(&folder).unwrap();
+        let ctx = v.context(&folder, None).unwrap();
         assert_eq!(ctx.attached, ["notes/rule.md"]);
         assert_eq!(ctx.listed, ["notes/me.md"]);
         assert!(!ctx.text.contains("conflict"), "{}", ctx.text);

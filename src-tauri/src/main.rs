@@ -807,6 +807,7 @@ fn main() {
             settings::shell_remove_host,
             settings::shell_logs,
             sessions::rewind_thread,
+            sessions::set_session_environment,
             files::git_branches,
             files::tool_image,
             settings::shell_kill,

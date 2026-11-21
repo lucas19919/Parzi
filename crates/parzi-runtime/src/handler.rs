@@ -219,6 +219,12 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
 }
 
 pub fn system_parts(cwd: &str) -> Vec<String> {
+    system_parts_for(cwd, None)
+}
+
+/// The instructions for a session in `project` (its own record of where it
+/// works), falling back to the project whose folder holds `cwd`.
+pub fn system_parts_for(cwd: &str, project: Option<&str>) -> Vec<String> {
     let mut parts = vec![harness_intro()];
     parts.push(harness_section("tools"));
     parts.push(harness_section("teamwork"));
@@ -227,7 +233,9 @@ pub fn system_parts(cwd: &str) -> Vec<String> {
     if let Some(text) = parzi_core::system::global() {
         parts.push(format!("# Global instructions\n\n{text}"));
     }
-    if let Some(ctx) = parzi_core::brain::context_for(std::path::Path::new(cwd.trim())) {
+    if let Some(ctx) =
+        parzi_core::brain::context_for_session(std::path::Path::new(cwd.trim()), project)
+    {
         parts.push(ctx.text);
     }
     parts

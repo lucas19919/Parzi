@@ -73,7 +73,12 @@ async fn another_agent_takes_over_the_same_thread_with_its_history() {
         store.get(&meta.id).unwrap().model.starts_with("opencode"),
         "the thread shows its new agent"
     );
-    let threads = store.list().unwrap();
+    let threads: Vec<_> = store
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.project == "switch")
+        .collect();
     assert_eq!(threads.len(), 1, "no second session");
 
     // Back to Claude: it resumes its own session and hears only what happened
@@ -113,4 +118,70 @@ async fn another_agent_takes_over_the_same_thread_with_its_history() {
     );
     assert!(!back.prompt.contains("<earlier-conversation>"));
     assert!(back.prompt.ends_with("check the tests"));
+}
+
+/// Moving a session to another folder (another project, or a branch's
+/// worktree) drops the agent's own session, which belongs to the old folder:
+/// the next turn starts fresh and is handed the thread.
+#[tokio::test]
+async fn a_session_moved_to_another_folder_hands_the_thread_over() {
+    home("env-move");
+    let claude = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.session("claude-1");
+            a.say("Read the old repo.");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&claude));
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let (meta, _rx) = orch
+        .spawn(
+            "env",
+            "claude",
+            "look around",
+            None,
+            &first.path().display().to_string(),
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+
+    let same = orch
+        .set_environment(&meta.id, &first.path().display().to_string(), None)
+        .await
+        .unwrap();
+    assert_eq!(same.cwd, first.path().display().to_string());
+
+    let moved = orch
+        .set_environment(
+            &meta.id,
+            &second.path().display().to_string(),
+            Some("other"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.cwd, second.path().display().to_string());
+    assert_eq!(moved.project, "other");
+    assert!(orch
+        .set_environment(&meta.id, "/no/such/folder/for/parzi", None)
+        .await
+        .is_err());
+
+    orch.send_to(&meta.id, "go on", None, "", "low", vec![], None, None)
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+    let turn = claude.seen().pop().expect("it ran again");
+    assert!(
+        turn.resume.is_none(),
+        "the old folder's session is not resumed"
+    );
+    assert!(turn.prompt.contains("<earlier-conversation>"));
+    assert!(turn.prompt.contains("Read the old repo."));
 }

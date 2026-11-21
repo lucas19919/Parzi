@@ -4,8 +4,10 @@ pub use launch::ContextParts;
 mod queue;
 mod wake;
 
+pub(crate) use queue::{
+    forget_agent_sessions, run_session, set_run_note, set_run_session, take_catch_up, VendorSession,
+};
 pub use queue::{run_note, BUDGET_NOTE};
-pub(crate) use queue::{run_session, set_run_note, set_run_session, take_catch_up, VendorSession};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -325,6 +327,50 @@ impl Orchestrator {
             }
         }
         all
+    }
+
+    /// Moves a session to another folder (a project, or a branch's worktree)
+    /// and project while it is not running. When the folder changes, the
+    /// agents' own sessions are dropped: they belong to the old folder, and
+    /// the next turn hands the new agent the thread instead.
+    pub async fn set_environment(
+        &self,
+        id: &str,
+        cwd: &str,
+        project: Option<&str>,
+    ) -> Result<SessionMeta> {
+        let running = self
+            .handles
+            .lock()
+            .await
+            .get(id)
+            .is_some_and(|h| !h.finished());
+        if running {
+            return Err(parzi_core::ParziError::Validation(
+                "stop the session's run before moving it".into(),
+            ));
+        }
+        let before = self.store.get(id)?;
+        let cwd = cwd.trim();
+        if !cwd.is_empty() {
+            let (new, old) = (std::path::Path::new(cwd), std::path::Path::new(&before.cwd));
+            if !new.is_dir() {
+                return Err(parzi_core::ParziError::Validation(format!(
+                    "no folder at {cwd}"
+                )));
+            }
+            let same = !before.cwd.trim().is_empty()
+                && parzi_core::brain::inside(new, old)
+                && parzi_core::brain::inside(old, new);
+            if !same {
+                self.store.set_cwd(id, cwd)?;
+                forget_agent_sessions(id);
+            }
+        }
+        if let Some(p) = project.map(str::trim).filter(|p| !p.is_empty()) {
+            self.store.set_project(id, p)?;
+        }
+        self.store.get(id)
     }
 
     pub async fn kill(&self, id: &str) -> Result<()> {

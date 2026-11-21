@@ -6,7 +6,7 @@ use parzi_core::store::{Event, RunCause, RunEndKind, SessionMeta, SessionStatus,
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
+use crate::handler::{system_parts_for, HarnessBridge, RunEvent, RunSink};
 use crate::run::{EngineRun, EngineRunParts, RunTally};
 use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
@@ -557,7 +557,13 @@ impl Orchestrator {
             Arc::new(std::sync::Mutex::new(t))
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
-        let mut instructions = system_parts(&cwd);
+        let project = p
+            .store
+            .get(&q.session_id)
+            .ok()
+            .map(|m| m.project)
+            .filter(|p| !p.is_empty() && p != "default");
+        let mut instructions = system_parts_for(&cwd, project.as_deref());
         if provider_id != "claude" {
             if let Some(files) =
                 parzi_core::system::claude_files_for_others(std::path::Path::new(&cwd))
