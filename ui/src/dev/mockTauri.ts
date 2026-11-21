@@ -441,6 +441,38 @@ const mockHosts = [
   },
 ];
 
+// ?run=4000: a sent message starts a run that works that long and then
+// finishes, like the engine: text events while it works, "still working" for
+// a second send, kill_run stops it with a "cancelled" error.
+const runMs = Number(params.get("run")) || 0;
+const said: Record<string, unknown[]> = {};
+const runs = new Map<string, { tick: ReturnType<typeof setInterval>; end: ReturnType<typeof setTimeout> }>();
+const runEvent = async (e: Record<string, unknown>) => {
+  const { emit } = await import("@tauri-apps/api/event");
+  await emit("parzi://run-event", e);
+};
+const setStatus = (sid: string, status: string) => {
+  const s = sessions.find((x) => x.id === sid);
+  if (s) s.status = status;
+};
+function endRun(sid: string, how: "done" | "cancelled") {
+  const run = runs.get(sid);
+  if (!run) return;
+  clearInterval(run.tick);
+  clearTimeout(run.end);
+  runs.delete(sid);
+  if (how === "done") (said[sid] ??= []).push({ kind: "assistant", text: "Done: that's handled." });
+  setStatus(sid, how === "done" ? "idle" : "killed");
+  void runEvent(how === "done" ? { kind: "done", session: sid, turns: 1 } : { kind: "error", session: sid, error: "cancelled" });
+}
+function startRun(sid: string, prompt: string) {
+  if (runs.has(sid)) throw new Error(`still working on ${sid}`);
+  (said[sid] ??= []).push({ kind: "user", text: prompt });
+  setStatus(sid, "active");
+  const tick = setInterval(() => void runEvent({ kind: "text", session: sid, text: "Working on it. " }), 700);
+  runs.set(sid, { tick, end: setTimeout(() => endRun(sid, "done"), runMs) });
+}
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   branch_prs: () => prs,
   app_version: () => "0.1.25-dev",
@@ -448,8 +480,9 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   get_thread: (a) => {
     if (a.id === "s-new") return [{ ...sessions[0], id: "s-new", title: "New session", status: "active" }, []];
     const s = sessions.find((x) => x.id === a.id) ?? sessions[0];
-    return [s, s.status === "draft" ? [] : transcript()];
+    return [s, s.status === "draft" ? [] : [...transcript(), ...(said[s.id] ?? [])]];
   },
+  kill_run: (a) => endRun(a.id as string, "cancelled"),
   provider_statuses: () => board,
   refresh_providers: () => board,
   get_config: () => structuredClone(config),
@@ -620,7 +653,11 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return { label: "box", user: "dev", host: "box.example.net", version: "0.1.32", linked_at: Date.now(), alive: true, synced_at: Date.now(), device: "pc" };
   },
   // ?late=1: a new session's run has not recorded the message yet when the app reloads.
-  send_message: (a) => (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : params.get("late") ? "s-new" : "s1"),
+  send_message: (a) => {
+    const sid = (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : params.get("late") ? "s-new" : "s1");
+    if (runMs) startRun(sid, a.prompt as string);
+    return sid;
+  },
 };
 
 const win = (...parts: string[]) => parts.join("\\");

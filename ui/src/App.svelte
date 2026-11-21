@@ -45,7 +45,8 @@
   import { effortsFor, nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
-import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
+  import { flushHeld, heldLabel, loadHeld, MAX_HELD, saveHeld, stillWorking, type HeldItem } from "./lib/held";
+  import { echoOf, initialSends, isBusy, isPaused, isWorking, phaseOf, step, tabKey, workingSet, type Effect, type Outcome, type SendEvent, type Sends, type Step } from "./lib/sendState";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
@@ -82,8 +83,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   let shown: string | null = null;
   let meta: SessionMeta | null = null;
-  let events: ChatEvent[] = [];
-  let running = new Set<string>();
+  /** The thread as the store has it; `events` adds the message still on its way. */
+  let stored: ChatEvent[] = [];
   let approvals: Approval[] = [];
   let questions: Question[] = [];
   let requests: AgentRequest[] = [];
@@ -92,7 +93,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: sessionMarks.set(
     Object.fromEntries<SessionMark>([
       ...Object.entries(unseen),
-      ...[...running].map((id) => [id, "running"] as const),
+      ...[...working].map((id) => [id, "running"] as const),
       ...[...approvals, ...questions, ...requests].map((x) => [x.session, "waiting"] as const),
     ]),
   );
@@ -113,36 +114,44 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let permission = permissionFor("");
   let policy = "";
   let mode: ComposerMode = "build";
-  let sendingTabs = new Set<string>();
-  $: sending = sendingTabs.has(activeId);
-  let held: HoldQueue = loadHeld();
-  $: saveHeld(held);
-  let queuePaused = new Set<string>();
-  $: if ([...queuePaused].some((sid) => !(held[sid]?.length))) {
-    queuePaused = new Set([...queuePaused].filter((sid) => held[sid]?.length));
-  }
-  $: heldRows = (tab.kind === "session" && shown ? held[shown] ?? [] : []).map((item) => ({
+  // Sending, queueing and stopping, per session (lib/sendState.ts). `act` is
+  // the only writer; in functions read `sends` itself, since the values
+  // derived here only catch up after the update.
+  let sends: Sends = initialSends(loadHeld());
+  $: working = workingSet(sends);
+  $: sending = phaseOf(sends, tab.sessionId ?? tabKey(tab.id)) === "sending";
+  $: heldRows = (tab.kind === "session" && shown ? sends.queue[shown] ?? [] : []).map((item) => ({
     id: item.id,
     text: heldLabel(item),
     detail: item.files.length ? `${item.files.length} file${item.files.length === 1 ? "" : "s"}` : "",
   }));
-  $: queueIsPaused = !!shown && queuePaused.has(shown);
-  const inflight = new Set<string>();
-  const holdLive = new Map<string, number>();
-  const released = new Map<string, number>();
+  $: queueIsPaused = !!shown && isPaused(sends, shown);
+  // The message just sent shows until the store has it.
+  $: echoText = echoOf(sends, shown ?? (tab.kind === "session" && !tab.sessionId ? tabKey(tab.id) : ""))?.text ?? null;
+  $: events = echoText === null ? stored : [...stored, { kind: "user", text: echoText } as ChatEvent];
+  /** The session whose ended turn stays on screen until its saved reply is in. */
+  let closing = "";
 
-  function markLive(id: string) {
-    released.delete(id);
-    holdLive.set(id, Date.now() + 2000);
-    running = new Set(running).add(id);
+  function act(ev: SendEvent): Step {
+    const r = step(sends, ev, Date.now());
+    if (r.state.queue !== sends.queue) saveHeld(r.state.queue);
+    if (r.state !== sends) sends = r.state;
+    for (const fx of r.effects) perform(fx);
+    return r;
   }
 
-  function release(id: string) {
-    holdLive.delete(id);
-    released.set(id, Date.now() + 2000);
-    if (!running.has(id)) return;
-    running.delete(id);
-    running = new Set(running);
+  function perform(fx: Effect) {
+    if (fx.do === "deliver") void sendHeld(fx.key, fx.item);
+    else if (fx.do === "kill") void stopSession(fx.key);
+    else if (fx.do === "retry") {
+      const { key, tries } = fx;
+      setTimeout(() => {
+        void api
+          .getThread(key)
+          .then(([m]) => m.status, () => "active")
+          .then((status) => act({ type: "woke", key, tries, status }));
+      }, fx.ms);
+    }
   }
 
   function persistDrafts() {
@@ -205,7 +214,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const parent = new Map(threads.map((t) => [t.id, t.parent_id]));
     let n = 0;
     for (const t of threads) {
-      if (t.id === shown || !(t.status === "active" || t.status === "queued" || running.has(t.id))) continue;
+      if (t.id === shown || !(t.status === "active" || t.status === "queued" || working.has(t.id))) continue;
       let cur = t.parent_id;
       let guard = 0;
       while (cur && guard++ < 50) {
@@ -278,13 +287,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: syncComposer(tab);
   $: mode = comp.mode;
   $: model = comp.model;
-  $: streaming = !!shown && running.has(shown);
+  $: streaming = !!shown && (working.has(shown) || closing === shown);
   // Subagents of the session on screen that are still at work, with the
   // step each is on, for the activity in its thread.
   $: needsYou = new Set([...approvals, ...questions, ...requests].map((x) => x.session));
   $: liveHelpers = shown
     ? threads
-        .filter((t) => t.parent_id === shown && (running.has(t.id) || needsYou.has(t.id)))
+        .filter((t) => t.parent_id === shown && (working.has(t.id) || needsYou.has(t.id)))
         .map((t) => ({ id: t.id, title: t.title || "Untitled", need: needsYou.has(t.id), step: $activity.get(t.id)?.label ?? "" }))
     : [];
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
@@ -323,21 +332,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     noteThreads(threads);
   }, 100);
 
-  function applyLive(id: string, status: string) {
-    const live = status === "active" || status === "queued";
-    if (live) {
-      if ((released.get(id) ?? 0) > Date.now()) return;
-      if (!running.has(id)) running = new Set(running).add(id);
-      return;
-    }
-    if (inflight.has(id) || !running.has(id)) return;
-    if ((holdLive.get(id) ?? 0) > Date.now()) return;
-    running.delete(id);
-    running = new Set(running);
-  }
-
   function noteThreads(list: { id: string; status: string }[]) {
-    for (const t of list) applyLive(t.id, t.status);
+    act({ type: "seen", list: list.map(({ id, status }) => ({ id, status })) });
   }
 
   function patchTab(id: string, patch: Partial<Tab>) {
@@ -515,7 +511,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     navSeq++;
     shown = null;
     meta = null;
-    events = [];
+    stored = [];
     context = { used: 0, limit: 0 };
     clearLive();
   }
@@ -566,13 +562,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const cached = threadCache.get(id);
     if (cached) {
       meta = cached.meta;
-      events = withPending(id, cached.events);
+      showStored(id, cached.events);
       context = { used: cached.meta.context_tokens ?? 0, limit: cached.meta.context_limit ?? 0 };
       if (cached.meta.model) {
         tab.composer.model = cached.meta.model;
         comp = comp;
       }
-      applyLive(id, cached.meta.status);
+      noteThreads([cached.meta]);
       if (tab.sessionId === id && cached.meta.title) patchTab(tab.id, { title: cached.meta.title });
       void scrollToBottom();
     }
@@ -582,13 +578,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       const changed = !cached || eventsDiffer(cached.events, ev);
       cacheThread(id, m, ev);
       meta = m;
-      if (changed) events = withPending(id, ev);
+      if (changed) showStored(id, ev);
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
       if (m.model) {
         tab.composer.model = m.model;
         comp = comp;
       }
-      applyLive(id, m.status);
+      noteThreads([m]);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
       if (changed) await scrollToBottom();
     } catch (e) {
@@ -600,16 +596,15 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   // records it when it starts, which can come after the first reload (an agent
   // still starting, a queued run); without this the bubble vanished and only
   // "Thinking" showed.
-  let pendingSend: { sid: string; text: string; users: number } | null = null;
   const usersIn = (ev: ChatEvent[]) => ev.filter((e) => e.kind === "user").length;
-  function withPending(id: string, ev: ChatEvent[]): ChatEvent[] {
-    const p = pendingSend;
-    if (!p || p.sid !== id) return ev;
-    if (usersIn(ev) > p.users) {
-      pendingSend = null;
-      return ev;
-    }
-    return [...ev, { kind: "user", text: p.text }];
+  function showStored(id: string, ev: ChatEvent[]) {
+    act({ type: "stored", key: id, users: usersIn(ev) });
+    stored = ev;
+  }
+  /** User messages the store had for a session when last read. */
+  function usersOf(id: string): number {
+    if (id === shown) return usersIn(stored);
+    return usersIn(threadCache.get(id)?.events ?? []);
   }
 
   async function reload(swap?: () => void) {
@@ -627,7 +622,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (my !== navSeq || shown !== id) return;
     cacheThread(id, m, ev);
     meta = m;
-    events = withPending(id, ev);
+    showStored(id, ev);
     swap?.();
     context = { used: m.context_tokens ?? context.used, limit: m.context_limit ?? context.limit };
   }
@@ -1000,33 +995,27 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
     const fresh = !target.sessionId;
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
-    if (!fresh && target.sessionId && (running.has(target.sessionId) || inflight.has(target.sessionId))) {
-      const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
-      if (!queued.ok) {
+    const key = target.sessionId ?? tabKey(target.id);
+    const item = { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn };
+    if (isBusy(sends, key)) {
+      // A new tab's first message is still on its way: there is nothing to queue behind yet.
+      if (fresh) return;
+      if (!act({ type: "hold", key, item }).ok) {
         toast(`The queue holds ${MAX_HELD} messages`);
         return;
       }
-      held = queued.queue;
       draft.input = "";
       draft.attachments = [];
       comp = comp;
       return;
     }
-    if (sendingTabs.has(target.id)) return;
     const wasDraft = threads.find((t) => t.id === target.sessionId)?.status === "draft";
     if (target.sessionId && otherAgent && !wasDraft) toast(`${nameOf(agentOf(draft.model))} takes over this thread, with the conversation so far`);
-    const optimistic: ChatEvent = { kind: "user", text: prompt };
-    sendingTabs = new Set(sendingTabs).add(target.id);
-    if (!fresh && target.sessionId) {
-      inflight.add(target.sessionId);
-      markLive(target.sessionId);
-    }
+    act({ type: "begin", key, text: prompt, users: fresh ? 0 : usersOf(key) });
     forgetDraft(target);
     draft.input = "";
     draft.attachments = [];
     comp = comp;
-    const usersBefore = fresh ? 0 : usersIn(events);
-    events = [...events, optimistic];
     void scrollToBottom(true);
     try {
       const sid = await api.sendMessage({
@@ -1040,15 +1029,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         remote: remoteOn,
         worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
       });
-      if (target.sessionId) inflight.delete(target.sessionId);
-      pendingSend = { sid, text: prompt, users: usersBefore };
-      markLive(sid);
-      if (target.sessionId && sid !== target.sessionId) {
-        running.delete(target.sessionId);
-        holdLive.delete(target.sessionId);
-        running = new Set(running);
-        held = moveHeld(held, target.sessionId, sid);
-      }
+      act({ type: "started", key, sid });
       rememberModel(draft.model, draft.effort);
       draft.input = "";
       draft.attachments = [];
@@ -1060,33 +1041,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         await reload();
       }
       void refreshThreads();
-      void drainIfIdle(sid);
     } catch (e) {
-      if (target.sessionId) {
-        inflight.delete(target.sessionId);
-        release(target.sessionId);
-      }
-      events = events.filter((ev) => ev !== optimistic);
-      if (target.sessionId && !fresh && stillWorking(e)) {
-        const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
-        if (!queued.ok) {
-          draft.input = prompt;
-          draft.attachments = files;
-          comp = comp;
-          toast(`The queue holds ${MAX_HELD} messages`);
-        } else {
-          held = queued.queue;
-          console.info("queue: still working; the message stays queued", { session: target.sessionId });
-        }
+      // The engine is still letting go of the last run: the message waits in the queue.
+      const still = !fresh && stillWorking(e);
+      if (act({ type: "failed", key, item: still ? item : undefined, stillWorking: still }).ok && still) {
+        console.info("queue: still working; the message stays queued", { session: key });
         return;
       }
       draft.input = prompt;
       draft.attachments = files;
       comp = comp;
-      toastError(e);
-    } finally {
-      sendingTabs.delete(target.id);
-      sendingTabs = sendingTabs;
+      if (still) toast(`The queue holds ${MAX_HELD} messages`);
+      else toastError(e);
     }
   }
 
@@ -1104,61 +1070,15 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function unhold(sid: string, itemId?: string) {
-    const next = itemId ? takeId(held, sid, itemId) : takeHead(held, sid);
-    held = next.queue;
-    if (next.item) restore(sid, next.item);
+    const { item } = act({ type: "take", key: sid, itemId });
+    if (item) restore(sid, item);
   }
 
-  const DRAIN_DELAYS = [250, 500, 1000, 1500, 2000, 2000];
-  const drainTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; tries: number }>();
-  function clearDrain(sid: string) {
-    const cur = drainTimers.get(sid);
-    if (cur) {
-      clearTimeout(cur.timer);
-      drainTimers.delete(sid);
-    }
-  }
-  function scheduleDrain(sid: string) {
-    if (queuePaused.has(sid) || !(held[sid]?.length)) {
-      clearDrain(sid);
-      return;
-    }
-    const prev = drainTimers.get(sid);
-    const tries = prev ? prev.tries + 1 : 0;
-    if (prev) clearTimeout(prev.timer);
-    if (tries >= DRAIN_DELAYS.length) {
-      drainTimers.delete(sid);
-      return;
-    }
-    const delay = DRAIN_DELAYS[tries];
-    const timer = setTimeout(() => {
-      drainTimers.delete(sid);
-      void drainIfIdle(sid, true);
-    }, delay);
-    drainTimers.set(sid, { timer, tries });
-  }
-
-  async function sendHeld(sid: string, given?: HeldItem) {
-    if (inflight.has(sid)) {
-      if (given) held = putFront(held, sid, given);
-      return;
-    }
-    let h = given;
-    if (!h) {
-      const next = takeHead(held, sid);
-      held = next.queue;
-      h = next.item;
-    }
-    if (!h) return;
-    inflight.add(sid);
-    markLive(sid);
+  /** Hands a queued message to the engine; the send state already counts it as sending. */
+  async function sendHeld(sid: string, h: HeldItem) {
     if (sid === shown) await reload();
-    const optimistic: ChatEvent = { kind: "user", text: h.text };
-    const heldUsers = sid === shown ? usersIn(events) : 0;
-    if (sid === shown) {
-      events = [...events, optimistic];
-      void scrollToBottom(true);
-    }
+    act({ type: "echo", key: sid, text: h.text, users: usersOf(sid) });
+    if (sid === shown) void scrollToBottom(true);
     try {
       const id = await api.sendMessage({
         sessionId: sid,
@@ -1170,13 +1090,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         mode: h.mode,
         remote: h.remote,
       });
-      inflight.delete(sid);
-      pendingSend = { sid: id, text: h.text, users: heldUsers };
+      act({ type: "started", key: sid, sid: id });
       if (id !== sid) {
-        running.delete(sid);
-        holdLive.delete(sid);
-        markLive(id);
-        held = moveHeld(held, sid, id);
         for (const t of tabs.filter((t) => t.sessionId === sid)) patchTab(t.id, { sessionId: id });
       }
       if (shown === sid) {
@@ -1184,105 +1099,53 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         await reload();
       }
       void refreshThreads();
-      void drainIfIdle(id);
     } catch (e) {
-      inflight.delete(sid);
-      release(sid);
-      held = putFront(held, sid, h);
-      if (shown === sid) events = events.filter((ev) => ev !== optimistic);
-      if (stillWorking(e)) {
-        // The previous run may still be releasing its handle; keep it marked
-        // live and retry shortly instead of leaving the queue stalled.
-        markLive(sid);
-        scheduleDrain(sid);
-        console.info("queue: still working; scheduling retry", { session: sid });
-        return;
-      }
-      toastError(e);
+      const still = stillWorking(e);
+      act({ type: "failed", key: sid, item: h, front: true, stillWorking: still });
+      // The previous run may still be releasing its handle: the send state
+      // keeps it working and tries again shortly.
+      if (still) console.info("queue: still working; scheduling retry", { session: sid });
+      else toastError(e);
     }
-  }
-
-  async function drainIfIdle(sid: string, retrying = false) {
-    clearDrain(sid);
-    if (queuePaused.has(sid) || !(held[sid]?.length)) return;
-    if (inflight.has(sid)) {
-      scheduleDrain(sid);
-      return;
-    }
-    let status = "";
-    try {
-      const [m] = await api.getThread(sid);
-      status = m.status;
-    } catch {
-      return;
-    }
-    if (status === "active" || status === "queued") {
-      if (!running.has(sid)) markLive(sid);
-      if (retrying) scheduleDrain(sid);
-      return;
-    }
-    release(sid);
-    void sendHeld(sid);
   }
 
   async function stop() {
-    if (!shown || !running.has(shown)) return;
+    if (!shown || !isWorking(sends, shown)) return;
     const id = shown;
-    release(id);
-    if ((held[id]?.length ?? 0) > 0) queuePaused = new Set(queuePaused).add(id);
+    act({ type: "stop", key: id });
     clearLive();
     await reload();
     void refreshThreads();
-    await stopSession(id);
   }
 
   function dropQueued(sid: string, itemId: string) {
-    held = dropId(held, sid, itemId);
-    if (!(held[sid]?.length)) queuePaused = new Set([...queuePaused].filter((x) => x !== sid));
+    act({ type: "drop", key: sid, itemId });
   }
 
   function moveQueued(sid: string, itemId: string, to: number) {
-    held = moveId(held, sid, itemId, to);
+    act({ type: "move", key: sid, itemId, to });
   }
 
   function resumeQueue(sid: string) {
-    queuePaused = new Set([...queuePaused].filter((x) => x !== sid));
-    void drainIfIdle(sid);
+    act({ type: "pause", key: sid, on: false });
   }
 
-  async function sendHeldNow(itemId?: string) {
-    const id = shown;
-    if (!id) return;
-    clearDrain(id);
-    if (queuePaused.has(id)) queuePaused = new Set([...queuePaused].filter((x) => x !== id));
-    const next = itemId ? takeId(held, id, itemId) : takeHead(held, id);
-    held = next.queue;
-    const h = next.item;
-    if (!h) return;
-    if (running.has(id)) {
-      running.delete(id);
-      running = new Set(running);
-      clearLive();
-      await stopSession(id);
-      for (let i = 0; i < 30; i++) {
-        const st = await api.getThread(id).then(([m]) => m.status).catch(() => "");
-        if (!st || (st !== "active" && st !== "queued")) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-    }
-    for (let i = 0; i < 40 && inflight.has(id); i++) await new Promise((r) => setTimeout(r, 50));
-    await sendHeld(id, h);
+  /** Stops the agent if it is at work and sends this queued message once it has let go. */
+  function sendHeldNow(itemId?: string) {
+    if (!shown) return;
+    const r = act({ type: "sendNow", key: shown, itemId });
+    if (r.effects.some((fx) => fx.do === "kill")) clearLive();
   }
 
+  /** Carries out a stop: the engine's kill returns once the run is gone. */
   async function stopSession(id: string) {
     try {
       await api.killRun(id);
-      running.delete(id);
-      running = running;
-      void refreshThreads();
     } catch (e) {
       toastError(e);
     }
+    act({ type: "stopped", key: id });
+    void refreshThreads();
   }
 
   async function fork() {
@@ -1332,9 +1195,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     let files: string[] = [];
     let taken: HeldItem | undefined;
     if (fromHeld) {
-      const next = itemId ? takeId(held, parent, itemId) : takeHead(held, parent);
-      held = next.queue;
-      taken = next.item;
+      taken = act({ type: "take", key: parent, itemId }).item;
       if (!taken) return;
       ({ text, files } = taken);
     } else {
@@ -1346,7 +1207,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       comp = comp;
     }
     const giveBack = () => {
-      if (taken) held = putFront(held, parent, taken);
+      if (taken) act({ type: "putBack", key: parent, item: taken });
       else {
         comp.input = [text, comp.input].filter(Boolean).join("\n\n");
         comp.attachments = [...files, ...comp.attachments];
@@ -1382,9 +1243,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       remote: remoteOn,
       parent,
     });
-    running = new Set(running).add(id);
+    act({ type: "started", key: id, sid: id });
     void refreshThreads();
-    const busySame = !aimed.folder && running.has(parent);
+    const busySame = !aimed.folder && isWorking(sends, parent);
     toast(busySame ? "Side session started in this folder too: the two may edit the same files" : `Side session started${aimed.title ? ` in ${aimed.title}` : ""}`);
     return id;
   }
@@ -1516,11 +1377,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (!ok) return;
     try {
       await api.deleteThread(id);
-      release(id);
-      inflight.delete(id);
-      held = takeAll(held, id).queue;
-      queuePaused = new Set([...queuePaused].filter((x) => x !== id));
-      queuePaused = queuePaused;
+      act({ type: "deleted", key: id });
       if (sessionDocs[id]) {
         const { [id]: _, ...rest } = sessionDocs;
         sessionDocs = rest;
@@ -1535,7 +1392,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   async function clearFinishedSessions() {
-    const idle = threads.filter((t) => !running.has(t.id));
+    const idle = threads.filter((t) => !isWorking(sends, t.id));
     if (!idle.length) {
       toast("Nothing to clear");
       return;
@@ -1548,8 +1405,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     try {
       const count = await api.purgeSessions();
       await refreshThreads();
-      const gone = new Set(threads.map((t) => t.id));
-      for (const t of tabs.filter((t) => t.sessionId && !gone.has(t.sessionId))) closeTab(t.id);
+      const kept = new Set(threads.map((t) => t.id));
+      for (const t of idle.filter((t) => !kept.has(t.id))) act({ type: "deleted", key: t.id });
+      for (const t of tabs.filter((t) => t.sessionId && !kept.has(t.sessionId))) closeTab(t.id);
       toast(count ? `Cleared ${count} sessions` : "Sessions cleared");
     } catch (e) {
       toastError(e);
@@ -1647,27 +1505,27 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
-      clearDrain(e.session);
       if (e.session !== shown) dropCachedThread(e.session);
-      if (e.kind === "error" && /exited before/i.test(e.error) && (held[e.session]?.length ?? 0) > 0) {
-        queuePaused = new Set(queuePaused).add(e.session);
-      }
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
-      const hasQueued = e.kind === "done" && !queuePaused.has(e.session) && !!held[e.session]?.length;
-      const next = hasQueued && !inflight.has(e.session);
-      // The turn on screen ends once its saved message is in place: ending it
-      // first drops the working line and the live fold while the reply still
-      // shows, then the saved message pops in.
-      if (e.session === shown && !next) {
-        const id = e.session;
-        void reload(clearLive).finally(() => release(id));
-      } else {
-        release(e.session);
-        if (e.session === shown) clearLive();
+      const outcome: Outcome =
+        e.kind === "done" ? "done" : e.kind === "paused" ? "paused" : stopped(e.error) ? "stopped" : /exited before/i.test(e.error) ? "exited" : "failed";
+      const was = isWorking(sends, e.session);
+      // A finished run sends the next queued message (sendHeld reloads first).
+      const next = act({ type: "ended", key: e.session, outcome }).effects.some((fx) => fx.do === "deliver");
+      if (e.session === shown) {
+        if (next) clearLive();
+        else {
+          // The turn on screen ends once its saved message is in place: ending
+          // it first drops the working line and the live fold while the reply
+          // still shows, then the saved message pops in.
+          const id = e.session;
+          if (was) closing = id;
+          void reload(clearLive).finally(() => {
+            if (closing === id) closing = "";
+          });
+        }
       }
-      if (next) void sendHeld(e.session);
-      else if (hasQueued) scheduleDrain(e.session);
       if (e.kind === "paused") {
         announce(e.session, "paused at its spending limit", { news: "problem" });
         markEnded(e.session, "waiting");
@@ -1688,9 +1546,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (e.session === shown) void reload();
       return;
     }
-    if (!running.has(e.session) && e.kind !== "context") {
-      running = new Set(running).add(e.session);
-    }
+    if (e.kind !== "context") act({ type: "activity", key: e.session });
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
     if (e.kind === "tool_result" && e.name === "session.format_message" && e.ok && e.session === shown) void reload();
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
@@ -1827,9 +1683,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (cmd.op === "deleted" && cmd.id) {
       const gone = cmd.id;
       dropCachedThread(gone);
-      clearDrain(gone);
-      running.delete(gone);
-      running = running;
+      act({ type: "deleted", key: gone });
       for (const t of tabs.filter((x) => x.sessionId === gone)) closeTab(t.id);
       void refreshThreads();
     }
@@ -2039,8 +1893,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void ensureBoard().catch((e) => toast(`Couldn't load the agents: ${e}`, true));
     checkForUpdatesSoon();
     return () => {
-      for (const cur of drainTimers.values()) clearTimeout(cur.timer);
-      drainTimers.clear();
       unActivity();
       unActions();
       unClear();
@@ -2121,9 +1973,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           contextUsed={0}
           contextLimit={0}
           {compacting}
-          streaming={sideId ? running.has(sideId) : false}
+          streaming={sideId ? working.has(sideId) : false}
           {threads}
-          {running}
+          running={working}
           {approvals}
           questions={asks}
           width={infoWidth}
@@ -2234,7 +2086,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {compacting}
             {streaming}
             {threads}
-            {running}
+            running={working}
             {approvals}
             questions={asks}
               width={infoWidth}
