@@ -182,3 +182,29 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod live_usage {
+    /// Reads this machine's real plan limits from each agent that has a
+    /// reading; prints the windows only.
+    /// `cargo test -p parzi-providers live_usage -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "reads the signed-in accounts over the network"]
+    async fn live_usage() {
+        let cfg = parzi_core::config::ParziConfig::default();
+        for id in ["claude", "codex"] {
+            let p = super::provider(id, &cfg).expect("on the roster");
+            match p.usage().await {
+                Some(windows) => {
+                    for w in windows {
+                        println!(
+                            "{id} {}: {:.0}% resets {:?}",
+                            w.label, w.used_percent, w.resets_at
+                        );
+                    }
+                }
+                None => println!("{id}: no reading"),
+            }
+        }
+    }
+}

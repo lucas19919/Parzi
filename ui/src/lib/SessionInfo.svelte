@@ -5,7 +5,7 @@
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import RunningCard from "./RunningCard.svelte";
-  import { board, reloadBoard } from "./providerStore";
+  import { board, refreshUsage, reloadBoard } from "./providerStore";
   import ResizeGrip from "./ResizeGrip.svelte";
   import { nameOf } from "./providerRows";
   import { api, onRunEvent, type Question, type SessionMeta } from "./api";
@@ -97,11 +97,18 @@
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   $: agent = provider ? nameOf(provider) : "";
 
+  // The Usage card shows the plan's real limits: read from each agent's own
+  // source when the column shows, then every 5 minutes while it stays open.
+  $: if (open) void refreshUsage();
   onMount(() => {
     const un = onRunEvent((e) => {
       if (e.kind === "done" || e.kind === "error" || e.kind === "paused") void reloadBoard();
     });
+    const every = setInterval(() => {
+      if (open && !document.hidden) void refreshUsage();
+    }, 5 * 60_000);
     return () => {
+      clearInterval(every);
       un.then((f) => f()).catch(() => {});
     };
   });

@@ -18,6 +18,8 @@ async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
 base64 = "=0.22.1"
 tracing = "0.1"
+ureq = "3"
+chrono = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "io-util"] }

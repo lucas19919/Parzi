@@ -276,6 +276,8 @@ export const api = {
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
   refreshProviders: (ids?: string[]) => invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
+  /** Each signed-in agent's plan limits, read from its own source (its /usage or /status). */
+  refreshUsage: () => invoke<ProviderStatus[]>("refresh_usage"),
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),

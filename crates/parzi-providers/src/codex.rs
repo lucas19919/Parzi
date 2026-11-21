@@ -115,6 +115,29 @@ impl Provider for Codex {
         enforce(status, self.billing)
     }
 
+    /// What Codex's `/status` shows: `account/rateLimits/read` on a short
+    /// app-server session.
+    async fn usage(&self) -> Option<Vec<UsageWindow>> {
+        if self.billing != Billing::Subscription {
+            return None;
+        }
+        let program = self.program()?;
+        let mut server = open(&program, &std::env::temp_dir(), self.billing)
+            .await
+            .ok()?;
+        let read = server
+            .peer
+            .request_within(
+                "account/rateLimits/read",
+                Value::Null,
+                Duration::from_secs(20),
+            )
+            .await;
+        server.proc.kill().await;
+        let w = windows(read.ok()?.get("rateLimits").unwrap_or(&Value::Null));
+        (!w.is_empty()).then_some(w)
+    }
+
     async fn run_turn(
         &self,
         spec: TurnSpec,

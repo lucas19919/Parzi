@@ -856,6 +856,7 @@ fn main() {
             settings::acp_registry,
             settings::provider_statuses,
             settings::refresh_providers,
+            settings::refresh_usage,
             settings::warm_agent,
             appearance::get_theme_css,
             appearance::get_theme,

@@ -526,6 +526,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   project_plan_doc: () => "D:\\Repos\\Parzi\\.parzi\\plan.md",
   provider_statuses: () => board,
   refresh_providers: () => board,
+  refresh_usage: () => board,
   get_config: () => structuredClone(config),
   "plugin:updater|check": () =>
     params.get("update") ? { rid: 1, currentVersion: "1.2.9", version: "1.3.0", date: null, body: "", rawJson: {} } : null,

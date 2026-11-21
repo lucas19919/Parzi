@@ -317,6 +317,18 @@ pub async fn provider_statuses(state: State<'_, AppState>) -> Result<Vec<Provide
     Ok(in_roster_order(state.orch.provider_statuses()))
 }
 
+/// Reads each signed-in agent's plan limits from its own source (Claude
+/// Code's `/usage`, Codex's `/status`), without a full status check.
+#[tauri::command]
+pub async fn refresh_usage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<ProviderStatus>, String> {
+    let all = in_roster_order(state.orch.refresh_usage().await);
+    let _ = app.emit("parzi://providers", &all);
+    Ok(all)
+}
+
 #[tauri::command]
 pub async fn refresh_providers(
     app: AppHandle,

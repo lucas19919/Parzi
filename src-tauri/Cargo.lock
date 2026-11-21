@@ -2701,6 +2701,7 @@ version = "1.4.2-dev.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "dirs 5.0.1",
  "parzi-core",
  "serde",
@@ -2708,6 +2709,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "ureq",
  "uuid",
 ]
 

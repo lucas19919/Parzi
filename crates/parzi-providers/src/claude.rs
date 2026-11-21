@@ -91,6 +91,27 @@ impl Provider for Claude {
         enforce(status, self.billing)
     }
 
+    async fn usage(&self) -> Option<Vec<UsageWindow>> {
+        if self.billing != Billing::Subscription {
+            return None;
+        }
+        // An expired token is renewed by Claude Code itself, which a quick
+        // `claude auth status` makes it do; Parzi never writes its sign-in.
+        let token = match oauth_token() {
+            Some(t) => t,
+            None => {
+                let program = self.program()?;
+                let env = agent_env(ID, self.billing);
+                let _ = process::output(&program, &["auth", "status"], 30, &env).await;
+                oauth_token()?
+            }
+        };
+        tokio::task::spawn_blocking(move || plan_usage(&token))
+            .await
+            .ok()
+            .flatten()
+    }
+
     async fn run_turn(
         &self,
         spec: TurnSpec,
@@ -1039,6 +1060,96 @@ fn result_text(content: Option<&Value>) -> String {
 /// Every window in a `rate_limit_event`, with whether it is used up.
 /// The CLI names one window at the top level and lists all of them under
 /// `unifiedWindows`; older CLIs send only the top-level one.
+/// Claude Code's own sign-in token, as it saves it: the file on Windows and
+/// Linux, the keychain on macOS. `None` when signed out or expired (Claude
+/// Code refreshes it on its next run).
+fn oauth_token() -> Option<String> {
+    let saved =
+        std::fs::read_to_string(dirs::home_dir()?.join(".claude").join(".credentials.json"))
+            .ok()
+            .or_else(keychain_credentials)?;
+    let v: Value = serde_json::from_str(&saved).ok()?;
+    let oauth = v.get("claudeAiOauth")?;
+    let expires_ms = oauth
+        .get("expiresAt")
+        .and_then(Value::as_u64)
+        .unwrap_or(u64::MAX);
+    let now_ms = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
+    if expires_ms <= now_ms {
+        return None;
+    }
+    oauth
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_credentials() -> Option<String> {
+    let out = std::process::Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_credentials() -> Option<String> {
+    None
+}
+
+/// What Claude Code's `/usage` shows: the plan's 5-hour and weekly windows
+/// (and any model-only weekly ones), from Anthropic's usage endpoint for
+/// signed-in Claude Code. The endpoint is not public API, so anything
+/// unexpected reads as no answer rather than an error.
+fn plan_usage(token: &str) -> Option<Vec<UsageWindow>> {
+    let mut reply = ureq::get("https://api.anthropic.com/api/oauth/usage")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("User-Agent", "claude-code")
+        .call()
+        .map_err(|e| tracing::debug!("Claude usage was not read: {e}"))
+        .ok()?;
+    let text = reply.body_mut().read_to_string().ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let windows = oauth_windows(&v);
+    (!windows.is_empty()).then_some(windows)
+}
+
+fn oauth_windows(v: &Value) -> Vec<UsageWindow> {
+    let named = [
+        ("five_hour", "Session"),
+        ("seven_day", "Weekly"),
+        ("seven_day_opus", "Weekly Opus"),
+        ("seven_day_sonnet", "Weekly Sonnet"),
+    ];
+    named
+        .iter()
+        .filter_map(|(key, label)| {
+            let w = v.get(*key).filter(|w| w.is_object())?;
+            let used = w.get("utilization").and_then(Value::as_f64)?;
+            let resets_at = w
+                .get("resets_at")
+                .and_then(Value::as_str)
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .and_then(|t| u64::try_from(t.timestamp()).ok());
+            Some(UsageWindow {
+                label: (*label).to_string(),
+                used_percent: used.clamp(0.0, 100.0),
+                resets_at,
+            })
+        })
+        .collect()
+}
+
 fn usage_windows(info: &Value) -> Vec<(UsageWindow, bool)> {
     let one = |kind: &str, w: &Value| {
         let rejected = w.get("status").and_then(Value::as_str) == Some("rejected");
@@ -1454,6 +1565,23 @@ mod tests {
             got.push(e);
         }
         (end, got)
+    }
+
+    #[test]
+    fn the_plan_usage_reads_as_its_windows() {
+        let v = json!({
+            "five_hour": {"utilization": 37.0, "resets_at": "2026-11-22T14:00:00.000000+00:00"},
+            "seven_day": {"utilization": 61, "resets_at": "2026-11-27T09:00:00+00:00"},
+            "seven_day_opus": null,
+            "seven_day_sonnet": {"utilization": 12.5},
+        });
+        let w = oauth_windows(&v);
+        let labels: Vec<&str> = w.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["Session", "Weekly", "Weekly Sonnet"]);
+        assert!((w[0].used_percent - 37.0).abs() < 1e-9);
+        assert_eq!(w[0].resets_at, Some(1_795_356_000));
+        assert!(w[2].resets_at.is_none());
+        assert!(oauth_windows(&json!({"error": "nope"})).is_empty());
     }
 
     #[tokio::test]

@@ -75,6 +75,24 @@ export async function reloadBoard(): Promise<void> {
   merge(await api.providerStatuses().catch(() => [] as ProviderStatus[]));
 }
 
+/** The agents' real plan limits, read from their own sources. One read at a
+ *  time, and not more often than every 30 s however many cards ask. */
+let usageRead: Promise<void> | null = null;
+let usageAt = 0;
+export function refreshUsage(): Promise<void> {
+  if (usageRead) return usageRead;
+  if (Date.now() - usageAt < 30_000) return Promise.resolve();
+  usageRead = api
+    .refreshUsage()
+    .then((all) => merge(all))
+    .catch(() => {})
+    .finally(() => {
+      usageAt = Date.now();
+      usageRead = null;
+    });
+  return usageRead;
+}
+
 export async function refreshBoard(ids: string[] = []): Promise<ProviderStatus[]> {
   listen();
   const keys = ids.length ? ids : ["*"];

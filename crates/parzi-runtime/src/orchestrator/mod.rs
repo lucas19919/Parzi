@@ -273,6 +273,30 @@ impl Orchestrator {
         self.with_gates(self.status.all())
     }
 
+    /// Reads each signed-in agent's plan limits from its own source (what
+    /// its `/usage` or `/status` shows), without a full status check, and
+    /// returns the board.
+    pub async fn refresh_usage(&self) -> Vec<parzi_providers::ProviderStatus> {
+        let cfg = self.config();
+        let ready: Vec<String> = self
+            .status
+            .all()
+            .into_iter()
+            .filter(|s| s.state == parzi_providers::State::Ready)
+            .map(|s| s.provider)
+            .collect();
+        let reads = ready.into_iter().filter_map(|id| {
+            let provider = (self.source)(&id, &cfg)?;
+            Some(async move { (id, provider.usage().await) })
+        });
+        for (id, windows) in futures_util::future::join_all(reads).await {
+            if let Some(w) = windows {
+                self.status.set_usage(&id, w);
+            }
+        }
+        self.with_gates(self.status.all())
+    }
+
     pub async fn refresh_providers(&self, ids: &[String]) -> Vec<parzi_providers::ProviderStatus> {
         let cfg = self.config();
         let all = self.status.refresh(&cfg, ids, &self.source).await;

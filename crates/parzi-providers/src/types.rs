@@ -307,6 +307,13 @@ pub trait Provider: Send + Sync {
 
     async fn status(&self) -> ProviderStatus;
 
+    /// The plan's limits right now, read from the agent's own source (what
+    /// its `/usage` or `/status` shows), without a full status check. `None`
+    /// when this agent offers no such reading or it failed.
+    async fn usage(&self) -> Option<Vec<UsageWindow>> {
+        None
+    }
+
     async fn run_turn(
         &self,
         spec: TurnSpec,

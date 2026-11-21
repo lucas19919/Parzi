@@ -111,6 +111,15 @@ impl StatusBoard {
         }
     }
 
+    /// A fresh reading from the agent's own source replaces what was known.
+    pub(crate) fn set_usage(&self, id: &str, windows: Vec<UsageWindow>) {
+        let Ok(mut m) = self.map.write() else { return };
+        let Some(s) = m.get_mut(id) else { return };
+        s.usage = windows;
+        drop(m);
+        self.save();
+    }
+
     pub(crate) fn update_usage(&self, id: &str, windows: &[UsageWindow]) {
         let Ok(mut m) = self.map.write() else { return };
         let Some(s) = m.get_mut(id) else { return };
