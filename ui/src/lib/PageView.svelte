@@ -20,7 +20,7 @@
 
   export let tab: Tab;
   export let immersive = false;
-  /** Full screen over a session: offer laptop, iPhone, Android and a foldable iPhone. */
+  /** Full screen over a session: offer laptop, iPhone, Android and the iPhone Duo. */
   export let devices = false;
 
   // A phone is emulated for real (screen, pixel density, user agent, touch)
@@ -28,7 +28,7 @@
   // gets the screen below the status bar and above the home indicator.
   let device: DeviceId = "laptop";
   let closed = false;
-  const PHONE_IDS: PhoneId[] = ["iphone", "android", "fold"];
+  const PHONE_IDS: PhoneId[] = ["iphone", "android", "duo"];
   let roomW = 0;
   let roomH = 0;
   $: phone = devices && device !== "laptop" ? phoneFor(device, closed) : null;
@@ -321,7 +321,7 @@
             </button>
           {/each}
         </div>
-        {#if device === "fold"}
+        {#if device === "duo"}
           <div class="devices" data-ui-segmented>
             <button class="nav label" class:on={!closed} aria-pressed={!closed} use:tooltip={"Unfolded: the inner screen"} on:click={() => (closed = false)}>Open</button>
             <button class="nav label" class:on={closed} aria-pressed={closed} use:tooltip={"Folded: the outer screen"} on:click={() => (closed = true)}>Closed</button>

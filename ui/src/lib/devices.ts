@@ -1,10 +1,10 @@
 /** The phones a page can be shown as, and how big that phone is drawn. */
 
-export type DeviceId = "laptop" | "iphone" | "android" | "fold";
+export type DeviceId = "laptop" | "iphone" | "android" | "duo";
 export type PhoneId = Exclude<DeviceId, "laptop">;
 
 /** How a phone is drawn: its body, camera and buttons. */
-export type Art = "iphone" | "android" | "fold-open" | "fold-closed";
+export type Art = "iphone" | "android" | "duo-open" | "duo-closed";
 
 export interface Phone {
   label: string;
@@ -68,15 +68,15 @@ export const PHONES: Record<PhoneId, Phone> = {
     bezel: 16,
     edge: 6,
   },
-  // Apple hasn't announced a foldable. These follow the rumoured book-style
-  // iPhone Fold and are approximate: the inner screen open, FOLD_CLOSED below
-  // the outer one. Its browser is Safari, so the user agent is the iPhone's.
-  fold: {
-    label: "Fold",
-    tip: "As on an iPhone Fold (approx.: Apple hasn't announced one)",
-    art: "fold-open",
-    width: 720,
-    height: 900,
+  // The iPhone Duo, Apple's foldable, open: its 7.6-inch inner screen
+  // (1878 x 2670 px at 3x). DUO_CLOSED below is the 5.4-inch outer one.
+  // Its browser is Safari, so the user agent is the iPhone's.
+  duo: {
+    label: "Duo",
+    tip: "As on an iPhone Duo",
+    art: "duo-open",
+    width: 626,
+    height: 890,
     scale: 3,
     userAgent: IPHONE_UA,
     top: 50,
@@ -87,12 +87,12 @@ export const PHONES: Record<PhoneId, Phone> = {
   },
 };
 
-/** The rumoured iPhone Fold closed: its outer screen (approximate). */
-export const FOLD_CLOSED: Phone = {
-  ...PHONES.fold,
-  art: "fold-closed",
-  width: 360,
-  height: 800,
+/** The iPhone Duo closed: its 5.4-inch outer screen (1398 x 2034 px at 3x). */
+export const DUO_CLOSED: Phone = {
+  ...PHONES.duo,
+  art: "duo-closed",
+  width: 466,
+  height: 678,
   top: 62,
   bottom: 38,
   radius: 46,
@@ -100,7 +100,7 @@ export const FOLD_CLOSED: Phone = {
 };
 
 export function phoneFor(id: PhoneId, closed = false): Phone {
-  return id === "fold" && closed ? FOLD_CLOSED : PHONES[id];
+  return id === "duo" && closed ? DUO_CLOSED : PHONES[id];
 }
 
 /** What the page gets: the screen between the status bar and the home indicator. */

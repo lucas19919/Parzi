@@ -24,14 +24,14 @@
       { side: "right", at: 220, len: 70 },
       { side: "right", at: 320, len: 130 },
     ],
-    "fold-closed": [
+    "duo-closed": [
       { side: "left", at: 140, len: 30 },
       { side: "left", at: 200, len: 56 },
       { side: "left", at: 268, len: 56 },
       { side: "right", at: 220, len: 90 },
     ],
     // Open, the buttons of the right half sit on its top edge.
-    "fold-open": [
+    "duo-open": [
       { side: "top", at: 470, len: 56 },
       { side: "top", at: 536, len: 56 },
       { side: "top", at: 640, len: 70 },
@@ -41,8 +41,8 @@
   const METAL: Record<Art, string[]> = {
     iphone: ["#6a6c70", "#2b2c2f", "#55575b", "#1f2022", "#4d4f53"],
     android: ["#3c3d41", "#202124", "#333438", "#1b1c1e", "#2f3033"],
-    "fold-open": ["#e6e7e9", "#a9acb0", "#d8d9dc", "#9a9da2", "#cfd1d4"],
-    "fold-closed": ["#e6e7e9", "#a9acb0", "#d8d9dc", "#9a9da2", "#cfd1d4"],
+    "duo-open": ["#e6e7e9", "#a9acb0", "#d8d9dc", "#9a9da2", "#cfd1d4"],
+    "duo-closed": ["#e6e7e9", "#a9acb0", "#d8d9dc", "#9a9da2", "#cfd1d4"],
   };
 
   $: p = phone;
@@ -55,11 +55,11 @@
   $: metal = p ? METAL[p.art] : [];
   $: cx = p ? s + p.width / 2 : 0;
   // The status bar's middle line, where the time, glyphs and camera sit.
-  $: barY = p ? s + (p.art === "iphone" || p.art === "fold-closed" ? 29.5 : p.top / 2) : 0;
+  $: barY = p ? s + (p.art === "iphone" || p.art === "duo-closed" ? 29.5 : p.top / 2) : 0;
   $: ear = p ? (p.width - 126) / 2 : 0;
-  $: timeX = !p ? 0 : p.art === "android" ? s + 24 : p.art === "fold-open" ? s + 30 : s + ear / 2 + 6;
-  $: glyphsX = !p ? 0 : p.art === "android" ? s + p.width - 22 - 62 : p.art === "fold-open" ? s + p.width - 30 - 72 : s + p.width - ear / 2 - 6 - 36;
-  $: pill = !p ? 0 : p.art === "android" ? 108 : p.art === "fold-open" ? 150 : p.art === "fold-closed" ? 128 : 140;
+  $: timeX = !p ? 0 : p.art === "android" ? s + 24 : p.art === "duo-open" ? s + 30 : s + ear / 2 + 6;
+  $: glyphsX = !p ? 0 : p.art === "android" ? s + p.width - 22 - 62 : p.art === "duo-open" ? s + p.width - 30 - 72 : s + p.width - ear / 2 - 6 - 36;
+  $: pill = !p ? 0 : p.art === "android" ? 108 : p.art === "duo-open" ? 150 : p.art === "duo-closed" ? 128 : 140;
   $: id = p ? `ph-${p.art}` : "ph";
 
   function button(b: Button) {
@@ -134,8 +134,8 @@
         stroke-opacity="0.7"
       />
       <rect x={BUTTON + p.edge} y={BUTTON + p.edge} width={bodyW - 2 * p.edge} height={bodyH - 2 * p.edge} rx={p.radius + p.bezel} fill="url(#{id}-sheen)" />
-      {#if p.art === "fold-open"}
-        <!-- The hinge, where the edge bends at the fold. -->
+      {#if p.art === "duo-open"}
+        <!-- The hinge, where the edge bends at the hinge. -->
         <rect x={cx - 1} y={BUTTON} width="2" height={p.edge} fill="#000" fill-opacity="0.25" />
         <rect x={cx - 1} y={BUTTON + bodyH - p.edge} width="2" height={p.edge} fill="#000" fill-opacity="0.25" />
       {/if}
@@ -143,7 +143,7 @@
       <!-- The screen, in the page's colour; the page itself covers its middle. -->
       <rect x={s} y={s} width={p.width} height={p.height} rx={p.radius} fill={bg} />
 
-      {#if p.art === "fold-open"}
+      {#if p.art === "duo-open"}
         <!-- The crease, seen only in the bars: the page covers the rest. -->
         <rect x={cx - 5} y={s} width="10" height={p.height} fill={ink} fill-opacity="0.03" />
         <line x1={cx} y1={s} x2={cx} y2={s + p.height} stroke={ink} stroke-opacity="0.08" />
@@ -153,7 +153,7 @@
         <text
           x={timeX}
           y={barY + (ios ? 6 : 5)}
-          text-anchor={p.art === "iphone" || p.art === "fold-closed" ? "middle" : "start"}
+          text-anchor={p.art === "iphone" || p.art === "duo-closed" ? "middle" : "start"}
           font-family={ios ? "-apple-system, 'SF Pro Text', Inter, system-ui, sans-serif" : "Roboto, 'Google Sans', Inter, system-ui, sans-serif"}
           font-size={ios ? 17 : 14}
           font-weight={ios ? 600 : 500}
@@ -180,13 +180,13 @@
         {/if}
       </g>
 
-      {#if p.art === "iphone" || p.art === "fold-closed"}
+      {#if p.art === "iphone" || p.art === "duo-closed"}
         <!-- The Dynamic Island, with the front camera's lens at its right. -->
         <rect x={cx - 63} y={s + 11} width="126" height="37" rx="18.5" fill="#000" />
         <circle cx={cx + 44} cy={s + 29.5} r="5.5" fill="#0b0d12" />
         <circle cx={cx + 42.8} cy={s + 28.3} r="1.6" fill="#1f2738" />
       {:else}
-        <!-- A punch-hole camera: centred on the Pixel, in the right half on the open fold. -->
+        <!-- A punch-hole camera: centred on the Pixel, in the right half on the open Duo. -->
         {@const hx = p.art === "android" ? cx : s + p.width * 0.75}
         <circle cx={hx} cy={barY} r={p.art === "android" ? 10 : 8} fill="#000" />
         <circle cx={hx} cy={barY} r="4" fill="#0b0d12" />
