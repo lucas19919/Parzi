@@ -26,7 +26,6 @@ mod files;
 mod job;
 mod onboard;
 mod pagectl;
-mod prs;
 mod remote;
 mod search;
 mod sessions;
@@ -804,9 +803,6 @@ fn main() {
             settings::context_parts,
             settings::shell_jobs,
             settings::shell_hosts,
-            settings::shell_restart_host,
-            settings::shell_remove_host,
-            settings::shell_logs,
             sessions::rewind_thread,
             sessions::set_session_environment,
             sessions::answer_plan_proposal,
@@ -835,16 +831,11 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
-            prs::branch_prs,
             files::pick_folder,
             files::list_files,
             files::git_branch,
-            files::git_status,
-            files::git_diff,
             files::read_image_data_url,
             files::read_text_file,
-            files::pick_text_file,
-            files::list_dir,
             files::stage_image,
             files::save_as,
             files::reveal_saved,

@@ -197,30 +197,6 @@ impl Orchestrator {
         }
     }
 
-    pub async fn shell_restart_host(
-        &self,
-        sid: &str,
-        id: &str,
-    ) -> std::result::Result<crate::shell::HostJob, String> {
-        self.shells_for(sid)
-            .restart_host(id)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    pub fn shell_remove_host(&self, sid: &str, id: &str) -> bool {
-        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
-        match reg {
-            Some(r) => r.remove_host(id),
-            None => crate::shell::ShellRegistry::new(sid).remove_host(id),
-        }
-    }
-
-    pub fn shell_logs(&self, sid: &str, id: &str, tail: usize) -> Option<crate::shell::LogTail> {
-        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
-        reg.and_then(|r| r.logs(id, 0, tail))
-    }
-
     pub fn shell_kill(&self, sid: &str, id: &str) -> bool {
         let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
         reg.is_some_and(|r| r.kill(id))

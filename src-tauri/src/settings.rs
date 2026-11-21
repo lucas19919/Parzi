@@ -287,29 +287,6 @@ pub fn shell_hosts(
 }
 
 #[tauri::command]
-pub async fn shell_restart_host(
-    state: State<'_, AppState>,
-    session: String,
-    id: String,
-) -> Result<parzi_runtime::shell::HostJob, String> {
-    state.orch.shell_restart_host(&session, &id).await
-}
-
-#[tauri::command]
-pub fn shell_remove_host(state: State<'_, AppState>, session: String, id: String) -> bool {
-    state.orch.shell_remove_host(&session, &id)
-}
-
-#[tauri::command]
-pub fn shell_logs(
-    state: State<'_, AppState>,
-    session: String,
-    id: String,
-) -> Option<parzi_runtime::shell::LogTail> {
-    state.orch.shell_logs(&session, &id, 64 * 1024)
-}
-
-#[tauri::command]
 pub fn shell_kill(state: State<'_, AppState>, session: String, id: String) -> bool {
     state.orch.shell_kill(&session, &id)
 }
