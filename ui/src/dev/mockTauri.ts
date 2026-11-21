@@ -90,6 +90,21 @@ const sessions = [
   session("r:a1", "Update outdated crates in memory-ai", 8 * HOUR, { project: "memory-ai" }),
   session("r:a2", "Bump them and run the tests", 7 * HOUR, { project: "memory-ai", parent_id: "r:a1", status: "active", model: "claude/claude-sonnet-5-5" }),
 ];
+// ?proposal=1: the open session has a plan proposal waiting for an answer.
+if (params.get("proposal")) {
+  const s = sessions.find((x) => x.id === "s1") as Record<string, unknown> | undefined;
+  if (s) {
+    s.proposal = {
+      summary: "Make the composer calm under load: find the stall, cache the head, then check at 300 turns.",
+      items: [
+        { title: "Find where typing stalls", detail: "Profile a 300-turn thread while typing." },
+        { title: "Cache the markdown head", detail: "Render finished blocks once." },
+        { title: "Check the thread at 300 turns" },
+      ],
+      doc: null,
+    };
+  }
+}
 
 const prs = [
   { number: 42, title: "Name sessions from the prompt, and let agents rename them", url: "https://github.com/lucas19919/Parzi/pull/42", head: "plan/names", state: "open", draft: false, checks: "pass" },
@@ -488,6 +503,13 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return [s, s.status === "draft" ? [] : [...transcript(), ...(said[s.id] ?? [])]];
   },
   kill_run: (a) => endRun(a.id as string, "cancelled"),
+  answer_plan_proposal: (a) => {
+    const s = sessions.find((x) => x.id === a.id) as Record<string, unknown> | undefined;
+    if (!s) throw new Error(`no session ${a.id}`);
+    if (a.accept && s.proposal) s.plan = { ...(s.proposal as object), items: (s.proposal as { items: { title: string }[] }).items.map((i) => ({ title: i.title, state: "pending" })) };
+    s.proposal = null;
+    return { ...s };
+  },
   set_session_environment: (a) => {
     const s = sessions.find((x) => x.id === a.id);
     if (!s) throw new Error(`no session ${a.id}`);

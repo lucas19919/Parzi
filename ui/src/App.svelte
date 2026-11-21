@@ -325,6 +325,12 @@
         } satisfies Question)
       : null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? proposalQuestion;
+  // A proposal that arrives brings the thread down to it, once.
+  let seenProposal = "";
+  $: if ((proposalQuestion?.key ?? "") !== seenProposal) {
+    seenProposal = proposalQuestion?.key ?? "";
+    if (seenProposal) void scrollToBottom(true);
+  }
   $: openRequest = requests.find((r) => r.session === shown) ?? null;
   $: asks = [...questions, ...requests.map((r) => ({ key: r.key, session: r.session, question: r.request, options: [] }))];
   $: parent = meta?.parent_id ? (threads.find((t) => t.id === meta?.parent_id) ?? null) : null;
