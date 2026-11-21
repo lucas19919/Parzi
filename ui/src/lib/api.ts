@@ -21,7 +21,7 @@ export interface SessionMeta {
   last_run?: RunOutcome | null;
   plan_item?: string | null;
   /** The session's plan: its checklist, kept on the session. */
-  plan?: { items: { title: string; state: "pending" | "active" | "done" }[] } | null;
+  plan?: { items: { title: string; state: "pending" | "active" | "done" }[]; summary?: string | null; doc?: string | null } | null;
   /** A draft's brief: sent as the first message when it starts. */
   brief?: string | null;
   branch?: string;
@@ -55,7 +55,7 @@ export type ChatEvent =
 
 type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
 
-interface UsageWindow {
+export interface UsageWindow {
   label: string;
   used_percent: number;
   resets_at?: number;
@@ -230,6 +230,13 @@ export const api = {
   rewindThread: (id: string, nth: number) => invoke<SessionMeta>("rewind_thread", { id, nth }),
   compactThread: (id: string) => invoke<string>("compact_thread", { id }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
+  /** Moves a stopped session to another folder (a project, or a branch's worktree). */
+  setSessionEnvironment: (id: string, cwd: string, project?: string | null) =>
+    invoke<SessionMeta>("set_session_environment", { id, cwd, project: project || null }),
+  /** A project's plan: its goal and ordered targets, or null when it has none. */
+  projectPlan: (project: string) => invoke<ProjectPlan | null>("project_plan", { project }),
+  /** The path of a project plan's markdown file. */
+  projectPlanDoc: (project: string) => invoke<string>("project_plan_doc", { project }),
   approveTool: (key: string, session: string, allow: boolean) =>
     invoke<void>("approve_tool", { key, session, allow }),
   answerQuestion: (key: string, session: string, answer: string) =>
@@ -314,6 +321,11 @@ export const api = {
     invoke<void>("browser_nav", { tab, action }),
   windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
+
+export interface ProjectPlan {
+  goal: string;
+  targets: { title: string; state: "todo" | "working" | "done" }[];
+}
 
 export interface ShellJob {
   id: string;

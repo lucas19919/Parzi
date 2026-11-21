@@ -41,7 +41,7 @@ const session = (id: string, title: string, ago: number, over: Record<string, un
   created: iso(ago + 2 * HOUR),
   updated: iso(ago),
   last_run: null as ReturnType<typeof outcome> | null,
-  plan: null as { items: { title: string; state: string }[] } | null,
+  plan: null as { items: { title: string; state: string }[]; doc?: string } | null,
   brief: null as string | null,
   branch: "",
   effort: "medium",
@@ -74,7 +74,7 @@ const sessions = [
       ended: now - 55 * MIN,
     }),
   }),
-  session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }), plan: params.get("plan") === "none" ? null : { items: [{ title: "Find where typing stalls", state: "done" }, { title: "Cache the markdown head", state: "done" }, { title: "Measure autosize once per key", state: "done" }, { title: "Run the UI tests", state: "active" }] } }),
+  session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }), plan: params.get("plan") === "none" ? null : { items: [{ title: "Find where typing stalls", state: "done" }, { title: "Cache the markdown head", state: "done" }, { title: "Measure autosize once per key", state: "done" }, { title: "Run the UI tests", state: "active" }], doc: "C:\\Users\\dev\\.parzi\\sessions\\s1\\plan.md" } }),
   session("s2", "Lets test something", 3 * MIN, { status: "active", model: "codex/gpt-5" }),
   session("s1a", "Time autosize on long drafts", 2 * MIN, { parent_id: "s1", model: "codex/gpt-5" }),
   session("s1b", "Check the other textareas", 5 * MIN, { parent_id: "s1", last_run: outcome({ summary: "Both other textareas measure once per frame already; nothing to change.", ended: now - 4 * MIN }) }),
@@ -342,7 +342,7 @@ function transcript() {
 
 const models = (ids: string[]) => ids.map((id, i) => ({ id, name: "", is_default: i === 0, efforts: ["low", "medium", "high", "xhigh", "max"] }));
 const board = [
-  { provider: "claude", state: "ready", version: "2.4.0", account: "dev@example.com", hint: "", usage: [{ label: "5h", used_percent: 22 }], models: models(["claude-opus-5-5", "claude-sonnet-5-5"]), gated: false, checked_at: now / 1000 },
+  { provider: "claude", state: "ready", version: "2.4.0", account: "dev@example.com", hint: "", usage: [{ label: "5h", used_percent: 22, resets_at: Math.round(now / 1000) + 2.5 * 3600 }, { label: "Weekly", used_percent: 61, resets_at: Math.round(now / 1000) + 4 * 86400 }], models: models(["claude-opus-5-5", "claude-sonnet-5-5"]), gated: false, checked_at: now / 1000 },
   { provider: "codex", state: "ready", version: "0.9.1", hint: "", usage: [], models: models(["gpt-5", "gpt-5-mini"]), gated: false, checked_at: now / 1000 },
   { provider: "opencode", state: "signed_out", hint: "Run opencode auth login", usage: [], models: [], gated: false, checked_at: now / 1000 },
   { provider: "grok", state: "not_installed", hint: "", usage: [], models: [], gated: true, checked_at: now / 1000 },
@@ -469,6 +469,11 @@ function startRun(sid: string, prompt: string) {
   if (runs.has(sid)) throw new Error(`still working on ${sid}`);
   (said[sid] ??= []).push({ kind: "user", text: prompt });
   setStatus(sid, "active");
+  // Two tool steps, for the Running card: one that ends, one still going.
+  const t = Date.now().toString(36);
+  void runEvent({ kind: "tool_call", session: sid, id: `${t}-a`, name: "fs.read", label: "Reading ui/src/App.svelte" });
+  setTimeout(() => void runEvent({ kind: "tool_result", session: sid, id: `${t}-a`, name: "fs.read", ok: true, ms: 420 }), 500);
+  setTimeout(() => void runEvent({ kind: "tool_call", session: sid, id: `${t}-b`, name: "shell.exec", label: "Running npm test" }), 700);
   const tick = setInterval(() => void runEvent({ kind: "text", session: sid, text: "Working on it. " }), 700);
   runs.set(sid, { tick, end: setTimeout(() => endRun(sid, "done"), runMs) });
 }
@@ -483,6 +488,28 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return [s, s.status === "draft" ? [] : [...transcript(), ...(said[s.id] ?? [])]];
   },
   kill_run: (a) => endRun(a.id as string, "cancelled"),
+  set_session_environment: (a) => {
+    const s = sessions.find((x) => x.id === a.id);
+    if (!s) throw new Error(`no session ${a.id}`);
+    if (runs.has(s.id)) throw new Error("stop the session's run before moving it");
+    if (a.cwd) s.cwd = String(a.cwd);
+    if (a.project) s.project = String(a.project);
+    return { ...s };
+  },
+  // ?targets=none: the project has no plan.
+  project_plan: (a) =>
+    a.project === "parzi" && params.get("targets") !== "none"
+      ? {
+          goal: "A calmer window: four cards, pins above the composer, links full screen.",
+          targets: [
+            { title: "Cut the side column to four cards", state: "done" },
+            { title: "Pins above the composer", state: "working" },
+            { title: "Open links full screen", state: "todo" },
+            { title: "Drop page tabs", state: "todo" },
+          ],
+        }
+      : null,
+  project_plan_doc: () => "D:\\Repos\\Parzi\\.parzi\\plan.md",
   provider_statuses: () => board,
   refresh_providers: () => board,
   get_config: () => structuredClone(config),
@@ -712,7 +739,8 @@ try {
   const title = (id: string) => sessions.find((x) => x.id === id)?.title ?? "Session";
   const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1", { quotes }), tab("t-s2", "session", title("s2"), "s2")];
   const saved: unknown[] = [...tabs];
-  if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
+  // Page tabs are an agent's own pages now (browser.open).
+  if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/", owner: "s1" });
   const active = { home: "t-home", session: "t-s1", page: "t-page" }[view] ?? "t-s1";
   localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs: saved, active }));
   const sites = [

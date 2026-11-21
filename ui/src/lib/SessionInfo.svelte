@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tokenCount } from "./format";
+  import { resetsIn, tokenCount } from "./format";
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
@@ -8,9 +8,12 @@
   import { board, reloadBoard } from "./providerStore";
   import ResizeGrip from "./ResizeGrip.svelte";
   import { nameOf } from "./providerRows";
-  import { onRunEvent, type Question, type SessionMeta } from "./api";
+  import { api, onRunEvent, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { folderName } from "./tabs";
+  import ProjectMenu from "./ProjectMenu.svelte";
+  import { toast, toastError } from "./toast";
+  import { tooltip } from "./tooltip";
 
   export let session = "";
   export let project = "";
@@ -31,78 +34,6 @@
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
   export let width = 264;
-  // Card order: environment first. Swappable by drag,
-  // persisted per machine.
-  const ORDER_KEY = "parzi.info.order";
-  const DEFAULT_ORDER = ["env", "context", "usage", "running"];
-  function loadOrder(): string[] {
-    try {
-      const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
-      if (Array.isArray(v)) {
-        const known = v.filter((x) => typeof x === "string" && DEFAULT_ORDER.includes(x));
-        return [...known, ...DEFAULT_ORDER.filter((x) => !known.includes(x))];
-      }
-    } catch {}
-    return [...DEFAULT_ORDER];
-  }
-  let cardOrder: string[] = loadOrder();
-  $: pos = (id: string) => {
-    const i = cardOrder.indexOf(id);
-    return i < 0 ? 99 : i;
-  };
-  function saveOrder() {
-    try {
-      localStorage.setItem(ORDER_KEY, JSON.stringify(cardOrder));
-    } catch {}
-  }
-  let dragId = "";
-  /** A card's slot: drag it onto another to swap their places. */
-  function movable(node: HTMLElement, id: string) {
-    node.draggable = true;
-    const start = (e: DragEvent) => {
-      dragId = id;
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = "move";
-        try {
-          e.dataTransfer.setData("text/plain", id);
-        } catch {}
-      }
-    };
-    const over = (e: DragEvent) => e.preventDefault();
-    const drop = (e: DragEvent) => onDrop(id, e);
-    node.addEventListener("dragstart", start);
-    node.addEventListener("dragover", over);
-    node.addEventListener("drop", drop);
-    return {
-      update(next: string) {
-        id = next;
-      },
-      destroy() {
-        node.removeEventListener("dragstart", start);
-        node.removeEventListener("dragover", over);
-        node.removeEventListener("drop", drop);
-      },
-    };
-  }
-  function onDrop(target: string, e: DragEvent) {
-    e.preventDefault();
-    const from = dragId || (() => {
-      try {
-        return e.dataTransfer?.getData("text/plain") ?? "";
-      } catch {
-        return "";
-      }
-    })();
-    dragId = "";
-    if (!from || from === target) return;
-    const next = [...cardOrder];
-    const fi = next.indexOf(from);
-    const ti = next.indexOf(target);
-    if (fi < 0 || ti < 0) return;
-    next.splice(ti, 0, next.splice(fi, 1)[0]);
-    cardOrder = next;
-    saveOrder();
-  }
   // Open or shut: the column animates its own width instead of mounting
   // in and out, so the thread never jumps.
   export let open = true;
@@ -111,7 +42,41 @@
     openSession: { id: string };
     compact: void;
     resize: { width: number };
+    moved: { meta: SessionMeta };
   }>();
+
+  // Where the session runs can change while it is stopped: another project,
+  // or another folder of this one (a worktree, which brings its branch).
+  $: local = !remoteHost && !/^[a-z]:/.test(session);
+  $: stuck = !session ? "" : !local ? "Moving works on this computer's sessions for now" : streaming ? "Stop the run to move the session" : "";
+  $: movable = !!session && !stuck;
+  let projBtn: HTMLButtonElement | null = null;
+  let projOpen = false;
+  let moving = false;
+
+  async function move(cwd: string, slug?: string) {
+    if (!cwd || moving || !movable) return;
+    moving = true;
+    try {
+      const meta = await api.setSessionEnvironment(session, cwd, slug ?? project);
+      dispatch("moved", { meta });
+      toast(`Moved to ${folderName(meta.cwd || cwd)}`);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      moving = false;
+    }
+  }
+
+  async function pickFolder() {
+    if (!movable || moving) return;
+    try {
+      const picked = await api.pickFolder(folder);
+      if (picked) await move(picked);
+    } catch (e) {
+      toastError(e);
+    }
+  }
 
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
 
@@ -130,6 +95,7 @@
   })();
 
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
+  $: agent = provider ? nameOf(provider) : "";
 
   onMount(() => {
     const un = onRunEvent((e) => {
@@ -144,28 +110,58 @@
 <aside class="info" class:shut={!open} aria-label="Session" style="width: {open ? width : 0}px" inert={!open}>
   <ResizeGrip label="Resize session column" min={220} max={520} on:resize />
   <div class="col">
-  <div class="slot" style="order: {pos('env')}" use:movable={"env"}>
   <InfoCard id="env" title="Environment" foldedAside>
     <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
     <div class="info-line">
       <Icon name={remoteHost ? "server" : "desktop"} size={12} />
       <span class="info-v">{remoteHost || "This computer"}</span>
     </div>
-    <div class="info-line" title={folder}>
-      <Icon name={project ? "project" : "folder"} size={12} />
-      <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
-    </div>
-    {#if branch}
-      <div class="info-line">
-        <Icon name="branch" size={12} />
-        <span class="info-v mono">{branch}</span>
+    {#if session}
+      <button
+        bind:this={projBtn}
+        class="info-line row"
+        aria-disabled={!movable || moving}
+        aria-haspopup="menu"
+        aria-expanded={projOpen}
+        use:tooltip={stuck || `In ${folder}. Pick another project to move the session there.`}
+        on:click={() => movable && !moving && (projOpen = !projOpen)}
+      >
+        <Icon name={project ? "project" : "folder"} size={12} />
+        <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
+      </button>
+      {#if folder}
+        <button class="info-line row" aria-disabled={!movable || moving} use:tooltip={stuck || "Move to another folder, such as a worktree on another branch"} on:click={pickFolder}>
+          <Icon name="branch" size={12} />
+          <span class="info-v mono">{branch || "No branch"}</span>
+        </button>
+      {/if}
+    {:else}
+      <div class="info-line" title={folder}>
+        <Icon name={project ? "project" : "folder"} size={12} />
+        <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
       </div>
+      {#if branch}
+        <div class="info-line">
+          <Icon name="branch" size={12} />
+          <span class="info-v mono">{branch}</span>
+        </div>
+      {/if}
     {/if}
   </InfoCard>
-  </div>
+  {#if projOpen}
+    <ProjectMenu
+      anchor={projBtn}
+      {folder}
+      project={project ? { slug: project, title: projectTitle || project } : null}
+      {branch}
+      none={false}
+      on:close={() => (projOpen = false)}
+      on:error={(e) => toast(e.detail.text, true)}
+      on:project={(e) => e.detail.path && void move(e.detail.path, e.detail.slug)}
+    />
+  {/if}
 
   {#if contextLimit > 0}
-  <div class="slot" style="order: {pos('context')}" use:movable={"context"}>
     <InfoCard id="context" title="Context" foldedAside>
       <svelte:fragment slot="aside">{pct}%</svelte:fragment>
       <ContextBreakdown
@@ -177,28 +173,25 @@
         on:compact={() => dispatch("compact")}
       />
     </InfoCard>
-  </div>
-  {/if}
-  {#if limits.length || (!contextLimit && (tokensIn || tokensOut))}
-  <div class="slot" style="order: {pos('usage')}" use:movable={"usage"}>
-    <InfoCard id="usage" title="Usage">
-      <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
-      {#if !contextLimit && (tokensIn || tokensOut)}
-        <div class="info-line"><span class="info-v">{tokenCount(tokensIn)} in · {tokenCount(tokensOut)} out</span></div>
-      {/if}
-      {#each limits as w (w.label)}
-        <div class="info-line quiet">
-          <span class="info-v">{nameOf(provider)} {w.label}</span>
-          <span class="pct">{Math.round(w.used_percent)}%</span>
-        </div>
-      {/each}
-    </InfoCard>
-  </div>
   {/if}
 
-  <div class="slot" style="order: {pos('running')}" use:movable={"running"}>
+  {#if limits.length || tokensIn || tokensOut}
+    <InfoCard id="usage" title="Usage">
+      <svelte:fragment slot="aside">{agent}</svelte:fragment>
+      {#each limits as w (w.label)}
+        <div class="info-line">
+          <span class="info-v">{w.label}</span>
+          {#if w.resets_at}<span class="quiet">{resetsIn(w.resets_at)}</span>{/if}
+          <span class="pct">{Math.round(w.used_percent)}%</span>
+        </div>
+      {:else}
+        <div class="info-line"><span class="info-v">{tokenCount(tokensIn)} in · {tokenCount(tokensOut)} out</span></div>
+        {#if costUsd > 0}<div class="info-line quiet"><span class="info-v">${costUsd.toFixed(2)} so far</span></div>{/if}
+      {/each}
+    </InfoCard>
+  {/if}
+
   <RunningCard {session} {helpers} {running} {waiting} on:openSession />
-  </div>
   </div>
 </aside>
 
@@ -229,18 +222,12 @@
   .info.shut {
     margin-right: 0;
   }
-  .slot {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
+  /* Stopped only: while it runs the line still says where, and why it can't move. */
+  button.info-line[aria-disabled="true"] {
+    cursor: default;
   }
-  /* A card that has nothing to say renders nothing; its slot takes no gap. */
-  .slot:not(:has(*)) {
-    display: none;
-  }
-  /* Every slot is draggable (use:movable). */
-  .slot {
-    cursor: grab;
+  button.info-line.row[aria-disabled="true"]:hover {
+    background: none;
   }
   .pct {
     flex: none;

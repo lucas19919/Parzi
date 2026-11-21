@@ -26,3 +26,14 @@ export function attachedPaths(text: string): string[] {
   const m = /\[attached: ([^\]]+)\]/.exec(text);
   return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
 }
+
+/** When a provider's limit window starts over, from its reset time in Unix
+ *  seconds: "resets in 40 min", "resets in 3 h", "resets in 2 d". */
+export function resetsIn(at?: number, now = Date.now()): string {
+  if (!at) return "";
+  const s = at - now / 1000;
+  if (s <= 0) return "resets now";
+  if (s < 3600) return `resets in ${Math.round(s / 60)} min`;
+  if (s < 86400) return `resets in ${Math.round(s / 3600)} h`;
+  return `resets in ${Math.round(s / 86400)} d`;
+}

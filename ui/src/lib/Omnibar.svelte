@@ -1,17 +1,17 @@
 <script lang="ts">
   import { DUR, SLIDE } from "./motion";
-  import { createEventDispatcher, tick } from "svelte";
+  import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { fade, fly, scale, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
-  import { api, brain, type ComposerMode, type Project, type ProviderStatus } from "./api";
-  import { remote as server } from "./remote";
+  import ProjectMenu from "./ProjectMenu.svelte";
+  import { api, type ComposerMode, type ProviderStatus } from "./api";
   import { effortLabel, effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
   import { permissionBlocked } from "./permission";
   import { folderName, toAddress } from "./tabs";
-  import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
+  import { relativeTo, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
   import { bookmarks, history, pins } from "./browserData";
   import { addressSuggest } from "./addressSuggest";
@@ -21,6 +21,8 @@
   import type { Suggestion } from "./suggest";
   import type { IconName } from "./icons";
   import { viewImage } from "./imageViewer";
+  import { resetsIn } from "./format";
+  import { setOverlay } from "./overlay";
 
   export let input = "";
   export let model = "";
@@ -73,14 +75,6 @@
   // arrive; the pill shows the fullest window, the tooltip them all.
   $: usageWindows = board.find((b) => b.provider === (model.split("/")[0] || ""))?.usage ?? [];
   $: worstUsage = [...usageWindows].filter((w) => w.used_percent > 0).sort((a, b) => b.used_percent - a.used_percent)[0] ?? null;
-  function resetsIn(at?: number): string {
-    if (!at) return "";
-    const s = at - Date.now() / 1000;
-    if (s <= 0) return "resets now";
-    if (s < 3600) return `resets in ${Math.round(s / 60)} min`;
-    if (s < 86400) return `resets in ${Math.round(s / 3600)} h`;
-    return `resets in ${Math.round(s / 86400)} d`;
-  }
   $: usageTip = worstUsage
     ? ["Provider limits — click for details", ...usageWindows.map((w) => `${w.label}: ${Math.round(w.used_percent)}%${resetsIn(w.resets_at) ? `, ${resetsIn(w.resets_at)}` : ""}`)].join("\n")
     : "";
@@ -101,7 +95,6 @@
     { name: "stop", hint: "Stop the run" },
     { name: "model", hint: "Pick a model" },
     { name: "effort", hint: "Cycle effort" },
-    { name: "page", hint: "Open a web page" },
     { name: "settings", hint: "Open settings" },
   ];
 
@@ -149,10 +142,6 @@
     textarea?.focus();
   }
   let projOpen = false;
-  let projStyle = "";
-  let projects: Project[] = [];
-  let projErr = "";
-  let delSlug: string | null = null;
   let atItems: string[] = [];
   let atIndex = 0;
   let slashIndex = 0;
@@ -314,6 +303,10 @@
   $: if (textarea) void autosize(input);
   $: if (mode !== "search" || !input.trim()) clearWeb();
   $: webOpen = focused && mode === "search" && $webSuggest.rows.length > 0;
+  // The lists open above the box; over a page they would sit under its
+  // native view, so the page steps aside (lib/overlay.ts) while one is open.
+  $: setOverlay("composer-lists", webOpen || slashItems.length > 0 || atItems.length > 0);
+  onDestroy(() => setOverlay("composer-lists", false));
 
   function clearWeb() {
     webSuggest.reset();
@@ -389,100 +382,12 @@
     }
   }
 
-  async function toggleProject() {
+  function toggleProject() {
     if (folderLocked) return;
     projOpen = !projOpen;
-    if (!projOpen || !projBtn) return;
-    projStyle = placeAbove(projBtn, 260);
-    projErr = "";
-    try {
-      projects = remote ? await server.projects() : await brain.projects();
-    } catch (e) {
-      projects = [];
-      projErr = String(e);
-    }
-  }
-
-  async function chooseProject(p: Project | null) {
-    projOpen = false;
-    try {
-      if (remote) {
-        let path = p?.folder ?? "";
-        if (p && !path) {
-          const typed = window.prompt(`Folder for ${p.title} on ${remoteHost}`, "/home/");
-          if (!typed?.trim()) return;
-          path = (await server.projectFolder(p.slug, p.title, typed.trim())).folder;
-        }
-        dispatch("remoteFolder", { path });
-        return;
-      }
-      let path = p?.folder ?? "";
-      if (p && !path) {
-        const picked = await api.pickFolder(folder);
-        if (!picked) return;
-        path = (await brain.upsertProject(p.title, picked, p.slug)).folder;
-      }
-      dispatch("folder", { path });
-      dispatch("project", { path });
-    } catch (e) {
-      attachError = String(e);
-    }
-  }
-
-  async function newRemoteProject() {
-    projOpen = false;
-    const typed = window.prompt(`Folder on ${remoteHost} for the new project`, "/home/");
-    if (!typed?.trim()) return;
-    try {
-      const p = await server.projectFolder(null, folderName(typed.trim()), typed.trim());
-      dispatch("remoteFolder", { path: p.folder });
-    } catch (e) {
-      attachError = String(e);
-    }
   }
 
   $: remoteProject = remote && remoteCwd ? folderName(remoteCwd) : "";
-
-  async function adopt(dir: string) {
-    const known = projects.find((p) => sameDir(p.folder, dir));
-    if (!known) await brain.upsertProject(folderName(dir), dir);
-    if (!sameDir(dir, folder)) dispatch("folder", { path: dir });
-    dispatch("project", { path: dir });
-  }
-
-  async function newProject() {
-    projOpen = false;
-    try {
-      const picked = await api.pickFolder(folder);
-      if (picked) await adopt(picked);
-    } catch (e) {
-      attachError = String(e);
-    }
-  }
-
-  async function makeProject() {
-    projOpen = false;
-    try {
-      await adopt(folder);
-    } catch (e) {
-      attachError = String(e);
-    }
-  }
-
-  async function deleteProject(p: Project) {
-    if (delSlug !== p.slug) {
-      delSlug = p.slug;
-      return;
-    }
-    delSlug = null;
-    try {
-      await brain.remove(p.note);
-      projects = await brain.projects();
-      if (project?.slug === p.slug) dispatch("project", {});
-    } catch (e) {
-      attachError = String(e);
-    }
-  }
 
   function readDataUrl(file: File) {
     return new Promise<string>((resolve, reject) => {
@@ -771,42 +676,20 @@
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
-    <div class="menu-pop" data-ui-list style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: DUR, easing: cubicOut }}>
-      {#each projects as p (p.slug)}
-        <div class="opt-row" class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug}>
-          <button class="opt grow" on:click={() => chooseProject(p)}>
-            <Icon name="project" />
-            <span class="name truncate">{p.title}</span>
-            {#if !p.folder}<span class="count">No folder yet</span>{:else if !remote && sameDir(p.folder, folder) && branch}<span class="count">{branch}</span>{/if}
-          </button>
-          {#if !remote}
-            <button
-              class="del"
-              class:armed={delSlug === p.slug}
-              use:tooltip={delSlug === p.slug ? "Click again to delete" : `Delete ${p.title}`}
-              aria-label={delSlug === p.slug ? `Confirm delete ${p.title}` : `Delete ${p.title}`}
-              on:click={() => deleteProject(p)}
-            >{#if delSlug === p.slug}Sure?{:else}<Icon name="trash" size={12} />{/if}</button>
-          {/if}
-        </div>
-      {:else}
-        {#if projErr}
-          <p class="pop-empty err">Couldn't load projects: {projErr}</p>
-        {:else}
-          <p class="pop-empty">No projects yet.</p>
-        {/if}
-      {/each}
-      <div class="sep" />
-      {#if remote}
-        <button class="opt" on:click={newRemoteProject}><Icon name="plus" /><span class="name">New project…</span></button>
-      {:else}
-        {#if folder && !project}
-          <button class="opt" on:click={makeProject}><Icon name="plus" /><span class="name truncate">Make {folderName(folder)} a project</span></button>
-        {/if}
-        <button class="opt" on:click={newProject}><Icon name="plus" /><span class="name">New project…</span></button>
-      {/if}
-      <button class="opt" class:on={remote ? !remoteCwd : !folder} on:click={() => chooseProject(null)}><Icon name="close" /><span class="name">No project</span></button>
-    </div>
+    <ProjectMenu
+      anchor={projBtn}
+      {folder}
+      {project}
+      {branch}
+      {remote}
+      {remoteHost}
+      {remoteCwd}
+      on:close={() => (projOpen = false)}
+      on:error={(e) => (attachError = e.detail.text)}
+      on:folder
+      on:project
+      on:remoteFolder
+    />
   {/if}
 
   {#if branchOpen}
@@ -1407,9 +1290,6 @@
     font-size: var(--fs-sm);
     color: var(--muted);
   }
-  .pop-empty.err {
-    color: var(--bad-text);
-  }
   .pop-head {
     margin: 0;
     padding: var(--space) calc(var(--space) * 3) var(--space);
@@ -1453,54 +1333,6 @@
   .opt:disabled {
     opacity: var(--disabled);
     cursor: default;
-  }
-  .opt-row {
-    display: flex;
-    align-items: center;
-    border-radius: var(--radius-in);
-  }
-  .opt-row:hover:not(.on) {
-    background: var(--hover);
-  }
-  .opt-row.on {
-    background: var(--selected);
-  }
-  .opt-row .opt.grow {
-    flex: 1;
-    min-width: 0;
-    width: auto;
-  }
-  .opt-row:hover:not(.on) .opt.grow,
-  .opt-row.on .opt.grow {
-    background: transparent;
-  }
-  .opt-row .del {
-    flex: none;
-    min-width: 20px;
-    height: 20px;
-    margin-right: var(--space);
-    padding: 0 var(--space);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font-size: var(--fs-xs);
-    cursor: pointer;
-  }
-  .opt-row:hover .del,
-  .opt-row .del:focus-visible,
-  .opt-row .del.armed {
-    display: inline-flex;
-  }
-  .opt-row .del:hover {
-    color: var(--text);
-  }
-  .opt-row .del.armed {
-    color: var(--bad-text);
-    font-weight: 600;
   }
   .name {
     flex: 1;
