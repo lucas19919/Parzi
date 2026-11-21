@@ -31,6 +31,8 @@ export interface SessionSend {
   ended: Outcome | null;
   /** Retries after the engine said it was still working; 0 when none is due. */
   tries: number;
+  /** Until when a late "cancelled" end belongs to the run just stopped, not to the next one. */
+  stopEndBy: number;
 }
 
 export interface Sends {
@@ -98,7 +100,7 @@ export const RETRY_MS = [250, 500, 1000, 1500, 2000, 2000];
 /** The key for a new session's tab before it has a session id. */
 export const tabKey = (tabId: string) => `tab:${tabId}`;
 
-const IDLE: SessionSend = { phase: "idle", since: -Infinity, echo: null, next: null, ended: null, tries: 0 };
+const IDLE: SessionSend = { phase: "idle", since: -Infinity, echo: null, next: null, ended: null, tries: 0, stopEndBy: 0 };
 
 export function initialSends(queue: HoldQueue = {}): Sends {
   return { sessions: {}, queue, paused: {} };
@@ -165,9 +167,9 @@ function drain(s: Sends, key: string, effects: Effect[]): Sends {
   return put(withQueue(s, next.queue), key, { phase: "sending", echo: null, ended: null });
 }
 
-function endRun(s: Sends, key: string, outcome: Outcome, now: number, keepEcho: boolean): Step {
-  const cur = sessionOf(s, key);
-  let state = put(s, key, { phase: "idle", since: now, tries: 0, ended: null, echo: keepEcho ? cur.echo : null });
+// The echo stays: the reload after a run's end is what shows the store has it.
+function endRun(s: Sends, key: string, outcome: Outcome, now: number): Step {
+  let state = put(s, key, { phase: "idle", since: now, tries: 0, ended: null });
   if (outcome === "exited") state = setPaused(state, key, true);
   const effects: Effect[] = [];
   if (outcome === "done") state = drain(state, key, effects);
@@ -205,7 +207,7 @@ export function step(s: Sends, ev: SendEvent, now: number): Step {
       const cur = sessionOf(state, ev.sid);
       // A stop asked while the message was on its way still goes ahead.
       if (cur.phase === "stopping") return done(state);
-      if (cur.ended) return endRun(state, ev.sid, cur.ended, now, true);
+      if (cur.ended) return endRun(state, ev.sid, cur.ended, now);
       return done(put(state, ev.sid, { phase: "running", since: now, tries: 0, ended: null }));
     }
     case "failed": {
@@ -237,10 +239,12 @@ export function step(s: Sends, ev: SendEvent, now: number): Step {
     }
     case "ended": {
       const cur = sessionOf(s, ev.key);
+      // The stop's own end, after the engine's stop had already returned.
+      if (ev.outcome === "stopped" && now < cur.stopEndBy) return done(put(s, ev.key, { stopEndBy: 0 }));
       if (cur.phase === "sending") return done(put(s, ev.key, { ended: ev.outcome }));
       // The stop's own end: the stop's return settles it.
-      if (cur.phase === "stopping") return done(s);
-      return endRun(s, ev.key, ev.outcome, now, false);
+      if (cur.phase === "stopping") return done(put(s, ev.key, { ended: ev.outcome }));
+      return endRun(s, ev.key, ev.outcome, now);
     }
     case "stop": {
       if (!isWorking(s, ev.key)) return done(s, [], false);
@@ -251,7 +255,10 @@ export function step(s: Sends, ev: SendEvent, now: number): Step {
     case "stopped": {
       const cur = sessionOf(s, ev.key);
       if (cur.phase !== "stopping" && cur.phase !== "running") return done(s);
-      let state = put(s, ev.key, { phase: "idle", since: now, next: null, ended: null });
+      // Run events can come after the call that made them returns: if the
+      // stopped run's end hasn't come yet, it mustn't end what goes next.
+      const stopEndBy = cur.phase === "stopping" && !cur.ended ? now + GRACE_MS : 0;
+      let state = put(s, ev.key, { phase: "idle", since: now, next: null, ended: null, stopEndBy });
       const effects: Effect[] = [];
       if (cur.next) {
         effects.push({ do: "deliver", key: ev.key, item: cur.next });

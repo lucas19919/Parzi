@@ -175,6 +175,36 @@ test("send now stops the run and sends that message when the stop lands", () => 
   assert.deepEqual(texts(r.s, "s"), ["second"]);
 });
 
+test("a stop's own end arriving after the stop returned doesn't end what goes next", () => {
+  let r = run(working(), [
+    { type: "hold", key: "s", item: item("now") },
+    { type: "sendNow", key: "s" },
+    { type: "stopped", key: "s" },
+  ]);
+  assert.deepEqual(delivered(r.fx), ["now"]);
+  r = run(r.s, [
+    { type: "ended", key: "s", outcome: "stopped" },
+    { type: "started", key: "s", sid: "s" },
+  ]);
+  assert.equal(phaseOf(r.s, "s"), "running");
+  // Only once: a later stop of the new run counts.
+  r = run(r.s, [{ type: "ended", key: "s", outcome: "stopped" }]);
+  assert.equal(phaseOf(r.s, "s"), "idle");
+  // And not when the end came before the stop returned, or long after.
+  const before = run(working(), [
+    { type: "stop", key: "s" },
+    { type: "ended", key: "s", outcome: "stopped" },
+    { type: "stopped", key: "s" },
+    { type: "begin", key: "s", text: "x", users: 0 },
+    { type: "started", key: "s", sid: "s" },
+    { type: "ended", key: "s", outcome: "stopped" },
+  ]);
+  assert.equal(phaseOf(before.s, "s"), "idle");
+  const late = run(working(), [{ type: "stop", key: "s" }, { type: "stopped", key: "s" }]).s;
+  assert.equal(phaseOf(step(late, { type: "activity", key: "s" }, 10_000).state, "s"), "running");
+  assert.equal(phaseOf(step(step(late, { type: "activity", key: "s" }, 10_000).state, { type: "ended", key: "s", outcome: "stopped" }, 10_000 + GRACE_MS).state, "s"), "idle");
+});
+
 test("send now on an idle session sends at once; while sending it goes next", () => {
   const idle = run(initialSends(), [
     { type: "hold", key: "s", item: item("later") },
@@ -197,6 +227,9 @@ test("the sent message stays on screen until the store has it", () => {
   s = step(s, { type: "started", key: "s", sid: "s" }, 0).state;
   // A reload before the run recorded it keeps the message showing.
   s = step(s, { type: "stored", key: "s", users: 3 }, 0).state;
+  assert.equal(echoOf(s, "s")?.text, "hi");
+  // The run ending doesn't take it away either: the reload after it does.
+  s = step(s, { type: "ended", key: "s", outcome: "done" }, 0).state;
   assert.equal(echoOf(s, "s")?.text, "hi");
   s = step(s, { type: "stored", key: "s", users: 4 }, 0).state;
   assert.equal(echoOf(s, "s"), null);
