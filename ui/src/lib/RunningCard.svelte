@@ -4,26 +4,32 @@
   import InfoCard from "./InfoCard.svelte";
   import ThinkingFace from "./ThinkingFace.svelte";
   import { api, onRunEvent, type SessionMeta, type ShellJob } from "./api";
-  import { activity } from "./activity";
+  import { activity, runLogs } from "./activity";
   import { sessionTone, TONE_WORDS } from "./sessionTone";
   import { tooltip } from "./tooltip";
+  import type { LogStep } from "./runLog";
+  import { duration } from "./format";
 
-  /** Everything working beside this session: other sessions it started, and its commands. */
+  /** What the agent is doing in this session, oldest first: the steps of its
+   *  latest run, the commands it ran and the helper sessions it started. */
   export let session = "";
   export let helpers: SessionMeta[] = [];
   export let running: Set<string> = new Set();
   export let waiting: Set<string> = new Set();
 
   const dispatch = createEventDispatcher<{ openSession: { id: string } }>();
+  /** Rows shown before "earlier" folds the rest away. */
+  const SHOWN = 8;
 
   let jobs: ShellJob[] = [];
   let loadedFor = "";
   let now = Date.now();
-  let showDone = false;
+  let showAll = false;
 
   $: if (session !== loadedFor) {
     loadedFor = session;
     jobs = [];
+    showAll = false;
     void load();
   }
   async function load() {
@@ -32,10 +38,20 @@
     if (sid === session) jobs = got;
   }
 
-  $: activeJobs = jobs.filter((j) => j.running && !j.host_id);
-  $: doneJobs = jobs.filter((j) => !j.running && !j.host_id).reverse();
-  $: busy = helpers.filter((h) => running.has(h.id)).length + activeJobs.length;
-  $: needy = helpers.some((h) => waiting.has(h.id));
+  type Row =
+    | { key: string; at: number; kind: "step"; step: LogStep }
+    | { key: string; at: number; kind: "helper"; helper: SessionMeta }
+    | { key: string; at: number; kind: "job"; job: ShellJob };
+
+  $: steps = $runLogs.get(session)?.steps ?? [];
+  $: commands = jobs.filter((j) => !j.host_id);
+  $: rows = [
+    ...steps.map((s): Row => ({ key: `s:${s.id}`, at: s.at, kind: "step", step: s })),
+    ...helpers.map((h): Row => ({ key: `h:${h.id}`, at: Date.parse(h.created) || 0, kind: "helper", helper: h })),
+    ...commands.map((j): Row => ({ key: `j:${j.id}`, at: j.started, kind: "job", job: j })),
+  ].sort((a, b) => a.at - b.at);
+  $: earlier = showAll ? 0 : Math.max(0, rows.length - SHOWN);
+  $: busy = helpers.filter((h) => running.has(h.id)).length + commands.filter((j) => j.running).length + steps.filter((s) => s.running).length;
 
   const took = (j: ShellJob) => (j.running ? Math.max(j.ms, now - j.started) : j.ms);
   function span(ms: number) {
@@ -61,7 +77,7 @@
     let tick = 0;
     const timer = setInterval(() => {
       now = Date.now();
-      if (activeJobs.length && ++tick % 2 === 0) void load();
+      if (commands.some((j) => j.running) && ++tick % 2 === 0) void load();
     }, 1000);
     const un = onRunEvent((e) => {
       if (e.session !== session) return;
@@ -74,50 +90,58 @@
   });
 </script>
 
-<!-- Only while something is working or waiting on you; idle, the card is gone. -->
-{#if busy || needy}
+<!-- Nothing done yet, nothing to list: the card is gone. -->
+{#if rows.length}
 <InfoCard id="running" title="Running">
   <svelte:fragment slot="aside">{busy ? `${busy} running` : ""}</svelte:fragment>
-  {#each helpers as h (h.id)}
-    {@const tone = sessionTone(h, running, waiting)}
-    <button class="info-line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
-      {#if tone === "live"}
-        <ThinkingFace size={16} />
-      {:else}
-        <i class="info-dot t-{tone}" />
-      {/if}
-      <span class="helper">
-        <span class="info-v">{h.title || "Untitled"}</span>
-        {#if detail(h, tone, $activity)}<span class="detail">{detail(h, tone, $activity)}</span>{/if}
-      </span>
+  {#if earlier || showAll}
+    <button class="info-line row quiet" aria-expanded={showAll} on:click={() => (showAll = !showAll)}>
+      <span class="chev" class:open={showAll}><Icon name="chevDown" size={12} /></span>
+      <span class="info-v">{showAll ? "Show fewer" : `${earlier} earlier`}</span>
     </button>
-  {/each}
-  {#each activeJobs as j (j.id)}
-    <div class="info-line job">
-      <Icon name="terminal" size={12} />
-      <span class="info-v mono" use:tooltip={j.cmd}>{j.cmd}</span>
-      <span class="info-time">{span(took(j))}</span>
-      {#if j.background}
-        <button class="stop" aria-label="Stop {j.cmd}" use:tooltip={"Stop"} on:click={() => stop(j)}><span class="square" /></button>
-      {/if}
-    </div>
-  {/each}
-  {#if doneJobs.length}
-    <button class="info-line row quiet" aria-expanded={showDone} on:click={() => (showDone = !showDone)}>
-      <Icon name="checkCircle" size={12} />
-      <span class="info-v">{doneJobs.length} finished</span>
-      <span class="chev" class:open={showDone}><Icon name="chevDown" size={12} /></span>
-    </button>
-    {#if showDone}
-      {#each doneJobs as j (j.id)}
-        <div class="info-line job quiet">
-          <span class="status" class:bad={j.exit !== 0}><Icon name={j.exit === 0 ? "check" : "xCircle"} size={12} /></span>
-          <span class="info-v mono" use:tooltip={j.exit === 0 ? j.cmd : `${j.cmd} (exit ${j.exit})`}>{j.cmd}</span>
-          <span class="info-time">{span(j.ms)}</span>
-        </div>
-      {/each}
-    {/if}
   {/if}
+  {#each rows.slice(earlier) as r (r.key)}
+    {#if r.kind === "step"}
+      {@const s = r.step}
+      <div class="info-line" class:quiet={!s.running}>
+        {#if s.running}
+          <i class="info-dot t-live" />
+        {:else}
+          <span class="status" class:bad={!s.ok}><Icon name={s.ok ? "check" : "xCircle"} size={12} /></span>
+        {/if}
+        <span class="info-v" use:tooltip={s.ok || s.running ? s.label : `${s.label} (failed)`}>{s.label}</span>
+        <span class="info-time">{s.running ? span(now - s.at) : s.ms ? duration(s.ms) : ""}</span>
+      </div>
+    {:else if r.kind === "helper"}
+      {@const h = r.helper}
+      {@const tone = sessionTone(h, running, waiting)}
+      <button class="info-line row" use:tooltip={detail(h, tone, $activity) ? `${TONE_WORDS[tone]}: ${detail(h, tone, $activity)}` : TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
+        {#if tone === "live"}
+          <ThinkingFace size={16} />
+        {:else}
+          <i class="info-dot t-{tone}" />
+        {/if}
+        <span class="helper">
+          <span class="info-v">{h.title || "Untitled"}</span>
+          {#if detail(h, tone, $activity)}<span class="detail">{detail(h, tone, $activity)}</span>{/if}
+        </span>
+      </button>
+    {:else}
+      {@const j = r.job}
+      <div class="info-line job" class:quiet={!j.running}>
+        {#if j.running}
+          <Icon name="terminal" size={12} />
+        {:else}
+          <span class="status" class:bad={j.exit !== 0}><Icon name={j.exit === 0 ? "check" : "xCircle"} size={12} /></span>
+        {/if}
+        <span class="info-v mono" use:tooltip={j.exit === 0 || j.running ? j.cmd : `${j.cmd} (exit ${j.exit})`}>{j.cmd}</span>
+        <span class="info-time">{span(took(j))}</span>
+        {#if j.running && j.background}
+          <button class="stop" aria-label="Stop {j.cmd}" use:tooltip={"Stop"} on:click={() => stop(j)}><span class="square" /></button>
+        {/if}
+      </div>
+    {/if}
+  {/each}
 </InfoCard>
 {/if}
 

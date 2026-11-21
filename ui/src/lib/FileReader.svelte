@@ -45,6 +45,9 @@
   export let doc: ArtifactDoc;
   export let folder = "";
   export let width = 420;
+  /** Full screen over the thread (a pin or a link opened it): no grip, and
+   *  the back arrow above closes it instead of its own button. */
+  export let full = false;
 
   const dispatch = createEventDispatcher<{ close: void; resize: { width: number } }>();
 
@@ -53,6 +56,7 @@
   /** Opens and closes by its width, as the side bar does, so the thread
    *  narrows smoothly instead of jumping. */
   function grow(node: HTMLElement) {
+    if (full) return { duration: 0 };
     const w = node.offsetWidth;
     const gap = parseFloat(getComputedStyle(node).marginRight) || 0;
     return {
@@ -128,8 +132,8 @@
   }
 </script>
 
-<aside class="reader" aria-label="File" style="width: {width}px" transition:grow>
-  <ResizeGrip label="Resize file" min={FILE_MIN} max={FILE_MAX} on:resize />
+<aside class="reader" class:full aria-label="File" style={full ? "" : `width: ${width}px`} transition:grow>
+  {#if !full}<ResizeGrip label="Resize file" min={FILE_MIN} max={FILE_MAX} on:resize />{/if}
   <section class="card">
     <div class="bar">
       <span class="title t-section" use:tooltip={doc.id}>{doc.title}</span>
@@ -141,7 +145,9 @@
         {#if revealable}
           <button class="icon-btn" aria-label="Open in file explorer" use:tooltip={"Open in file explorer"} on:click={reveal}><Icon name="folder" /></button>
         {/if}
-        <button class="icon-btn" aria-label="Close file" use:tooltip={"Close"} on:click={() => dispatch("close")}><Icon name="close" /></button>
+        {#if !full}
+          <button class="icon-btn" aria-label="Close file" use:tooltip={"Close"} on:click={() => dispatch("close")}><Icon name="close" /></button>
+        {/if}
       </span>
     </div>
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
@@ -179,6 +185,23 @@
     display: flex;
     flex-direction: column;
     margin: 0 var(--gap) calc(var(--space) * 3) 0;
+  }
+  /* Full screen the session's own card is the frame: the file reads in
+     the thread's column. */
+  .reader.full {
+    flex: 1;
+    margin: 0;
+  }
+  .reader.full .card {
+    background: none;
+    border: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .reader.full .doc {
+    width: min(var(--read), 100%);
+    margin: 0 auto;
+    padding-bottom: calc(var(--dock) + var(--space) * 8);
   }
   .card {
     flex: 1;

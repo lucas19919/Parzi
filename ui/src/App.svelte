@@ -19,6 +19,8 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
+  import SessionPins from "./lib/SessionPins.svelte";
+  import type { Pin } from "./lib/pins";
   import FileReader, { FILE_MAX, FILE_MIN, fileDoc as diskDoc, imageDoc, isImagePath } from "./lib/FileReader.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import Thread from "./lib/Thread.svelte";
@@ -70,14 +72,17 @@
   }
 
   const restored = loadTabs();
+  // Pages open over a session now; only an agent's own pages are tabs, so a
+  // page tab the person had open is not brought back.
+  const restoredTabs = (restored?.tabs ?? []).filter((t) => (t as Partial<Tab>).kind !== "page" || !!(t as Partial<Tab>).owner);
   let tabs: Tab[] = oneEmptyDraft(
-    (restored?.tabs ?? [sessionTab()]).map((t) => {
+    (restoredTabs.length ? restoredTabs : [sessionTab()]).map((t) => {
       const c = ensureComposer((t as Partial<Tab>).composer);
       if (c.model === "auto") c.model = "";
       return { ...t, title: displayTitle((t as Partial<Tab>).title, (t as Partial<Tab>).kind === "page" ? "New page" : "New session"), composer: c };
     }),
   );
-  let activeId = restored?.active ?? tabs[0].id;
+  let activeId = restored?.active && tabs.some((t) => t.id === restored.active) ? restored.active : tabs[0].id;
   let threads: SessionMeta[] = [];
   let bg = "";
 
@@ -318,7 +323,7 @@
     saveTabs(tabs, activeId);
   }
   $: pageVisible = tab.kind === "page";
-  $: toastsUp = pageVisible && !immersive;
+  $: toastsUp = (pageVisible || (coverOn && cover === "page")) && !immersive;
   const LAST_PAGE = "parzi.lastPage";
   let lastPageVisible: boolean | null = null;
   $: if (pageVisible !== lastPageVisible) {
@@ -350,9 +355,16 @@
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
-  let cover: "settings" | "sessions" | null = null;
+  let cover: "settings" | "sessions" | "page" | "file" | null = null;
   let coverFor = "";
+  // A link or a pin opens full screen over the thread, with the composer
+  // still floating over it; Settings and Sessions cover it without one.
+  let coverPage: Tab | null = null;
+  let coverDoc: ArtifactDoc | null = null;
+  /** The link or pin the open page or file came from. */
+  let coverTarget = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
+  $: coverComposer = coverOn && (cover === "page" || cover === "file");
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
   $: onHome = showWallpaper;
@@ -382,6 +394,19 @@
   function clearCover() {
     cover = null;
     coverFor = "";
+    dropCoverPage();
+    coverDoc = null;
+    coverTarget = "";
+  }
+
+  /** The page over the thread is closed, not hidden: its native view would
+   *  otherwise stay drawn over whatever comes next. */
+  function dropCoverPage() {
+    if (!coverPage) return;
+    const id = coverPage.id;
+    coverPage = null;
+    dropTabPrompts(id);
+    api.browserClose(id).catch(toastError);
   }
 
   function sessionHost(): string {
@@ -396,7 +421,10 @@
     return draft.id;
   }
 
-  function showCover(kind: "settings" | "sessions") {
+  function showCover(kind: "settings" | "sessions" | "page" | "file") {
+    if (kind !== "page") dropCoverPage();
+    if (kind !== "file") coverDoc = null;
+    if (kind !== "page" && kind !== "file") coverTarget = "";
     const id = sessionHost();
     cover = kind;
     coverFor = id;
@@ -410,7 +438,7 @@
     closedTabs.set(rest);
     if (!last) return;
     if (last.sessionId) openSession(last.sessionId);
-    else openPageNext(last.url);
+    else openFullPage(last.url);
   }
 
   $: sessionProject = (hasSession ? meta?.project : "") || sideMeta?.project || project?.slug || "";
@@ -769,22 +797,6 @@
     if (at === group && !infoOpen) toggleInfo(true);
   }
 
-  async function pinNote(path: string) {
-    const at = group;
-    let content: string | null = null;
-    try {
-      content = await brain.read(path);
-    } catch {
-      content = null;
-    }
-    if (content == null) {
-      toast("That note can't be read.", true);
-      return;
-    }
-    const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
-    putFile({ id: path, title, kind: "markdown", content, version: 1 }, at);
-  }
-
   /** An agent's ui.show_file: the file or brain note opens in that session's
    *  side bar, beside the cards. Errors go back to the agent rather than to
    *  a toast. */
@@ -835,21 +847,70 @@
     selectTab(t.id);
   }
 
-  function openPageNext(url: string) {
-    const t = pageTab(url);
-    tabs = placeTab(tabs, t, activeId);
-    selectTab(t.id);
+  /** A web page full screen over the current tab. A new link gets a fresh
+   *  page rather than the last one's history. */
+  function openFullPage(url: string) {
+    if (!url) return;
+    dropCoverPage();
+    coverPage = pageTab(url);
+    coverTarget = url;
+    showCover("page");
+  }
+
+  /** A file full screen over the current tab, in the file reader; one that
+   *  isn't text opens outside Parzi. */
+  async function openFullFile(path: string) {
+    let doc: ArtifactDoc;
+    if (isImagePath(path)) doc = imageDoc(path);
+    else {
+      try {
+        doc = diskDoc(path, await api.readTextFile(path));
+      } catch {
+        await api.openFilePath(path).catch(toastError);
+        return;
+      }
+    }
+    showFullDoc(doc, path);
+  }
+
+  async function openFullNote(path: string) {
+    const content = await brain.read(path).catch(() => null);
+    if (content == null) {
+      toast("That note can't be read.", true);
+      return;
+    }
+    const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
+    showFullDoc({ id: path, title, kind: "markdown", content, version: 1 }, path);
+  }
+
+  function showFullDoc(doc: ArtifactDoc, target: string) {
+    // Reopening the same file bumps the version so the reader re-renders.
+    const version = coverDoc?.id === doc.id ? coverDoc.version + 1 : doc.version || 1;
+    coverDoc = { ...doc, version };
+    coverTarget = target;
+    showCover("file");
+  }
+
+  function openPin(pin: Pin) {
+    if (pin.kind === "url") openFullPage(pin.target);
+    else void openFullFile(pin.target);
   }
 
   function openFromPage(opener: string, url: string) {
     const from = tabs.find((t) => t.id === opener);
     if (!from?.owner) {
-      openPageNext(url);
+      openFullPage(url);
       return;
     }
     const t = pageTab(url, undefined, from.owner);
     tabs = placeTab(tabs, t, opener);
     api.browserPrepare(t.id, url, from.owner).catch(() => {});
+  }
+
+  /** A page tab, or the page open over the thread. */
+  function patchPage(id: string, patch: Partial<Tab>) {
+    if (coverPage?.id === id) coverPage = { ...coverPage, ...patch };
+    else patchTab(id, patch);
   }
 
   async function recoverPage(id: string) {
@@ -859,19 +920,18 @@
       toastError(e);
     }
     await new Promise((r) => setTimeout(r, 250));
-    patchTab(id, { crashed: undefined, loading: false });
+    patchPage(id, { crashed: undefined, loading: false });
   }
 
-  function navigatePage(url: string) {
-    const id = tab.id;
-    patchTab(id, { url, title: hostOf(url) });
+  function navigatePage(id: string, url: string) {
+    patchPage(id, { url, title: hostOf(url) });
     api.browserNavigate(id, url).catch(toastError);
   }
 
   const pendingTitles = new Map<string, string>();
 
   function onPage(e: PageEvent) {
-    const t = tabs.find((x) => x.id === e.tab);
+    const t = coverPage?.id === e.tab ? coverPage : tabs.find((x) => x.id === e.tab);
     if (!t) return;
     const patch: Partial<Tab> = {};
     if (e.loading !== undefined) patch.loading = e.loading;
@@ -902,16 +962,12 @@
         pendingTitles.delete(e.tab);
       }
     }
-    patchTab(e.tab, patch);
+    patchPage(e.tab, patch);
     if (e.fullscreen !== undefined && e.tab === activeId) void setImmersive(e.fullscreen);
   }
 
   function browse(url: string) {
-    if (tab.kind === "session" && !tab.sessionId && !events.length) {
-      patchTab(tab.id, { kind: "page", url, title: hostOf(url), sessionId: null });
-    } else {
-      openPage(url);
-    }
+    openFullPage(url);
   }
 
   function openSession(id: string) {
@@ -935,6 +991,12 @@
     } else {
       addTab(sessionTab(id, title));
     }
+  }
+
+  /** The Environment card moved the session to another folder or project. */
+  function relocated(m: SessionMeta) {
+    if (m.id === shown) void reload();
+    void refreshThreads();
   }
 
   function openSettings(section = "general") {
@@ -1419,7 +1481,6 @@
     else if (name === "fork") void fork();
     else if (name === "compact") void compact();
     else if (name === "stop") void stop();
-    else if (name === "page") addTab(pageTab());
     else if (name === "settings") openSettings();
   }
 
@@ -1653,7 +1714,12 @@
   }
 
   function onDeskCmd(cmd: DeskCmd) {
-    if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null, !cmd.focus);
+    // An agent's own page (browser.open) stays a tab it drives in the
+    // background; any other page opens over the current tab.
+    if (cmd.op === "open" && cmd.url) {
+      if (cmd.owner) openPage(cmd.url, cmd.id, cmd.owner, !cmd.focus);
+      else openFullPage(cmd.url);
+    }
     else if (cmd.op === "navigate" && cmd.id && cmd.url) patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
     else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
     else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
@@ -1691,7 +1757,8 @@
 
   /** Where the window is, in a line, for an agent looking at it. */
   function whereNow(): string {
-    const page = coverOn && cover ? (cover === "settings" ? `Settings, ${settingsSection}` : "Sessions") : "";
+    const covers = { settings: `Settings, ${settingsSection}`, sessions: "Sessions", page: `the page ${coverPage?.url ?? ""}`, file: `the file ${coverDoc?.title ?? ""}` };
+    const page = coverOn && cover ? covers[cover] : "";
     const kind = tab.kind === "page" ? "web page" : tab.kind === "session" ? (hasSession ? "session" : "Home") : tab.kind;
     return `Window: ${kind} tab "${tab.title || "New session"}"${page ? `, showing ${page}` : ""}${infoShown ? ", side column open" : ""}${readerShown && fileDoc ? `, reading ${fileDoc.title}` : ""}.`;
   }
@@ -1753,7 +1820,7 @@
     return [
       { id: "tabs.list", title: "List the open tabs", run: () => tabs.map((t) => `${t.id === activeId ? "* " : ""}${t.kind} "${t.title || "New session"}" (${t.id})${t.url ? ` ${t.url}` : ""}`).join("\n") },
       { id: "tabs.new", title: "Open a new session tab (Home)", run: () => void newSession() },
-      { id: "tabs.page", title: "Open a web page in a new tab", args: [{ name: "url", type: "string", about: "an address or words to search" }], run: (a) => { if (a.url) openPage(toAddress(String(a.url))); else addTab(pageTab()); return `Opened ${a.url ? toAddress(String(a.url)) : "a blank page"}.`; } },
+      { id: "page.open", title: "Open a web page full screen over the current tab", args: [{ name: "url", type: "string", required: true, about: "an address or words to search" }], run: (a) => { const url = toAddress(String(a.url ?? "")); if (!url) throw new Error("Say which page to open."); openFullPage(url); return `Opened ${url}.`; } },
       { id: "tabs.select", title: "Switch to a tab by title or id", args: [{ name: "tab", type: "string", required: true }], run: (a) => { const t = tabNamed(a.tab); if (!t) throw new Error(`No tab "${a.tab}".`); selectTab(t.id); return `Switched to "${t.title || "New session"}".`; } },
       { id: "tabs.close", title: "Close a tab (the current one if none is named)", args: [{ name: "tab", type: "string" }], run: (a) => { const t = tabNamed(a.tab); if (!t) throw new Error(`No tab "${a.tab}".`); closeTab(t.id); return `Closed "${t.title || "the tab"}".`; } },
       { id: "tabs.reopen", title: "Reopen the last closed tab", run: () => void reopenClosed() },
@@ -1763,7 +1830,7 @@
       { id: "session.fork", title: "Branch the current session into a copy", when: () => hasSession, run: async () => { await fork(); return "Forked the session."; } },
       { id: "session.compact", title: "Summarise the current session to free context", when: () => hasSession, run: async () => { await compact(); return "Compacting the session."; } },
       { id: "settings.open", title: "Open Settings at a page", args: [{ name: "section", type: "string", choices: ["general", "providers", "connections", "appearance"] }], run: (a) => { openSettings(String(a.section ?? "general")); return `Opened Settings, ${a.section ?? "general"}. Use app_screen to see its controls.`; } },
-      { id: "settings.close", title: "Close Settings or the sessions list", when: () => coverOn, run: () => void clearCover() },
+      { id: "settings.close", title: "Close Settings, the sessions list, or the page or file open over the session", when: () => coverOn, run: () => void clearCover() },
       { id: "sidebar.toggle", title: "Show or hide the session's side column", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleInfo(onOff(a.open, infoShown)); return infoOpen ? "The side column is open." : "The side column is hidden."; } },
       { id: "files.open", title: "Open a file in the side bar, beside the cards", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFileInCard(String(a.path)); return `Opened ${a.path}.`; } },
       { id: "files.close", title: "Close the file open in the side bar", run: () => { closeFile(); return "Closed the file."; } },
@@ -1821,7 +1888,7 @@
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
       if (!url) return;
-      openPage(url);
+      openFullPage(url);
     };
     document.addEventListener("parzi:open-page", onOpenPage);
     const onOpenArtifact = (e: Event) => {
@@ -1831,12 +1898,12 @@
     document.addEventListener("parzi:open-artifact", onOpenArtifact);
     const onPinNote = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
-      if (path) void pinNote(path);
+      if (path) void openFullNote(path);
     };
     document.addEventListener("parzi:pin-note", onPinNote);
     const onOpenFile = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
-      if (path) void openFileInCard(path);
+      if (path) void openFullFile(path);
     };
     document.addEventListener("parzi:open-file", onOpenFile);
     const unClear = provideClearSessions(clearFinishedSessions);
@@ -1952,9 +2019,9 @@
               bind:this={page}
               {tab}
               {immersive}
-              on:navigate={(e) => navigatePage(e.detail.url)}
+              on:navigate={(e) => navigatePage(tab.id, e.detail.url)}
               on:error={(e) => toast(e.detail.text, true)}
-              on:openTab={(e) => openPageNext(e.detail.url)}
+              on:openTab={(e) => navigatePage(tab.id, e.detail.url)}
               on:recover={() => recoverPage(tab.id)}
               on:resume={() => patchTab(tab.id, { crashed: undefined })}
             />
@@ -2008,6 +2075,23 @@
             {#if coverOn && cover === "settings"}
               <div class="cover" transition:fade|global={motion}>
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
+              </div>
+            {:else if coverOn && cover === "page" && coverPage}
+              <div class="cover under-dock" style:--dock="{dockHeight}px" transition:fade|global={motion}>
+                {#key coverPage.id}
+                  <PageView
+                    tab={coverPage}
+                    on:navigate={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
+                    on:error={(e) => toast(e.detail.text, true)}
+                    on:openTab={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
+                    on:recover={() => coverPage && recoverPage(coverPage.id)}
+                    on:resume={() => coverPage && patchPage(coverPage.id, { crashed: undefined })}
+                  />
+                {/key}
+              </div>
+            {:else if coverOn && cover === "file" && coverDoc}
+              <div class="cover" style:--dock="{dockHeight}px" transition:fade|global={motion}>
+                <FileReader doc={coverDoc} {folder} full on:close={clearCover} />
               </div>
             {:else if coverOn && cover === "sessions"}
               <div class="cover" transition:fade|global={motion}>
@@ -2095,20 +2179,30 @@
             tokensIn={meta?.tokens_in ?? 0}
             tokensOut={meta?.tokens_out ?? 0}
             costUsd={meta?.cost_usd ?? 0}
-            provider={meta?.model.split("/")[0] ?? ""}
+            provider={(comp.model || meta?.model || "").split("/")[0]}
             on:openSession={(e) => openSession(e.detail.id)}
             on:compact={compact}
+            on:moved={(e) => relocated(e.detail.meta)}
           />
         </div>
       {/if}
 
-      {#if !coverOn}
+      {#if !coverOn || coverComposer}
       <div
         class="composer"
-        class:docked={hasSession}
+        class:docked={hasSession || coverOn}
         style:--shift="{shift}px"
         bind:clientHeight={dockHeight}
       >
+        {#if tab.kind === "session" && shown && hasSession}
+          <SessionPins
+            session={shown}
+            project={sessionProject}
+            planDoc={meta?.plan?.doc ?? null}
+            current={coverComposer ? coverTarget : ""}
+            on:open={(e) => openPin(e.detail)}
+          />
+        {/if}
         <Omnibar
           bind:this={omnibar}
           bind:input={comp.input}
@@ -2134,7 +2228,7 @@
             comp.remoteCwd = e.detail.path;
             comp = comp;
           }}
-          hero={!hasSession}
+          hero={!hasSession && !coverOn}
           hint={planAsk ? "Say what to change, or accept the plan above" : ""}
           {project}
           queue={heldRows}
@@ -2404,13 +2498,15 @@
   .cover :global(nav),
   .cover :global(header),
   .cover :global(.bar),
+  .cover :global(.toolbar),
   .cover :global(.page-bar) {
     anchor-name: --cover-bar;
   }
   /* Room for the back arrow. A bar on the page's tracks already stays clear of it. */
   .cover :global(nav:not(.tracks)),
   .cover :global(header),
-  .cover :global(.bar) {
+  .cover :global(.bar),
+  .cover :global(.toolbar) {
     padding-right: calc(var(--space) * 4 + var(--space) * 7 + var(--space) * 2);
   }
   .session:has(.cover) .back {
@@ -2424,6 +2520,15 @@
     inset: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* A page's native view is drawn above the window's HTML, so it stops
+     short of the composer floating at the foot. */
+  .cover.under-dock {
+    padding-bottom: calc(var(--dock) + var(--space) * 6);
+  }
+  .cover :global(.page) {
+    flex: 1;
+    min-height: 0;
   }
   .scroll {
     flex: 1;

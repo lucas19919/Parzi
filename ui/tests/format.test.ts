@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachedPaths, duration, plural, tokenCount } from "../src/lib/format.ts";
+import { attachedPaths, duration, plural, resetsIn, tokenCount } from "../src/lib/format.ts";
 
 test("durations read the same everywhere", () => {
   assert.equal(duration(320), "320ms");
@@ -25,4 +25,14 @@ test("plurals", () => {
 test("a sent message gives back the files it carried", () => {
   assert.deepEqual(attachedPaths("fix this\n[attached: src/a.ts, shot.png]"), ["src/a.ts", "shot.png"]);
   assert.deepEqual(attachedPaths("no files here"), []);
+});
+
+test("a limit window says when it starts over", () => {
+  const now = 1_000_000_000_000;
+  const at = (s: number) => now / 1000 + s;
+  assert.equal(resetsIn(undefined, now), "");
+  assert.equal(resetsIn(at(-5), now), "resets now");
+  assert.equal(resetsIn(at(40 * 60), now), "resets in 40 min");
+  assert.equal(resetsIn(at(3 * 3600), now), "resets in 3 h");
+  assert.equal(resetsIn(at(4 * 86400), now), "resets in 4 d");
 });

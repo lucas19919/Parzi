@@ -63,6 +63,16 @@
       "reason": "A question's option shows its label as text; the check misreads it where the docked composer covers the end of the thread."
     },
     {
+      "selector": ".info .card .detail",
+      "rules": ["content-clipping"],
+      "reason": "A helper's latest report is one line in the narrow side column; it ends in an ellipsis and shows in full in the row's tooltip."
+    },
+    {
+      "selector": ".pins .text, .pins .text *",
+      "rules": ["content-clipping"],
+      "reason": "The pins row above the composer is one quiet line; the project's targets end in an ellipsis and show in full in the row's tooltip."
+    },
+    {
       "selector": ".art .body.folded *",
       "rules": ["content-clipping", "text-contrast"],
       "reason": "A long document folds behind Show all on purpose; the fade shows there is more. Its text is the thread's (--text on --panel, as in replies); the check cannot read the background through the fade's pseudo element."
