@@ -1,5 +1,5 @@
 //! A session's plan (its checklist, kept on the session) and its name.
-//! `plan.write` and `todo.write` set the plan; `plan.read` reads this
+//! `plan.write` (also called by its old name `todo.write`) sets the plan; `plan.read` reads this
 //! session's plan or another's in the same project.
 
 use parzi_core::store::{Event, SessionPlan, SessionStore, StepState};

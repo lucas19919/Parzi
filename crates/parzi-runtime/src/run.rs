@@ -509,14 +509,9 @@ impl EngineRun {
             return None;
         }
         Some(format!(
-            "<while-you-were-away>
-Another agent worked on this thread since your last turn. What happened:
-{}
-</while-you-were-away>",
-            newest_within(lines, HISTORY_CHARS).join(
-                "
-"
-            )
+            "<while-you-were-away>\nAnother agent worked on this thread since your last turn. What happened:\n{}\n</while-you-were-away>",
+            newest_within(lines, HISTORY_CHARS).join("
+")
         ))
     }
 

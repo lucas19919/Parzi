@@ -218,3 +218,62 @@ async fn answering_a_proposal_saves_it_or_drops_it() {
     assert!(yes.proposal.is_none());
     assert_eq!(yes.plan.expect("saved").items[0].title, "one");
 }
+
+/// An agent that never keeps a session of its own (an ACP agent with no
+/// resume, or one whose run failed early) still leaves the first agent's
+/// parked session for when the thread comes back to it.
+#[tokio::test]
+async fn coming_back_past_an_agent_without_a_session_still_resumes() {
+    home("switch-unbound");
+    let claude = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.session("claude-9");
+            a.say("Claude here.");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let grok = Fake::new(
+        "grok",
+        script(|a: Agent| async move {
+            a.say("Grok keeps no session.");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(&[claude.clone(), grok.clone()]);
+    let (meta, _rx) = orch
+        .spawn("unbound", "claude", "start", None, "", "low", vec![], None)
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+    for (to, text) in [("grok", "over to grok"), ("claude", "back to claude")] {
+        orch.send_to(
+            &meta.id,
+            text,
+            None,
+            "",
+            "low",
+            vec![],
+            Some(to.into()),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&store, &meta.id).await;
+    }
+    let back = claude.seen().pop().expect("claude ran again");
+    assert_eq!(
+        back.resume
+            .as_ref()
+            .and_then(|r| r.get("session_id"))
+            .and_then(|v| v.as_str()),
+        Some("claude-9"),
+        "{:?}",
+        back.resume
+    );
+    assert!(
+        back.prompt.contains("Grok keeps no session."),
+        "{}",
+        back.prompt
+    );
+}

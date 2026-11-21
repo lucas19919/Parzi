@@ -179,6 +179,41 @@ pub fn save(slug: &str, plan: &ProjectPlan) -> Result<()> {
     Ok(())
 }
 
+/// One change at a time: two sessions writing the plan, or two helpers
+/// linking themselves, would otherwise keep only the last write.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Loads the plan (an empty one when there is none), lets `change` edit it,
+/// and saves it when `change` says it changed something.
+pub fn update<R>(slug: &str, change: impl FnOnce(&mut ProjectPlan) -> (bool, R)) -> Result<R> {
+    let _one = WRITING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut plan = load(slug).unwrap_or_default();
+    let (changed, out) = change(&mut plan);
+    if changed {
+        save(slug, &plan)?;
+    }
+    Ok(out)
+}
+
+/// Ties a session or draft to the target with this title in the project's
+/// plan. Says what happened, for an agent to read.
+#[must_use]
+pub fn link_session(slug: &str, title: &str, session: &str) -> String {
+    if load(slug).is_none() {
+        return format!("no project plan in {slug} to link the target to");
+    }
+    match update(slug, |plan| {
+        let linked = plan.link(title, session);
+        (linked, linked)
+    }) {
+        Ok(true) => format!("linked to the target \"{title}\""),
+        Ok(false) => format!("no target \"{title}\" in the project plan"),
+        Err(e) => format!("could not link the target: {e}"),
+    }
+}
+
 /// Where the plan note sits on disk, for opening it.
 pub fn doc_path(slug: &str) -> Option<std::path::PathBuf> {
     let path = crate::paths::brain_dir().ok()?.join(note_path(slug));

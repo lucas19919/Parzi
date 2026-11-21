@@ -287,11 +287,8 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
             let name = own.unwrap_or_else(|| from_mcp(asked));
             let started = std::time::Instant::now();
             // These wait on people or long commands by design; the rest should be quick.
-            let proposing =
-                name == "plan.write" && args.get("propose").and_then(Value::as_bool) == Some(true);
             let waits = name.starts_with("shell.")
                 || name.starts_with("ask.")
-                || proposing
                 || matches!(name.as_str(), "session.spawn" | "session.send");
             let call = host.call(&name, &args);
             tokio::pin!(call);

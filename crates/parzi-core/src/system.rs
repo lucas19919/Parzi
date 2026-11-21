@@ -50,11 +50,7 @@ pub fn repo_instructions(cwd: &std::path::Path, names: &[&str]) -> Option<String
                 continue;
             }
             out.push_str(&format!(
-                "Contents of {} (the repository's instructions):
-
-{}
-
-",
+                "Contents of {} (the repository's instructions):\n\n{}\n\n",
                 path.display(),
                 text.trim()
             ));
@@ -65,10 +61,7 @@ pub fn repo_instructions(cwd: &std::path::Path, names: &[&str]) -> Option<String
     }
     if out.chars().count() > REPO_MAX_CHARS {
         out = out.chars().take(REPO_MAX_CHARS).collect();
-        out.push_str(
-            "
-…(the rest of the instruction files was cut)",
-        );
+        out.push_str("\n…(the rest of the instruction files was cut)");
     }
     Some(out.trim_end().to_string())
 }

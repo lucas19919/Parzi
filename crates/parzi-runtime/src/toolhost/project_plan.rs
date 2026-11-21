@@ -93,8 +93,8 @@ impl ToolHost {
                 })
                 .collect::<Vec<_>>()
         });
-        let mut plan = project_plan::load(&slug).unwrap_or_default();
         if goal.is_none() && targets.is_none() {
+            let plan = project_plan::load(&slug).unwrap_or_default();
             return (true, plan_text(&self.p.store, &slug, &plan));
         }
         if self.p.mode == ApprovalMode::Deny {
@@ -103,32 +103,21 @@ impl ToolHost {
                 "agents are read-only here: the project plan can be read, not changed".into(),
             );
         }
-        plan.rewrite(goal, targets);
-        if let Err(e) = project_plan::save(&slug, &plan) {
-            return (false, e.to_string());
+        match project_plan::update(&slug, |plan| {
+            plan.rewrite(goal, targets);
+            (true, plan_text(&self.p.store, &slug, plan))
+        }) {
+            Ok(text) => (true, format!("saved.\n{text}")),
+            Err(e) => (false, e.to_string()),
         }
-        (
-            true,
-            format!("saved.\n{}", plan_text(&self.p.store, &slug, &plan)),
-        )
     }
 
     /// Ties a draft or helper session to a target of this session's project
     /// plan. Says what happened, for the tool's answer.
     pub(super) fn link_target(&self, title: &str, session: &str) -> String {
-        let slug = match self.plan_project(&Value::Null) {
-            Ok(s) => s,
-            Err(_) => return String::new(),
-        };
-        let Some(mut plan) = project_plan::load(&slug) else {
-            return format!(" (no project plan in {slug} to link the target to)");
-        };
-        if !plan.link(title, session) {
-            return format!(" (no target \"{title}\" in the project plan)");
-        }
-        match project_plan::save(&slug, &plan) {
-            Ok(()) => format!("; linked to the target \"{title}\""),
-            Err(e) => format!(" (could not link the target: {e})"),
+        match self.plan_project(&Value::Null) {
+            Ok(slug) => format!("; {}", project_plan::link_session(&slug, title, session)),
+            Err(_) => String::new(),
         }
     }
 }

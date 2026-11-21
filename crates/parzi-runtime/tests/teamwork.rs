@@ -133,6 +133,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 mode_override: None,
                 effort: None,
                 approver: None,
+                target: None,
             },
         )
         .await
@@ -160,6 +161,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 mode_override: None,
                 effort: None,
                 approver: None,
+                target: None,
             },
         )
         .await
@@ -187,6 +189,7 @@ async fn spawn_wait_collects_child_reply() {
                 mode_override: None,
                 effort: None,
                 approver: None,
+                target: None,
             },
         ),
     )
@@ -457,6 +460,7 @@ async fn a_follow_up_to_an_ask_child_still_reaches_the_person() {
                 wait: true,
                 mode_override: Some("ask".into()),
                 approver: Some(spawner.clone()),
+                target: None,
                 ..SpawnSpec::default()
             },
         )
@@ -540,6 +544,7 @@ async fn read_and_list_inspect_sessions() {
                 mode_override: None,
                 effort: None,
                 approver: None,
+                target: None,
             },
         )
         .await
@@ -579,6 +584,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 mode_override: None,
                 effort: None,
                 approver: None,
+                target: None,
             },
         )
         .await
@@ -597,6 +603,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 mode_override: None,
                 effort: None,
                 approver: None,
+                target: None,
             },
         )
         .await
@@ -748,6 +755,7 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
                     mode_override: None,
                     effort: None,
                     approver: None,
+                    target: None,
                 },
             )
             .await
@@ -798,6 +806,7 @@ async fn a_subsession_on_a_model_nobody_offers_never_starts() {
                 mode_override: Some("auto".into()),
                 effort: None,
                 approver: None,
+                target: None,
             },
         )
         .await

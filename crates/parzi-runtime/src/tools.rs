@@ -442,28 +442,6 @@ fn ui_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "todo.write".into(),
-            description: "This session's plan: its checklist, kept on the session (it survives restarts and a switch to another agent) and shown in the thread. Use it for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed; an empty list clears it. It is this session's own list; a project's long-lived plan is plan.write.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "items": {
-                        "type": "array",
-                        "maxItems": 20,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string", "description": "a short imperative, under 80 characters"},
-                                "state": {"type": "string", "enum": ["pending", "active", "done"]},
-                            },
-                            "required": ["title", "state"],
-                        },
-                    },
-                },
-                "required": ["items"],
-            }),
-        },
-        ToolDef {
             name: "ui.show_file".into(),
             description: "Put a file in front of the person: it opens in the side bar beside the conversation, markdown rendered. For something they should read now, such as a plan, a doc you wrote, or a file you are pointing at. path: an absolute path, a path relative to this session's folder, or a note in the brain (projects/parzi.md). Say in a sentence what it is; do not paste it into chat too. A file to keep that is not on disk yet is ui_show_artifact.".into(),
             schema: serde_json::json!({
@@ -502,7 +480,7 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_artifact" | "ui.show_file" | "ui.offer_replies" | "todo.write"
+        "ui.show_artifact" | "ui.show_file" | "ui.offer_replies"
     )
 }
 
@@ -1485,7 +1463,6 @@ const NAMESPACES: &[&str] = &[
     "models",
     "ask",
     "todo",
-    "github",
     "app",
     "connector",
 ];
@@ -1564,6 +1541,8 @@ pub fn current_name(name: &str) -> &str {
         "session.list_sessions" => "session.list",
         "brain.list" => "brain.search",
         "request.user" => "ask.user",
+        // The plan tool's old name, still in some agents' habits.
+        "todo.write" => "plan.write",
         other => other,
     }
 }
@@ -1707,7 +1686,6 @@ mod tests {
             display_name("mcp__parzi__diagonaldiagrams__render"),
             "diagonaldiagrams.render"
         );
-        assert_eq!(display_name("mcp__parzi__github_issue"), "github.issue");
         assert!(!is_parzi_tool(&display_name(
             "mcp__parzi__github__issue_read"
         )));

@@ -187,6 +187,11 @@ impl Orchestrator {
         mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let meta = self.store.get(id)?;
+        // A person's message is their answer to a waiting plan proposal,
+        // whichever way it came (the window, the CLI, a phone): the card goes.
+        if cause.from_person() && meta.proposal.is_some() {
+            let _ = self.store.set_proposal(id, None);
+        }
         if cause.from_person() && meta.status == SessionStatus::Queued {
             tracing::info!(
                 session = %id,
@@ -313,6 +318,7 @@ impl Orchestrator {
         store: &SessionStore,
         session_id: &str,
         spec: &str,
+        prompt_recorded: bool,
     ) -> Result<(String, Option<String>)> {
         let bound = run_session(session_id).map(|s| s.provider);
         let legacy_auto = spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
@@ -345,10 +351,15 @@ impl Orchestrator {
         // its own parked session if it has one (hearing what happened while
         // it was away), else starts fresh with the transcript replayed
         // (EngineRun::history). The thread stays one Parzi session.
-        if let Some(b) = bound.filter(|b| *b != provider) {
-            tracing::info!(session = %session_id, from = %b, to = %provider, "agent switch: the thread carries over");
+        // This runs whenever the agent is not the one bound, even with no
+        // binding: an agent that never kept a session still leaves the parked
+        // one of the agent coming back. A message queued for the new agent is
+        // already on record, so the returning agent hears it too.
+        if bound.as_deref() != Some(provider.as_str()) {
+            tracing::info!(session = %session_id, from = ?bound, to = %provider, "agent switch: the thread carries over");
             let events_now = store.event_count(session_id).unwrap_or(0);
-            switch_agent(session_id, &provider, events_now);
+            let left_at = events_now.saturating_sub(usize::from(prompt_recorded));
+            switch_agent(session_id, &provider, left_at);
         }
         let model = model.or_else(|| Some(entry.default_model).filter(|m| !m.trim().is_empty()));
         Ok((provider, model))
@@ -519,8 +530,14 @@ impl Orchestrator {
         seen: usize,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let snap = p.cfg_snapshot();
-        let (provider_id, model) =
-            Self::route(&snap, &p.store, &q.session_id, &q.model_spec).await?;
+        let (provider_id, model) = Self::route(
+            &snap,
+            &p.store,
+            &q.session_id,
+            &q.model_spec,
+            q.prompt_recorded,
+        )
+        .await?;
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
             ParziError::Store(format!("{provider_id} is not on this build's roster"))
         })?;
@@ -569,11 +586,7 @@ impl Orchestrator {
             if let Some(files) =
                 parzi_core::system::claude_files_for_others(std::path::Path::new(&cwd))
             {
-                instructions.push(format!(
-                    "# Repository instructions
-
-{files}"
-                ));
+                instructions.push(format!("# Repository instructions\n\n{files}"));
             }
         }
         if let Some(note) = p.mcp.status_note() {

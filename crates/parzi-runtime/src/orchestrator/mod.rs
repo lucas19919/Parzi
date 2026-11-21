@@ -360,12 +360,12 @@ impl Orchestrator {
             .await
             .get(id)
             .is_some_and(|h| !h.finished());
-        if running {
+        let before = self.store.get(id)?;
+        if running || before.status == SessionStatus::Queued {
             return Err(parzi_core::ParziError::Validation(
                 "stop the session's run before moving it".into(),
             ));
         }
-        let before = self.store.get(id)?;
         let cwd = cwd.trim();
         if !cwd.is_empty() {
             let (new, old) = (std::path::Path::new(cwd), std::path::Path::new(&before.cwd));

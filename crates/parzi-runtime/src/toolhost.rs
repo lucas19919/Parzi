@@ -652,26 +652,10 @@ impl ToolHost {
                             mode_override: Some(self.child_mode().into()),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
                             approver: Some(self.p.approver.clone()),
+                            target: str_arg("target").filter(|s| !s.trim().is_empty()),
                         },
                     )
                     .await
-                    .map(
-                        |out| match str_arg("target").filter(|t| !t.trim().is_empty()) {
-                            Some(target) => {
-                                let spawned =
-                                    serde_json::from_str::<Value>(&out).ok().and_then(|v| {
-                                        v.get("session_id")?.as_str().map(str::to_string)
-                                    });
-                                match spawned {
-                                    Some(child) => {
-                                        format!("{out}{}", self.link_target(&target, &child))
-                                    }
-                                    None => out,
-                                }
-                            }
-                            None => out,
-                        },
-                    )
             }
             "session.send" => {
                 let target = str_arg("session_id").unwrap_or_default();
@@ -1615,10 +1599,6 @@ impl ToolHost {
                     }
                     (true, said)
                 }
-                Err(e) => (false, e),
-            },
-            "todo.write" => match widgets::todo(args) {
-                Ok(payload) => (true, self.save_plan(payload)),
                 Err(e) => (false, e),
             },
             _ => (false, format!("unknown ui tool `{name}`")),
