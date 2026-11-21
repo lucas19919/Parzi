@@ -41,12 +41,11 @@
   import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { splitQuotes } from "./lib/oldQuotes";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
-  import { freshNotice, notifyLevel, notifySounds } from "./lib/notifyPrefs";
+  import { freshNotice } from "./lib/notifyPrefs";
   import { effortsFor, nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
-  import { addNeedsNotification, addNotification, dropNotification, dropStaleNeeds, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
@@ -88,8 +87,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let approvals: Approval[] = [];
   let questions: Question[] = [];
   let requests: AgentRequest[] = [];
+  /** How a session's last run ended, kept until someone opens it. */
+  let unseen: Record<string, SessionMark> = {};
   $: sessionMarks.set(
     Object.fromEntries<SessionMark>([
+      ...Object.entries(unseen),
       ...[...running].map((id) => [id, "running"] as const),
       ...[...approvals, ...questions, ...requests].map((x) => [x.session, "waiting"] as const),
     ]),
@@ -561,7 +563,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     // so a late reply must also check the tab is still the one in front.
     const at = activeId;
     shown = id;
-    markSessionRead(id);
+    if (unseen[id]) unseen = Object.fromEntries(Object.entries(unseen).filter(([k]) => k !== id));
     clearLive();
     const cached = threadCache.get(id);
     if (cached) {
@@ -1585,36 +1587,30 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
 
-  /** Tells the person about an agent they are not looking at, as much as
-   *  Settings, General, Notifications allows:
-   *  - "needs": an approval, question or request. One card line per session
-   *    (a newer ask replaces an older unread one), a toast that goes once
+  /** Tells the person about an agent they are not looking at:
+   *  - "needs": an approval, question or request. A toast that goes once
    *    it is answered, and a short tone if they are elsewhere.
-   *  - "done": a run finished. A quiet card line; a toast and tone only on
-   *    "all", and the tone only while the window is in the background.
-   *  - "problem": an error or a spending pause. A card line and a toast.
+   *  - "done": a run finished. Only its tab says so.
+   *  - "problem": an error or a spending pause. A toast.
    *  A subagent's finish or error is news for the agent that started it,
-   *  not the person, unless they asked for everything. A toast never shows
-   *  while the window is in the background: it would be gone before they
-   *  look, and the card keeps it. */
-  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; news: "needs" | "done" | "problem" }) {
+   *  not the person. A toast never shows while the window is in the
+   *  background: it would be gone before they look, and the tab keeps it. */
+  function announce(session: string, what: string, opts: { key?: string; news: "needs" | "done" | "problem" }) {
     const focused = document.hasFocus();
     if (session === shown && tab.kind === "session" && focused) return;
-    const level = $notifyLevel;
     const child = threads.some((t) => t.id === session && t.parent_id);
-    if (child && opts.news !== "needs" && level !== "all") return;
-    const title = titleOf(session);
-    const key = opts.key ?? newsKey(session);
-    const body = what[0].toUpperCase() + what.slice(1);
-    if (opts.news === "needs") addNeedsNotification({ title, body, kind, sessionId: session, key });
-    else addNotification({ title, body, kind, sessionId: session, key });
-    if (level === "off") return;
-    const toastIt = level === "all" || opts.news !== "done";
-    // The card shows it when the column is open; a toast would say it twice.
-    if (toastIt && focused && !infoShown) keyedToast(key, `${title} ${what}`, { session, ms: opts.news === "needs" ? 10000 : 6000 });
-    if (!$notifySounds) return;
+    if (child && opts.news !== "needs") return;
+    if (opts.news === "done") return;
+    const key = opts.key ?? `news:${session}`;
+    // The side column lists what is waiting; a toast would say it twice.
+    if (focused && !infoShown) keyedToast(key, `${titleOf(session)} ${what}`, { session, ms: opts.news === "needs" ? 10000 : 6000 });
     if (opts.news === "needs") chime(false);
-    else if (level === "all" && !focused) chime(opts.news === "done");
+  }
+
+  /** Marks a run's end on its tab until the session is opened. */
+  function markEnded(session: string, mark: SessionMark) {
+    if (session === shown && tab.kind === "session") return;
+    unseen = { ...unseen, [session]: mark };
   }
 
   function settle(key: string) {
@@ -1622,8 +1618,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     approvals = approvals.filter((a) => a.key !== key);
     questions = questions.filter((q) => q.key !== key);
     requests = requests.filter((r) => r.key !== key);
-    dropNotification(key);
-    dropStaleNeeds(new Set([...approvals, ...questions, ...requests].map((x) => x.session)));
   }
 
   const stopped = (error: string) => {
@@ -1635,19 +1629,19 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (e.kind === "approval") {
       const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
-      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, news: "needs" });
+      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options, details: e.details, multi: e.multi }];
-      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, news: "needs" });
+      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "request") {
       const fresh = !requests.some((r) => r.key === e.key);
       requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
-      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, news: "needs" });
+      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, { key: e.key, news: "needs" });
       return;
     }
     if (e.kind === "expired") {
@@ -1676,11 +1670,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
       if (next) void sendHeld(e.session);
       else if (hasQueued) scheduleDrain(e.session);
-      const isChild = threads.some((t) => t.id === e.session && t.parent_id);
-      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { news: "problem" });
-      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { news: "done" });
-      // A stop someone asked for (the person, or a parent agent) is not an error.
-      else if (!stopped(e.error)) announce(e.session, "stopped with an error", "error", { news: "problem" });
+      if (e.kind === "paused") {
+        announce(e.session, "paused at its spending limit", { news: "problem" });
+        markEnded(e.session, "waiting");
+      } else if (e.kind === "done") {
+        announce(e.session, "finished", { news: "done" });
+        markEnded(e.session, "done");
+      } else if (!stopped(e.error)) {
+        // A stop someone asked for (the person, or a parent agent) is not an error.
+        announce(e.session, "stopped with an error", { news: "problem" });
+        markEnded(e.session, "failed");
+      }
       return;
     }
     // The working agent formatted a message for display (session.format_message).
@@ -1738,7 +1738,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (e.kind === "context") {
       context = { used: e.used, limit: e.limit };
     } else if (e.kind === "notice") {
-      if ($notifyLevel !== "off" && freshNotice(e.session, e.text)) toast(e.text);
+      if (freshNotice(e.session, e.text)) toast(e.text);
     }
   }
 
@@ -1815,13 +1815,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         .catch((e) => toast(`Couldn't load the new theme: ${e}`, true));
     }
     else if (cmd.op === "notify" && cmd.text) {
-      // An agent's own heads-up: at most one a minute per session, quiet on
-      // "off", and no tone while the person is looking at that session.
+      // An agent's own heads-up: at most one a minute per session, and no
+      // tone while the person is looking at that session.
       const sid = cmd.session ?? "";
-      if ($notifyLevel !== "off" && freshNotice(`notify:${sid}`, "", Date.now(), 60_000)) {
+      if (freshNotice(`notify:${sid}`, "", Date.now(), 60_000)) {
         notify(cmd.text, sid);
         const watching = document.hasFocus() && sid === shown && tab.kind === "session";
-        if ($notifySounds && !watching) chime(true);
+        if (!watching) chime(true);
       }
     } else if (cmd.op === "approval" && cmd.key) {
       approvals = approvals.filter((a) => a.key !== cmd.key);
@@ -2089,7 +2089,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       panelOpen={infoShown || pageInfoShown}
       panelCount={familyActive}
       on:panel={() => toggleInfo()}
-      on:openSession={(e) => openSession(e.detail.id)}
     />
   {/if}
 

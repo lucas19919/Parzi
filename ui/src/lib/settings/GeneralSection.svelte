@@ -2,8 +2,6 @@
   import { onMount } from "svelte";
   import { api, browserPrefs, type BrowserPrefs } from "../api";
   import Icon from "../Icon.svelte";
-  import { notifyLevel, notifySounds, type NotifyLevel } from "../notifyPrefs";
-  import SegControl from "./SegControl.svelte";
   import { check as checkUpdates, devChannel, dlDone, dlTotal, installUpdate, setDevChannel, updateMsg, updateState, updateVersion } from "../updateStore";
   import { clearFinishedSessions } from "../sessions";
   import ConnectionsSection from "./ConnectionsSection.svelte";
@@ -43,13 +41,6 @@
     }
   }
 
-  const setLevel = (v: string) => notifyLevel.set((v === "all" || v === "off" ? v : "needed") as NotifyLevel);
-  const NOTIFY = [
-    { value: "all", label: "Everything" },
-    { value: "needed", label: "When needed" },
-    { value: "off", label: "Nothing" },
-  ];
-
   onMount(() => {
     browserPrefs.get().then((p) => (web = p)).catch(() => {});
     api.appVersion().then((v) => (version = v)).catch(() => {});
@@ -81,25 +72,6 @@
     <div class="row">
       <span class="row-label">Dev builds</span>
       <span class="row-ctl auto"><Switch on={$devChannel} title="Dev builds" on:toggle={() => setDevChannel(!$devChannel)} /></span>
-    </div>
-  </div>
-</div>
-
-<div class="pref-section">
-  <div class="rows">
-    <div class="row row-title"><span>Notifications</span></div>
-    <div class="row ctl-row">
-      <span class="row-label">Tell me</span>
-      <SegControl
-        label="Notifications"
-        options={NOTIFY}
-        value={$notifyLevel}
-        on:pick={(e) => setLevel(e.detail)}
-      />
-    </div>
-    <div class="row">
-      <span class="row-label">Sound when an agent needs me</span>
-      <span class="row-ctl auto"><Switch on={$notifySounds} title="Sound when an agent needs me" on:toggle={() => notifySounds.set(!$notifySounds)} /></span>
     </div>
   </div>
 </div>

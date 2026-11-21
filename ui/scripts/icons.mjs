@@ -40,7 +40,6 @@ const MAP = {
   panel: "panel-left",
   server: "server",
   alert: "triangle-alert",
-  bell: "bell",
   download: "download",
   external: "external-link",
   browser: "app-window",
