@@ -54,7 +54,6 @@ const MAP = {
   play: "play",
   phone: "smartphone",
   laptop: "laptop",
-  qr: "qr-code",
 };
 
 const dir = new URL("../node_modules/lucide-static/", import.meta.url);

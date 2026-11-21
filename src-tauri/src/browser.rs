@@ -24,6 +24,20 @@ const EXTERNAL_EVERY: Duration = Duration::from_secs(1);
 static GEN: AtomicU64 = AtomicU64::new(0);
 static SEQ: AtomicU64 = AtomicU64::new(0);
 static TABS: Mutex<BTreeMap<String, Slot>> = Mutex::new(BTreeMap::new());
+/// Pages shown as a phone: the device each one emulates, kept so a page made
+/// later (or remade after a crash) comes up as the same phone.
+static DEVICES: Mutex<BTreeMap<String, Device>> = Mutex::new(BTreeMap::new());
+
+/// A phone a page emulates: its screen in CSS pixels, its pixel density, its
+/// browser's user agent, and how far the view is scaled down to fit.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct Device {
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+    pub user_agent: String,
+    pub fit: f64,
+}
 static SHOWN: Mutex<String> = Mutex::new(String::new());
 static LRU: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static RESTING: Mutex<BTreeMap<String, Rest>> = Mutex::new(BTreeMap::new());
@@ -456,6 +470,35 @@ pub fn browser_show(
     Ok(())
 }
 
+/// Shows a page as a phone (its screen, pixel density, user agent and touch),
+/// or as itself again with `None`.
+#[tauri::command]
+pub fn browser_emulate(app: AppHandle, tab: String, device: Option<Device>) -> Result<(), String> {
+    let label = page_label(&tab)?;
+    let changed = {
+        let mut devices = locked(&DEVICES);
+        let before = devices.get(&label).cloned();
+        match &device {
+            Some(d) => devices.insert(label.clone(), d.clone()),
+            None => devices.remove(&label),
+        };
+        before != device
+    };
+    if changed {
+        if let Some(wv) = app.get_webview(&label) {
+            apply_device(&wv, device);
+        }
+    }
+    Ok(())
+}
+
+fn apply_device(wv: &Webview, device: Option<Device>) {
+    #[cfg(windows)]
+    crate::dwm::emulate_page(wv, device);
+    #[cfg(not(windows))]
+    let _ = (wv, device);
+}
+
 #[tauri::command]
 pub fn browser_prepare(
     app: AppHandle,
@@ -608,6 +651,9 @@ fn open_page(app: &AppHandle, window: &tauri::Window, job: &Fit) -> Option<Webvi
     tell(app, BROWSER, json!({ "tab": slot.tab, "loading": true }));
     #[cfg(windows)]
     watch_page(app, &wv, slot.tab);
+    if let Some(device) = locked(&DEVICES).get(&job.label).cloned() {
+        apply_device(&wv, Some(device));
+    }
     Some(wv)
 }
 
@@ -1099,6 +1145,7 @@ pub fn browser_recover(app: AppHandle, tab: &str) -> Result<(), String> {
 pub fn browser_close(app: AppHandle, tab: &str) -> Result<(), String> {
     let label = page_label(tab)?;
     locked(&TABS).remove(&label);
+    locked(&DEVICES).remove(&label);
     locked(&LRU).retain(|l| l != &label);
     locked(&RESTING).remove(&label);
     locked(&OFFERS).retain(|_, o| o.tab != tab);

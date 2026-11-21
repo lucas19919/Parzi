@@ -314,6 +314,11 @@ export const api = {
     invoke<void>("browser_show", { tab, ...rect, url, owner }),
   browserHide: () => invoke<void>("browser_hide"),
   browserPrepare: (tab: string, url: string, owner: string | null = null) => invoke<void>("browser_prepare", { tab, url, owner }),
+  /** Shows a page as a phone (screen, pixel density, user agent, touch), or as itself with null. */
+  browserEmulate: (
+    tab: string,
+    device: { width: number; height: number; scale: number; user_agent: string; fit: number } | null,
+  ) => invoke<void>("browser_emulate", { tab, device }),
   browserFocus: (tab: string) => invoke<void>("browser_focus", { tab }),
   browserRecover: (tab: string) => invoke<void>("browser_recover", { tab }),
   browserExternal: (id: string, open: boolean) => invoke<void>("browser_external", { id, open }),

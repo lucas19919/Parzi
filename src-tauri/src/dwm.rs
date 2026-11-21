@@ -17,7 +17,8 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 };
 use webview2_com::{
     take_pwstr, AcceleratorKeyPressedEventHandler,
-    AddScriptToExecuteOnDocumentCreatedCompletedHandler, CapturePreviewCompletedHandler,
+    AddScriptToExecuteOnDocumentCreatedCompletedHandler,
+    CallDevToolsProtocolMethodCompletedHandler, CapturePreviewCompletedHandler,
     ContainsFullScreenElementChangedEventHandler, ExecuteScriptCompletedHandler,
     FaviconChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
     NavigationCompletedEventHandler, NavigationStartingEventHandler,
@@ -281,6 +282,82 @@ pub fn wake_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
             let _ = core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL);
         }
         resume(&core);
+    });
+}
+
+/// Makes a page a phone through Chrome's own device mode: its screen size
+/// and pixel density (scaled down by `fit` to the space it has), its user
+/// agent, and touch for the mouse. `None` makes it a desktop page again. The
+/// page reloads so it starts over with the phone's user agent.
+pub fn emulate_page<R: tauri::Runtime>(
+    wv: &tauri::Webview<R>,
+    device: Option<crate::browser::Device>,
+) {
+    let calls: Vec<(&'static str, serde_json::Value)> = match &device {
+        Some(d) => vec![
+            (
+                "Emulation.setDeviceMetricsOverride",
+                serde_json::json!({
+                    "width": d.width,
+                    "height": d.height,
+                    "deviceScaleFactor": d.scale,
+                    "mobile": true,
+                    "scale": d.fit,
+                }),
+            ),
+            (
+                "Emulation.setUserAgentOverride",
+                serde_json::json!({ "userAgent": d.user_agent }),
+            ),
+            (
+                "Emulation.setTouchEmulationEnabled",
+                serde_json::json!({ "enabled": true, "maxTouchPoints": 5 }),
+            ),
+            (
+                "Emulation.setEmitTouchEventsForMouse",
+                serde_json::json!({ "enabled": true, "configuration": "mobile" }),
+            ),
+        ],
+        None => vec![
+            (
+                "Emulation.clearDeviceMetricsOverride",
+                serde_json::json!({}),
+            ),
+            (
+                "Emulation.setUserAgentOverride",
+                serde_json::json!({ "userAgent": "" }),
+            ),
+            (
+                "Emulation.setTouchEmulationEnabled",
+                serde_json::json!({ "enabled": false }),
+            ),
+            (
+                "Emulation.setEmitTouchEventsForMouse",
+                serde_json::json!({ "enabled": false }),
+            ),
+        ],
+    };
+    let _ = wv.with_webview(move |platform| unsafe {
+        let Ok(core) = platform.controller().CoreWebView2() else {
+            return;
+        };
+        for (method, params) in calls {
+            let done =
+                CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |hr, _| {
+                    if let Err(e) = hr {
+                        tracing::debug!("{method} was refused: {e}");
+                    }
+                    Ok(())
+                }));
+            if let Err(e) = core.CallDevToolsProtocolMethod(
+                &HSTRING::from(method),
+                &HSTRING::from(params.to_string()),
+                &done,
+            ) {
+                tracing::debug!("{method} could not be sent: {e}");
+            }
+        }
+        let _ = core.Reload();
     });
 }
 

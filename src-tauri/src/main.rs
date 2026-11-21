@@ -787,6 +787,7 @@ fn main() {
             browser::browser_navigate,
             browser::browser_nav,
             browser::browser_prepare,
+            browser::browser_emulate,
             browser::browser_snapshot,
             browser::browser_focus,
             browser::browser_recover,

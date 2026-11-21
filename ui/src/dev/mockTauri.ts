@@ -681,6 +681,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   list_files: (a) => ["README.md", "CHANGELOG.md", "ui/src/App.svelte", "ui/src/lib/FilePanel.svelte", "ui/src/lib/Omnibar.svelte", "ui/src/lib/Thread.svelte", "src-tauri/src/files.rs", "crates/parzi-core/src/theme.rs", "docs/releasing.md"].filter((f) => f.toLowerCase().includes(String(a.query ?? "").toLowerCase())),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
   browser_prefs: () => browserPrefs,
+  browser_emulate: () => undefined,
   browser_set_pref: (a) => {
     if (a.name === "devtools") browserPrefs.devtools = !!a.on;
     if (a.name === "agentSignIns") browserPrefs.agentSignIns = !!a.on;
