@@ -305,7 +305,26 @@
   $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
-  $: openQuestion = questions.find((q) => q.session === shown) ?? null;
+  // A plan the agent proposed waits on the session (meta.proposal) and shows
+  // as the same card as a question; its answer goes as the next message.
+  $: proposalQuestion =
+    shown && meta?.id === shown && meta.proposal?.items?.length
+      ? ({
+          key: `proposal:${shown}`,
+          session: shown,
+          question: "Use this plan for this session?",
+          options: ["Use this plan", "Not now"],
+          details: [
+            JSON.stringify({
+              plan: true,
+              summary: meta.proposal.summary ?? null,
+              steps: meta.proposal.items.map((i) => ({ title: i.title, detail: i.detail ?? null })),
+              doc: meta.proposal.doc ?? null,
+            }),
+          ],
+        } satisfies Question)
+      : null;
+  $: openQuestion = questions.find((q) => q.session === shown) ?? proposalQuestion;
   $: openRequest = requests.find((r) => r.session === shown) ?? null;
   $: asks = [...questions, ...requests.map((r) => ({ key: r.key, session: r.session, question: r.request, options: [] }))];
   $: parent = meta?.parent_id ? (threads.find((t) => t.id === meta?.parent_id) ?? null) : null;
@@ -1019,12 +1038,34 @@
   // go straight to the agent instead of queueing behind it.
   $: planAsk = openQuestion && openQuestion.options[0] === "Use this plan" ? openQuestion : null;
 
+  /** Answers the session's proposed plan, then sends the answer to the agent
+   *  as the person's next message (its turn ended when it proposed). */
+  async function answerProposal(session: string, text: string, typed = false) {
+    const accept = !typed && text === "Use this plan";
+    try {
+      const m = await api.answerPlanProposal(session, accept);
+      if (shown === session) meta = m;
+    } catch (e) {
+      toastError(e);
+      return;
+    }
+    if (typed) return;
+    comp.input = accept ? "Use this plan." : text === "Not now" ? "Not now. Carry on without this plan." : text;
+    comp = comp;
+    void send();
+  }
+
   async function send() {
     const target = tab;
     const draft = target.composer;
     const prompt = draft.input.trim();
     if (!prompt) return;
-    if (planAsk && target.sessionId === planAsk.session) {
+    if (proposalQuestion && target.sessionId === proposalQuestion.session) {
+      // Typing while a plan waits is the answer: the card goes, the words
+      // go to the agent as usual.
+      await answerProposal(proposalQuestion.session, prompt, true);
+    }
+    if (planAsk && target.sessionId === planAsk.session && !planAsk.key.startsWith("proposal:")) {
       const ask = planAsk;
       draft.input = "";
       comp = comp;
@@ -2136,6 +2177,7 @@
                   sessionTitle={titleOf}
                   on:voted={(e) => settle(e.detail.key)}
                   on:answered={(e) => settle(e.detail.key)}
+                  on:proposal={(e) => void answerProposal(e.detail.session, e.detail.text)}
                   on:edited={(e) => {
                     comp.input = e.detail.text;
                     comp = comp;

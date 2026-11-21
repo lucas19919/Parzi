@@ -69,6 +69,7 @@
   const dispatch = createEventDispatcher<{
     voted: { key: string };
     answered: { key: string; session?: string; text?: string };
+    proposal: { session: string; text: string };
     edited: { text: string };
     forked: void;
     startDraft: void;
@@ -604,6 +605,12 @@ ${e.text}` : e.text;
   async function respond(answer: string) {
     if (!question || !answer.trim()) return;
     const { key, session } = question;
+    if (key.startsWith("proposal:")) {
+      // A proposed plan waits on the session, not on a tool call: the
+      // window answers it and sends the answer as the next message.
+      dispatch("proposal", { session, text: answer.trim() });
+      return;
+    }
     try {
       await api.answerQuestion(key, session, answer.trim());
     } catch (e) {

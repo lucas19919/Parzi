@@ -22,6 +22,8 @@ export interface SessionMeta {
   plan_item?: string | null;
   /** The session's plan: its checklist, kept on the session. */
   plan?: { items: { title: string; state: "pending" | "active" | "done" }[]; summary?: string | null; doc?: string | null } | null;
+  /** A plan the agent proposed that the person has not answered yet. */
+  proposal?: { items: { title: string; detail?: string | null }[]; summary?: string | null; doc?: string | null } | null;
   /** A draft's brief: sent as the first message when it starts. */
   brief?: string | null;
   branch?: string;
@@ -228,6 +230,8 @@ export const api = {
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),
   rewindThread: (id: string, nth: number) => invoke<SessionMeta>("rewind_thread", { id, nth }),
+  /** Answers a proposed plan: yes saves it as the plan; the card goes either way. */
+  answerPlanProposal: (id: string, accept: boolean) => invoke<SessionMeta>("answer_plan_proposal", { id, accept }),
   compactThread: (id: string) => invoke<string>("compact_thread", { id }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
   /** Moves a stopped session to another folder (a project, or a branch's worktree). */
