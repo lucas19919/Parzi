@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- The thread is quieter: each turn is one line (Worked 2m · 12 steps, or Thinking… while it runs) that opens to its steps. Notices such as plan saved, compacted or stopped, and messages from other sessions, are in the Running card. Errors are one line with their buttons, timestamps and rewind show on hover, the plan checklist lives behind the Plan pin, and reply chips are smaller. The tidied display of your messages is gone.
 - The session manager lists sessions only: drafts stay on the card that wrote them, and the filters above the list are your projects, not folders.
 - The Usage card is your plan's limits, nothing else: Session and Weekly (and Monthly where the plan has one) with the percent and when it resets, dashes until read. On an API key it shows tokens and cost. Context shows the tokens used until the agent reports its window. The project's targets are one small chip (done of total) above the composer.
 - The Usage card shows your plan's real limits: Claude's 5-hour and weekly windows as Claude Code's /usage shows them, and Codex's as its /status does, read when the card shows and every 5 minutes, not only when a turn happens to report them.
