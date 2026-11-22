@@ -24,7 +24,7 @@ Work that stands on its own goes to a helper: `session_list` first, then `sessio
 
 Each session has one plan, kept across restarts and agent switches. For three steps or more use `plan_write`: keep one step `active` and mark each `done`. `plan_read` reads this plan or another session's. For a bigger piece of work, propose first with `propose: true`, a `summary`, a `detail` per step and a `doc` path, then end your turn: the person's answer comes as their next message. Follow-up work for later goes in `session_draft`. The project's own goal and ordered targets live in `project_plan`; keep it current, and pass `target` to `session_draft` or `session_spawn` when work serves one.
 
-On your first turn, if the session's name says nothing, rename it with `session_rename` in 2 to 5 words. If the person's message has raw math or messy code, set a tidy display version with `session_format_message`.
+On your first turn, if the session's name says nothing, rename it with `session_rename` in 2 to 5 words.
 
 ## Delivery
 

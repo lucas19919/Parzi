@@ -37,14 +37,15 @@
       .catch(() => {});
   });
 
-  type Mark = "waiting" | "running" | "draft" | "";
+  type Mark = "waiting" | "running" | "";
   const ownMark = (s: SessionMeta, marks: Record<string, string>): Mark =>
-    marks[s.id] === "waiting" ? "waiting" : marks[s.id] === "running" || s.status === "active" ? "running" : s.status === "draft" ? "draft" : "";
+    marks[s.id] === "waiting" ? "waiting" : marks[s.id] === "running" || s.status === "active" ? "running" : "";
 
   // Helpers (subagents) live under the session that started them; their
   // work marks that session. One whose parent is gone stays visible.
+  // Drafts aren't sessions yet: they stay on the card that wrote them.
   $: byId = new Map(threads.map((t) => [t.id, t]));
-  $: tops = threads.filter((t) => !t.parent_id || !byId.has(t.parent_id));
+  $: tops = threads.filter((t) => t.status !== "draft" && (!t.parent_id || !byId.has(t.parent_id)));
   $: topOf = (t: SessionMeta): SessionMeta => {
     const seen = new Set<string>();
     let cur = t;
@@ -60,9 +61,8 @@
       const own = ownMark(t, $sessionMarks);
       if (!own) continue;
       const top = topOf(t).id;
-      // A draft marks only itself; a helper's work marks the session above it.
-      if (own === "draft" && top !== t.id) continue;
-      if (own === "waiting" || !m.get(top) || m.get(top) === "draft") m.set(top, own);
+      // A helper's work marks the session above it.
+      if (own === "waiting" || !m.get(top)) m.set(top, own);
     }
     return m;
   })();
@@ -78,9 +78,11 @@
     return m;
   })();
 
+  const projectOf = (t: SessionMeta): string =>
+    (t.project && projects.find((x) => x.slug === t.project)?.title) || "";
   const placeOf = (t: SessionMeta): string => {
-    const p = t.project ? projects.find((x) => x.slug === t.project) : undefined;
-    if (p) return p.title;
+    const p = projectOf(t);
+    if (p) return p;
     const leaf = folderName(t.cwd ?? "");
     return leaf && !/scratch/i.test(t.cwd ?? "") ? leaf : "";
   };
@@ -89,7 +91,7 @@
   $: places = (() => {
     const m = new Map<string, number>();
     for (const t of tops) {
-      const p = placeOf(t);
+      const p = projectOf(t);
       if (p) m.set(p, (m.get(p) ?? 0) + 1);
     }
     return [...m].sort((a, b) => b[1] - a[1]);
@@ -97,14 +99,13 @@
 
   $: q = query.trim().toLowerCase();
   $: shown = tops
-    .filter((t) => !only || placeOf(t) === only)
+    .filter((t) => !only || projectOf(t) === only)
     .filter((t) => !q || t.title.toLowerCase().includes(q) || placeOf(t).toLowerCase().includes(q) || (t.cwd ?? "").toLowerCase().includes(q))
     .map((t) => ({ ...t, at: Date.parse(t.updated) || 0, mark: marks.get(t.id) ?? ("" as Mark) }))
     .sort((a, b) => b.at - a.at);
   $: groups = [
     { label: "Needs you", items: shown.filter((t) => t.mark === "waiting") },
     { label: "Working", items: shown.filter((t) => t.mark === "running") },
-    { label: "Drafts", items: shown.filter((t) => t.mark === "draft") },
     ...byDay(shown.filter((t) => !t.mark)),
   ].filter((g) => g.items.length);
   $: flat = groups.flatMap((g) => g.items);
@@ -115,7 +116,7 @@
   function lineOf(t: (typeof shown)[number]): string {
     const where = placeOf(t);
     const what =
-      t.mark === "waiting" ? "Waiting for you" : t.mark === "running" ? doing.get(t.id)?.label || "Working" : t.mark === "draft" ? (t.brief ?? "").split("\n")[0].slice(0, 90) : "";
+      t.mark === "waiting" ? "Waiting for you" : t.mark === "running" ? doing.get(t.id)?.label || "Working" : "";
     const steps = t.plan?.items ?? [];
     const left = steps.some((i) => i.state !== "done");
     const progress = steps.length && left ? `${steps.filter((i) => i.state === "done").length} of ${steps.length}` : "";
@@ -167,7 +168,7 @@
   <div class="groups" bind:this={list}>
     {#each groups as g (g.label)}
       <div class="rows">
-        <div class="row row-title"><span>{g.label}</span>{#if g.label === "Needs you" || g.label === "Working" || g.label === "Drafts"}<span class="t-hint">{g.items.length}</span>{/if}</div>
+        <div class="row row-title"><span>{g.label}</span>{#if g.label === "Needs you" || g.label === "Working"}<span class="t-hint">{g.items.length}</span>{/if}</div>
         {#each g.items as s (s.id)}
           {@const agent = agentOf(s)}
           <div class="row sess" class:on={flat[pick]?.id === s.id}>

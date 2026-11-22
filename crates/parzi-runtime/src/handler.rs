@@ -290,7 +290,6 @@ mod tests {
                 "end your turn",
                 "`session_rename`",
                 "2 to 5 words",
-                "`session_format_message`",
             ] {
                 assert!(plans.contains(word), "the plans section says {word}");
             }

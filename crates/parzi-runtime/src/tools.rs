@@ -1062,7 +1062,6 @@ pub fn is_session_tool(name: &str) -> bool {
             | "session.read"
             | "session.list"
             | "session.rename"
-            | "session.format_message"
             | "session.draft"
     )
 }
@@ -1120,15 +1119,6 @@ fn session_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"title": {"type": "string"}},
                 "required": ["title"],
-            }),
-        },
-        ToolDef {
-            name: "session.format_message".into(),
-            description: "Set a cleaner display version of the person's latest message (for example raw math set as LaTeX $...$/$$...$$ or messy pasted code in fenced blocks). Only call when the message genuinely reads better formatted; keep the wording and meaning intact. Parzi keeps the original under 'Show as typed'.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"text": {"type": "string", "description": "formatted markdown/LaTeX display text for the person's latest message"}},
-                "required": ["text"],
             }),
         },
         ToolDef {
@@ -1256,7 +1246,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 60)
         ),
         "session.rename" => "Naming this session".into(),
-        "session.format_message" => "Formatting message".into(),
         "plan.read" => "Reading the plan".into(),
         "plan.write" | "todo.write" => {
             let items = args

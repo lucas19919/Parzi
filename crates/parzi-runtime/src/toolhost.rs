@@ -247,7 +247,7 @@ impl ToolHost {
                 .await
                 .unwrap_or_else(|e| (false, e.to_string()));
         }
-        if is_plan_tool(name) || matches!(name, "session.rename" | "session.format_message") {
+        if is_plan_tool(name) || name == "session.rename" {
             let writes = name != "plan.read";
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
@@ -266,17 +266,12 @@ impl ToolHost {
                 return (true, self.save_plan(payload));
             }
             let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
-            let is_format = name == "session.format_message";
             let (name, args) = (name.to_string(), args.clone());
-            let res = tokio::task::spawn_blocking(move || {
+            return tokio::task::spawn_blocking(move || {
                 crate::plan_tools::execute(&store, &sid, &name, &args)
             })
             .await
             .unwrap_or_else(|e| (false, e.to_string()));
-            if is_format && res.0 {
-                self.p.sink.emit(RunEvent::Refreshed);
-            }
-            return res;
         }
         if is_session_tool(name) {
             if !matches!(name, "session.read" | "session.list" | "session.draft") {
@@ -352,10 +347,7 @@ impl ToolHost {
             }
             // The plan tools refuse these in read-only mode too, without saying why.
             if self.p.mode == ApprovalMode::Deny
-                && matches!(
-                    name,
-                    "plan.write" | "session.rename" | "session.format_message"
-                )
+                && matches!(name, "plan.write" | "session.rename")
             {
                 return Some(self.refused(name, Refusal::ReadOnly));
             }

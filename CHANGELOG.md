@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- The session manager lists sessions only: drafts stay on the card that wrote them, and the filters above the list are your projects, not folders.
 - The Usage card is your plan's limits, nothing else: Session and Weekly (and Monthly where the plan has one) with the percent and when it resets, dashes until read. On an API key it shows tokens and cost. Context shows the tokens used until the agent reports its window. The project's targets are one small chip (done of total) above the composer.
 - The Usage card shows your plan's real limits: Claude's 5-hour and weekly windows as Claude Code's /usage shows them, and Codex's as its /status does, read when the card shows and every 5 minutes, not only when a turn happens to report them.
 - A page shown as a phone looks like the phone: an iPhone 16 Pro with its Dynamic Island, titanium edge and buttons, or a Pixel 9 with its punch-hole camera, with a status bar and home indicator in the page's own colour. The page gets the screen between them, as in Safari or Chrome. The iPhone Duo can be shown open (its 7.6-inch inner screen) or closed (its 5.4-inch outer one).
@@ -22,7 +23,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 - Removed the bottom fade overlays on glass code blocks and folded artifact cards.
 - Bare localhost, IP, and local/intranet addresses with a port or path now linkify and open directly in a Parzi tab.
 - Long threads stay snappy: sessions with large histories render the recent tail first with a "Show earlier messages" button, and tab-group corners align cleanly in the tab bar.
-- Agents rename sessions and tidy math or code in your messages directly with their own tools (`session_rename`, `session_format_message`) instead of running a separate formatting model; removed the Formatting agent setting and `ui_host_site`.
+- Agents name sessions themselves with `session_rename` instead of running a separate formatting model; removed the Formatting agent setting, the tidied display of your messages and `ui_host_site`.
 - ACP sessions that finish replying and report usage before going silent now settle cleanly instead of hanging.
 - A proposed plan reads like a plan: what and why at full size, each step with what it involves, a link to the agent's full plan document, and one Accept. To change it, type what you want in the composer; it goes straight to the agent.
 - Questions are calm choice cards: each answer is a tile you click to answer at once (several can be picked and sent together when the agent allows it), "Something else…" takes your own words, and Skip sits quietly by the title. No radio buttons or Submit.
