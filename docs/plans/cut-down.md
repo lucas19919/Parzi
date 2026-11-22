@@ -168,6 +168,7 @@ fixed: `harness.rs` now returns `Dispatch::Failed`.
 | 8. Changeable environment | Project and folder done | Moving a session between this computer and the server |
 | 9. Test on any device | Phone emulator done (Windows) | Dev servers on the server don't show here (SSH port forwarding) |
 | 10. Usage for every agent | Claude and Codex | OpenCode, Grok, Antigravity and Cursor report no limits |
+| 11. A quiet thread | Done | One line per turn; notices and inter-session messages in Running; no tidy display; manager lists sessions by project, no drafts |
 
 Not verified yet: a run of the real app (only the mock window was checked),
 live agents, and the macOS build (edited, not compiled).
