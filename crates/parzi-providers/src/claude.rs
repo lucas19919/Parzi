@@ -1125,6 +1125,24 @@ fn plan_usage(token: &str) -> Option<Vec<UsageWindow>> {
 }
 
 fn oauth_windows(v: &Value) -> Vec<UsageWindow> {
+    let mut out = plan_windows(v);
+    // Extra usage beyond the plan, when it is on: a monthly spending limit.
+    if let Some(extra) = v
+        .get("extra_usage")
+        .filter(|e| e.get("is_enabled").and_then(Value::as_bool) == Some(true))
+    {
+        if let Some(used) = extra.get("utilization").and_then(Value::as_f64) {
+            out.push(UsageWindow {
+                label: "Monthly extra".into(),
+                used_percent: used.clamp(0.0, 100.0),
+                resets_at: None,
+            });
+        }
+    }
+    out
+}
+
+fn plan_windows(v: &Value) -> Vec<UsageWindow> {
     let named = [
         ("five_hour", "Session"),
         ("seven_day", "Weekly"),
@@ -1582,6 +1600,18 @@ mod tests {
         assert_eq!(w[0].resets_at, Some(1_795_356_000));
         assert!(w[2].resets_at.is_none());
         assert!(oauth_windows(&json!({"error": "nope"})).is_empty());
+        let extra = oauth_windows(&json!({
+            "five_hour": {"utilization": 5.0},
+            "extra_usage": {"is_enabled": true, "utilization": 40.0},
+        }));
+        assert_eq!(
+            extra.last().map(|w| w.label.as_str()),
+            Some("Monthly extra")
+        );
+        assert_eq!(
+            oauth_windows(&json!({"extra_usage": {"is_enabled": false, "utilization": 9.0}})).len(),
+            0
+        );
     }
 
     #[tokio::test]

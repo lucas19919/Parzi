@@ -96,10 +96,24 @@
 
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   $: agent = provider ? nameOf(provider) : "";
+  /** Agents whose plan limits Parzi can read (their /usage or /status). */
+  const READS_LIMITS = new Set(["claude", "codex"]);
+  // How the agent bills, from Settings: a plan shows its limits, a key its tokens and cost.
+  let billing: Record<string, string> = {};
+  $: onKey = billing[provider] === "api_key";
+  async function loadBilling() {
+    try {
+      const cfg = await api.getConfig();
+      billing = Object.fromEntries(Object.entries(cfg.providers ?? {}).map(([id, e]) => [id, e.billing ?? "subscription"]));
+    } catch {
+      billing = {};
+    }
+  }
 
   // The Usage card shows the plan's real limits: read from each agent's own
   // source when the column shows, then every 5 minutes while it stays open.
   $: if (open) void refreshUsage();
+  $: if (open) void loadBilling();
   onMount(() => {
     const un = onRunEvent((e) => {
       if (e.kind === "done" || e.kind === "error" || e.kind === "paused") void reloadBoard();
@@ -168,9 +182,9 @@
     />
   {/if}
 
-  {#if contextLimit > 0}
-    <InfoCard id="context" title="Context" foldedAside>
-      <svelte:fragment slot="aside">{pct}%</svelte:fragment>
+  <InfoCard id="context" title="Context" foldedAside>
+    <svelte:fragment slot="aside">{contextLimit > 0 ? `${pct}%` : ""}</svelte:fragment>
+    {#if contextLimit > 0}
       <ContextBreakdown
         used={contextUsed}
         limit={contextLimit}
@@ -179,22 +193,38 @@
         {streaming}
         on:compact={() => dispatch("compact")}
       />
-    </InfoCard>
-  {/if}
+    {:else if contextUsed > 0}
+      <div class="info-line"><span class="info-v">{tokenCount(contextUsed)} tokens used</span></div>
+      <div class="info-line quiet"><span class="info-v">{agent || "The agent"} hasn't said how big its window is</span></div>
+    {:else}
+      <div class="info-line quiet"><span class="info-v">Shows once {agent || "the agent"} replies</span></div>
+    {/if}
+  </InfoCard>
 
-  {#if limits.length || tokensIn || tokensOut}
+  {#if provider}
     <InfoCard id="usage" title="Usage">
-      <svelte:fragment slot="aside">{agent}</svelte:fragment>
-      {#each limits as w (w.label)}
-        <div class="info-line">
-          <span class="info-v">{w.label}</span>
-          {#if w.resets_at}<span class="quiet">{resetsIn(w.resets_at)}</span>{/if}
-          <span class="pct">{Math.round(w.used_percent)}%</span>
-        </div>
+      <svelte:fragment slot="aside">{agent}{onKey ? " · API key" : ""}</svelte:fragment>
+      {#if limits.length && !onKey}
+        {#each limits as w (w.label)}
+          <div class="info-line">
+            <span class="info-v">{w.label}</span>
+            {#if w.resets_at}<span class="quiet">{resetsIn(w.resets_at)}</span>{/if}
+            <span class="pct">{Math.round(w.used_percent)}%</span>
+          </div>
+        {/each}
       {:else}
-        <div class="info-line"><span class="info-v">{tokenCount(tokensIn)} in · {tokenCount(tokensOut)} out</span></div>
-        {#if costUsd > 0}<div class="info-line quiet"><span class="info-v">${costUsd.toFixed(2)} so far</span></div>{/if}
-      {/each}
+        {#if tokensIn || tokensOut}
+          <div class="info-line"><span class="info-v">{tokenCount(tokensIn)} in · {tokenCount(tokensOut)} out this session</span></div>
+        {:else}
+          <div class="info-line quiet"><span class="info-v">Nothing used in this session yet</span></div>
+        {/if}
+        {#if costUsd > 0}<div class="info-line"><span class="info-v">${costUsd.toFixed(2)} this session</span></div>{/if}
+        {#if !onKey}
+          <div class="info-line quiet">
+            <span class="info-v">{READS_LIMITS.has(provider) ? "Plan limits not read yet" : `${agent} doesn't report its plan limits`}</span>
+          </div>
+        {/if}
+      {/if}
     </InfoCard>
   {/if}
 

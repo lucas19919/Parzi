@@ -312,6 +312,7 @@ fn windows(snapshot: &Value) -> Vec<UsageWindow> {
         let mins = w.get("windowDurationMins").and_then(Value::as_u64);
         let label = match mins {
             Some(m) if m <= 6 * 60 => "Session".to_string(),
+            Some(m) if m >= 25 * 24 * 60 => "Monthly".to_string(),
             Some(m) if m >= 6 * 24 * 60 => "Weekly".to_string(),
             Some(m) => format!("{} h", m / 60),
             None => title_case(key),
@@ -886,6 +887,19 @@ fn turn_error(e: &Value) -> ProviderError {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn each_window_is_named_by_its_length() {
+        let w = windows(&json!({
+            "primary": {"usedPercent": 10, "windowDurationMins": 300},
+            "secondary": {"usedPercent": 40, "windowDurationMins": 43_200},
+        }));
+        let labels: Vec<&str> = w.iter().map(|w| w.label.as_str()).collect();
+        assert_eq!(labels, ["Session", "Monthly"]);
+        let weekly = windows(&json!({"primary": {"usedPercent": 3, "windowDurationMins": 10_080}}));
+        assert_eq!(weekly[0].label, "Weekly");
+    }
+
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
