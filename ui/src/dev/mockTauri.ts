@@ -235,6 +235,9 @@ function transcript() {
     }
     out.push({ kind: "assistant", text: ANSWER, done: true });
     if (last) {
+      // Notices and a message from a subagent: the Running card lists them.
+      out.push({ kind: "system", text: "Plan saved: 4 items", at: now / 1000 - 120 });
+      out.push({ kind: "system", text: `parzi-inter:1${JSON.stringify({ from_run: "s1a", body: "Autosize takes 0.3 ms on a 2 KB draft now." })}`, at: now / 1000 - 60 });
       out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
       out.push({
         kind: "artifact",
@@ -313,24 +316,6 @@ function transcript() {
   }
   // ?stream=1 saves what it streamed, as the engine would at turn end.
   for (const e of (globalThis as { __mockSaved?: unknown[] }).__mockSaved ?? []) out.push(e);
-  // ?tidy=1 ends on a math question a small model set for display.
-  if (params.get("tidy")) {
-    const typed = "Help me understand how to derive the energy equation. So pDe/Dt, e = u + 1/2v^2, e = u + 1/2 vivi. Energy transfers are then the integrals pfvivi dV, qjnj dA, nj sigma ij dA, right?";
-    const n = out.filter((e) => (e as { kind: string }).kind === "user").length;
-    out.push({ kind: "user", text: typed });
-    out.push({
-      kind: "widget",
-      fence: "parzi-tidy",
-      payload: {
-        n,
-        text: "Help me understand how to derive the energy equation. So $\\rho \\frac{De}{Dt}$, $e = u + \\tfrac{1}{2}v^2$, $e = u + \\tfrac{1}{2} v_i v_i$. Energy transfers are then the integrals $\\int \\rho f_i v_i \\, dV$, $\\oint q_j n_j \\, dA$, $\\oint n_j \\sigma_{ij} \\, dA$, right?",
-      },
-    });
-    out.push({
-      kind: "assistant",
-      text: "Yes. Now expand both sides using the product rule:\n\n- On the left: $\\frac{De}{Dt} = \\frac{Du}{Dt} + \\frac{D}{Dt}\\left(\\tfrac{1}{2}v_iv_i\\right) = \\frac{Du}{Dt} + v_i\\frac{Dv_i}{Dt}$.\n- On the right: $\\frac{\\partial(\\sigma_{ij}v_i)}{\\partial x_j} = \\frac{\\partial\\sigma_{ij}}{\\partial x_j}v_i + \\sigma_{ij}\\frac{\\partial v_i}{\\partial x_j}$.",
-    });
-  }
   // ?stopped=1 ends the thread on a turn the person stopped.
   if (params.get("stopped")) {
     out.push({ kind: "user", text: "Try the other renderer." });

@@ -103,7 +103,7 @@ await new Promise((r) => setTimeout(r, 50));
 (await import("../lib/toast")).toasts.set([]);
 if (mockLive) {
   const LIVE: [string, string[]][] = [
-    ["s3", ["Editing D:\\Repos\\Parzi\\ui\\src\\lib\\SessionInfo.svelte", "Running `npm run check`", "Reading ui/src/lib/TodoList.svelte"]],
+    ["s3", ["Editing D:\\Repos\\Parzi\\ui\\src\\lib\\SessionInfo.svelte", "Running `npm run check`", "Reading ui/src/lib/Steps.svelte"]],
     ["s6", ["Editing ui/src/lib/SessionInfo.svelte", "Running `npm test`"]],
     ["s2", ["Running `cargo test -p parzi-core plan`", "Reading crates/parzi-core/src/plan.rs"]],
   ];

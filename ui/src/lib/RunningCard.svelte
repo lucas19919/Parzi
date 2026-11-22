@@ -8,12 +8,15 @@
   import { sessionTone, TONE_WORDS } from "./sessionTone";
   import { tooltip } from "./tooltip";
   import type { LogStep } from "./runLog";
+  import type { Notice } from "./turns";
   import { duration } from "./format";
 
   /** What the agent is doing in this session, oldest first: the steps of its
-   *  latest run, the commands it ran and the helper sessions it started. */
+   *  latest run, the commands it ran, the helper sessions it started, and
+   *  the thread's notices and messages from other sessions. */
   export let session = "";
   export let helpers: SessionMeta[] = [];
+  export let notices: Notice[] = [];
   export let running: Set<string> = new Set();
   export let waiting: Set<string> = new Set();
 
@@ -41,7 +44,8 @@
   type Row =
     | { key: string; at: number; kind: "step"; step: LogStep }
     | { key: string; at: number; kind: "helper"; helper: SessionMeta }
-    | { key: string; at: number; kind: "job"; job: ShellJob };
+    | { key: string; at: number; kind: "job"; job: ShellJob }
+    | { key: string; at: number; kind: "note"; note: Notice };
 
   $: steps = $runLogs.get(session)?.steps ?? [];
   $: commands = jobs.filter((j) => !j.host_id);
@@ -49,6 +53,7 @@
     ...steps.map((s): Row => ({ key: `s:${s.id}`, at: s.at, kind: "step", step: s })),
     ...helpers.map((h): Row => ({ key: `h:${h.id}`, at: Date.parse(h.created) || 0, kind: "helper", helper: h })),
     ...commands.map((j): Row => ({ key: `j:${j.id}`, at: j.started, kind: "job", job: j })),
+    ...notices.map((n): Row => ({ key: `n:${n.key}`, at: n.at, kind: "note", note: n })),
   ].sort((a, b) => a.at - b.at);
   $: earlier = showAll ? 0 : Math.max(0, rows.length - SHOWN);
   $: busy = helpers.filter((h) => running.has(h.id)).length + commands.filter((j) => j.running).length + steps.filter((s) => s.running).length;
@@ -126,6 +131,19 @@
           {#if detail(h, tone, $activity)}<span class="detail">{detail(h, tone, $activity)}</span>{/if}
         </span>
       </button>
+    {:else if r.kind === "note"}
+      {@const n = r.note}
+      {#if n.from}
+        <button class="info-line row quiet" use:tooltip={n.tip} on:click={() => dispatch("openSession", { id: n.from })}>
+          <Icon name="chat" size={12} />
+          <span class="info-v">{n.text}</span>
+        </button>
+      {:else}
+        <div class="info-line quiet" use:tooltip={n.tip}>
+          <i class="info-dot" />
+          <span class="info-v">{n.text}</span>
+        </div>
+      {/if}
     {:else}
       {@const j = r.job}
       <div class="info-line job" class:quiet={!j.running}>

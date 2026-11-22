@@ -11,6 +11,7 @@
   import { api, onRunEvent, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { folderName } from "./tabs";
+  import type { Notice } from "./turns";
   import ProjectMenu from "./ProjectMenu.svelte";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
@@ -33,6 +34,8 @@
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
+  /** The thread's notices and messages from other sessions. */
+  export let notices: Notice[] = [];
   export let width = 264;
   // Open or shut: the column animates its own width instead of mounting
   // in and out, so the thread never jumps.
@@ -225,7 +228,7 @@
     </InfoCard>
   {/if}
 
-  <RunningCard {session} {helpers} {running} {waiting} on:openSession />
+  <RunningCard {session} {helpers} {notices} {running} {waiting} on:openSession />
   </div>
 </aside>
 

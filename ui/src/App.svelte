@@ -40,7 +40,8 @@
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { artifactTab, displayTitle, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
-  import { activity, sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
+  import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
+  import { noticesOf } from "./lib/turns";
   import { splitQuotes } from "./lib/oldQuotes";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { freshNotice } from "./lib/notifyPrefs";
@@ -110,7 +111,6 @@
 
   let live = "";
   let liveReasoning = "";
-  let liveTodo: unknown = null;
   let liveArtifacts: Extract<UiEvent, { kind: "artifact" }>[] = [];
   let liveTools: LiveTool[] = [];
   let pending = "";
@@ -295,14 +295,8 @@
   $: mode = comp.mode;
   $: model = comp.model;
   $: streaming = !!shown && (working.has(shown) || closing === shown);
-  // Subagents of the session on screen that are still at work, with the
-  // step each is on, for the activity in its thread.
-  $: needsYou = new Set([...approvals, ...questions, ...requests].map((x) => x.session));
-  $: liveHelpers = shown
-    ? threads
-        .filter((t) => t.parent_id === shown && (working.has(t.id) || needsYou.has(t.id)))
-        .map((t) => ({ id: t.id, title: t.title || "Untitled", need: needsYou.has(t.id), step: $activity.get(t.id)?.label ?? "" }))
-    : [];
+  // The thread's notices and messages from other sessions, for the Running card.
+  $: notices = noticesOf(events, (id) => threads.find((t) => t.id === id)?.title || "Agent");
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -549,7 +543,6 @@
     pending = "";
     live = "";
     liveReasoning = "";
-    liveTodo = null;
     liveTools = [];
     liveArtifacts = [];
   }
@@ -1680,7 +1673,7 @@
       }
       return;
     }
-    // The working agent formatted a message for display (session.format_message).
+    // The session changed outside a step (a plan proposed): read it again.
     if (e.kind === "refreshed") {
       if (e.session !== shown) dropCachedThread(e.session);
       void renamed(e.session);
@@ -1689,7 +1682,6 @@
     }
     if (e.kind !== "context") act({ type: "activity", key: e.session });
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
-    if (e.kind === "tool_result" && e.name === "session.format_message" && e.ok && e.session === shown) void reload();
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
@@ -1702,8 +1694,6 @@
       if (!thinking && liveReasoning) liveReasoning += "\n\n";
       thinking = true;
       liveReasoning += e.text;
-    } else if (e.kind === "todo") {
-      liveTodo = e.todo;
     } else if (e.kind === "artifact") {
       liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
     } else if (e.kind === "tool_call") {
@@ -2204,15 +2194,12 @@
                   {events}
                   liveText={live}
                   {liveReasoning}
-                {liveTodo}
                   {liveArtifacts}
-                  plan={meta?.plan ?? null}
                   draft={meta?.status === "draft" ? { title: meta.title, brief: meta.brief ?? "" } : null}
                   draftStarting={sending}
                   on:startDraft={startDraft}
                   on:removeDraft={() => shown && void remove(shown)}
                   {liveTools}
-                  {liveHelpers}
                   {approval}
                   question={openQuestion}
                   {proposal}
@@ -2223,7 +2210,6 @@
                   session={shown ?? ""}
                   {folder}
                   provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
-                  sessionTitle={titleOf}
                   on:voted={(e) => settle(e.detail.key)}
                   on:answered={(e) => settle(e.detail.key)}
                   on:proposal={(e) => void answerProposal(e.detail.session)}
@@ -2264,7 +2250,8 @@
             running={working}
             {approvals}
             questions={asks}
-              width={infoWidth}
+            {notices}
+            width={infoWidth}
             open={infoShown}
             on:resize={resizeInfo}
             tokensIn={meta?.tokens_in ?? 0}
