@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SLIDE } from "./motion";
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -19,42 +19,29 @@
   import { formatTime } from "./time";
   import { viewImage } from "./imageViewer";
   import ReplyButtons from "./ReplyButtons.svelte";
-  import LiveActivity from "./LiveActivity.svelte";
-  import TodoList from "./TodoList.svelte";
   import DraftCard from "./DraftCard.svelte";
   import QuestionCard from "./QuestionCard.svelte";
   import ToolPictures, { picturesIn } from "./ToolPictures.svelte";
   import TestCard from "./TestCard.svelte";
   import { testRunOf, type TestRun } from "./testRuns";
-  import LiveLine from "./LiveLine.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
+  import { foldTurns, turnLabel, type Item } from "./turns";
 
   function when(at: number | undefined): string {
     if (!at) return "";
     return formatTime(at * 1000);
   }
 
-  function whenTitle(at: number | undefined): string {
-    if (!at) return "";
-    const d = new Date(at * 1000);
-    return d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  }
-
   export let events: ChatEvent[] = [];
   export let liveText = "";
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
-  export let liveHelpers: { id: string; title: string; need: boolean; step: string }[] = [];
   export let streaming = false;
   export let session = "";
-  export let liveTodo: unknown = null;
   export let liveArtifacts: { id: string; title: string; artifact_kind: string; version: number; payload: unknown }[] = [];
-  /** The session's saved plan (SessionMeta.plan). */
-  export let plan: unknown = null;
   /** Set when this session is a draft: it has not run yet. */
   export let draft: { title: string; brief: string } | null = null;
   export let draftStarting = false;
-  let todo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
   /** A plan the agent proposed, waiting on the session for an Accept. */
@@ -66,7 +53,6 @@
   $: if (!approval) rawOpen = false;
   export let folder = "";
   export let provider = "";
-  export let sessionTitle: (id: string) => string = () => "Another session";
 
   const dispatch = createEventDispatcher<{
     voted: { key: string };
@@ -102,7 +88,7 @@
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
     rate_limit: "Usage limit reached",
-    overloaded: "The service is overloaded. Wait a bit, then send again",
+    overloaded: "The service is overloaded",
     context_overflow: "The conversation is too long",
     bad_request: "The request didn't go through",
     process: "The agent's program stopped",
@@ -110,37 +96,14 @@
     unknown: "The turn failed",
   };
   const RETRYABLE = new Set(["rate_limit", "overloaded", "process", "session_lost", "unknown"]);
-  function compactedTitle(before?: number, after?: number): string {
-    const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
-    if (before && after) return `Conversation compacted · ${k(before)} → ${k(after)} tokens`;
-    if (before) return `Conversation compacted · was ${k(before)} tokens`;
-    return "Conversation compacted";
-  }
-
   function shortErr(message: string): string {
     const cut = message.search(/\s*\{[\s"]*"errorName"|\s*\{"errorName"|\s*\{"code"/);
     if (cut > 0) return `${message.slice(0, cut).trimEnd()}…`;
     return message.length > 400 ? `${message.slice(0, 400).trimEnd()}…` : message;
   }
 
-  function errLead(message: string): { lead: string; more: string } {
-    const text = shortErr(message);
-    const nl = text.indexOf("\n");
-    const end = nl > 0 && nl <= 160 ? nl : Math.min(text.length, 160);
-    if (end >= text.length) return { lead: text, more: "" };
-    return { lead: nl === end ? text.slice(0, end) : `${text.slice(0, end).trimEnd()}…`, more: text };
-  }
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
   const spring = { duration: SLIDE, easing: cubicOut };
-
-  type Item =
-    | { key: string; kind: "user" | "assistant" | "system"; text: string; at?: number }
-    | { key: string; kind: "checkpoint"; text: string; at?: number; before?: number; after?: number }
-    | { key: string; kind: "error"; class: string; message: string; at?: number }
-    | { key: string; kind: "inter"; from: string; text: string; at?: number }
-    | { key: string; kind: "widget"; fence: string; payload: unknown }
-    | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-    | { key: string; kind: "steps"; reasoning: string; tools: Step[] };
 
   let copied = "";
   let saved = "";
@@ -168,72 +131,28 @@
     visibleCount += WINDOW_STEP;
   }
 
-  type Fold = { key: string; tools: number; secs: number; live: boolean; only: string; stopped: boolean };
   let openFolds = new Set<string>();
-  $: folds = foldTurns(items, streaming, liveTools.length + (liveReasoning ? 1 : 0));
-
-  function foldTurns(items: Item[], streaming: boolean, liveWork: number) {
-    const before = new Map<string, Fold>();
-    const inside = new Map<string, string>();
-    let tail: Fold | null = null;
-    let live: Fold | null = null;
-    // A stop said by its turn's fold ("Stopped after 12s") is not said again.
-    const told = new Set<string>();
-    const users = items.flatMap((it, i) => (it.kind === "user" ? [i] : []));
-    const starts = [-1, ...users];
-    starts.forEach((u, n) => {
-      const end = n + 1 < starts.length ? starts[n + 1] : items.length;
-      const range = items.slice(u + 1, end);
-      const current = streaming && n === starts.length - 1;
-      let answer = -1;
-      range.forEach((it, i) => {
-        if (it.kind === "assistant") answer = i;
-      });
-      const work = range.filter((it, i) => {
-        if (it.kind === "steps") return true;
-        if (it.kind === "assistant" && i !== answer) {
-          let j = i + 1;
-          while (j < range.length && range[j].kind === "steps") j++;
-          if (range[j]?.kind === "artifact") return false;
-          return true;
-        }
-        if (it.kind === "system" && sysTone(it.text) === "line" && !isStop(it.text)) return true;
-        return false;
-      });
-      if (!work.length && !(current && liveWork)) return;
-      const opener = u >= 0 ? items[u] : null;
-      const times = [opener, ...range].map((it) => (it && "at" in it ? it.at ?? 0 : 0)).filter((t) => t > 0);
-      const fold: Fold = {
-        key: `fold-${opener?.key ?? "start"}`,
-        tools: work.reduce((sum, it) => sum + (it.kind === "steps" ? it.tools.length : 0), 0) + (current ? liveTools.length : 0),
-        secs: times.length > 1 ? Math.max(...times) - Math.min(...times) : 0,
-        live: current,
-        only: "",
-        stopped: false,
-      };
-      for (const it of range) {
-        if (it.kind === "system" && isStop(it.text)) {
-          fold.stopped = true;
-          told.add(it.key);
-        }
-      }
-      const steps = work.flatMap((it) => (it.kind === "steps" ? it.tools : []));
-      if (!current && work.length === 1 && steps.length === 1) fold.only = steps[0].label.trim();
-      if (current) live = fold;
-      for (const it of work) inside.set(it.key, fold.key);
-      if (range.length) before.set(range[0].key, fold);
-      else tail = fold;
-    });
-    return { before, inside, tail: tail as Fold | null, live: live as Fold | null, told };
+  $: folds = foldTurns(items, streaming ? { steps: liveTools.length } : null);
+  // The running turn's clock, from its message, or from when this window
+  // saw the run start.
+  let since = Date.now();
+  let now = since;
+  let tick: ReturnType<typeof setInterval> | undefined;
+  let clockFor = "";
+  $: if (streaming && !tick) {
+    since = now = Date.now();
+    tick = setInterval(() => (now = Date.now()), 1000);
+  } else if (!streaming && tick) {
+    clearInterval(tick);
+    tick = undefined;
   }
-
-  function foldLabel(f: Fold): string {
-    const spent = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
-    if (f.live) return f.tools ? `${f.tools} step${f.tools === 1 ? "" : "s"} so far` : "Thinking";
-    if (f.only && !f.stopped) return f.secs >= 1 ? `${f.only} · ${spent(f.secs)}` : f.only;
-    const head = f.stopped ? (f.secs >= 1 ? `Stopped after ${spent(f.secs)}` : "Stopped") : f.secs >= 1 ? `Worked for ${spent(f.secs)}` : "Worked";
-    return f.tools ? `${head} · ${f.tools} step${f.tools === 1 ? "" : "s"}` : head;
+  $: if (session !== clockFor) {
+    clockFor = session;
+    since = now = Date.now();
   }
+  onDestroy(() => clearInterval(tick));
+  const liveSecs = (start: number, at: number) => (at - (start ? start * 1000 : since)) / 1000;
+  $: liveWork = !!liveReasoning || liveTools.length > 0;
 
   function toggleFold(key: string) {
     openFolds = new Set(openFolds);
@@ -262,24 +181,6 @@
     for (const it of items) if (it.kind === "artifact") m.set(it.id, Math.max(m.get(it.id) ?? 0, it.version ?? 1));
     return m;
   })();
-  // Messages a small model set for display (math as LaTeX): by message number.
-  // The bubble shows that version; "Show as typed" brings back the original.
-  $: tidied = (() => {
-    const m = new Map<number, string>();
-    for (const e of events) {
-      if (e.kind === "widget" && e.fence === "parzi-tidy") {
-        const p = e.payload as { n?: number; text?: string };
-        if (typeof p?.n === "number" && typeof p.text === "string" && p.text.trim()) m.set(p.n, p.text);
-      }
-    }
-    return m;
-  })();
-  let asTyped = new Set<string>();
-  function toggleTyped(key: string) {
-    asTyped = new Set(asTyped);
-    if (asTyped.has(key)) asTyped.delete(key);
-    else asTyped.add(key);
-  }
   $: userNth = (() => {
     const m = new Map<string, number>();
     let n = 0;
@@ -288,13 +189,6 @@
     });
     return m;
   })();
-  // Live while the agent writes it, then the plan saved on the session;
-  // the transcript only for sessions from before plans were kept.
-  $: todo =
-    liveTodo ??
-    plan ??
-    [...items].reverse().find((i): i is Extract<typeof i, { kind: "widget" }> => i.kind === "widget" && i.fence === "parzi-todo")?.payload ??
-    null;
   $: replyAt = (() => {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
@@ -306,59 +200,11 @@
   $: lastError = [...items].reverse().find((i) => i.kind === "error")?.key;
   $: fix = provider ? nextStep($board.find((b) => b.provider === provider)) : null;
   $: fixWait = provider ? $setupWaits.get(provider) : undefined;
-  $: running = liveTools.filter((t) => t.running);
-  $: status = approval
-    ? "Needs your approval"
-    : question || proposal || request
-      ? "Waiting for your answer"
-      : !streaming
-        ? ""
-        : running.length && running[running.length - 1].label.trim()
-          ? `${running[running.length - 1].label}…`
-          : liveText
-            ? ""
-            : liveReasoning
-              ? "Thinking…"
-              : liveTools.length
-                ? "Working…"
-                : "Starting…";
-  $: activeTask = (((todo ?? {}) as { items?: { title: string; state: string }[] }).items ?? []).find((i) => i.state === "active")?.title ?? "";
-  // The step already shows in the activity above, so the line does not
-  // repeat it; it keeps the time, the tokens and what needs the person.
-  $: stepsShown = streaming && !!folds.live && !openFolds.has(folds.live.key) && (liveTools.length > 0 || !!liveSaid);
-  // Subagents still at work show even once this session's own turn is over.
-  $: activityShown = stepsShown || liveHelpers.length > 0;
-  $: lineText =
-    status && (approval || question || proposal || request || (running.length && !stepsShown))
-      ? status
-      : activeTask
-        ? `${activeTask}…`
-        : liveText
-          ? "Writing…"
-          : status || "Working…";
-  $: lineTokens = Math.round((liveText.length + liveReasoning.length) / 4);
-  $: showLiveSteps = !!liveReasoning || liveTools.length > 0;
-  // The last thing the agent said or thought while working, one short line.
-  $: liveSaid = (() => {
-    const last = liveReasoning.trim().split(/\n\s*\n/).pop()?.replace(/\s+/g, " ").trim() ?? "";
-    return last.length > 220 ? `${last.slice(0, 220)}…` : last;
-  })();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
   $: tailIdx = liveSegs.map((s) => s.kind).lastIndexOf("md");
   // Only the block being written is rendered again each frame; the page
   // patches just the blocks that changed (htmlBlocks).
   $: liveBlockHtml = tailIdx >= 0 ? liveHtml(String(liveSegs[tailIdx].body), $richReady) : [];
-
-  /** Folds a block away, closing the gap above it too (a plain slide
-   *  leaves the parent's gap and then jumps it shut). */
-  function foldAway(node: HTMLElement) {
-    const h = node.offsetHeight;
-    const gap = parseFloat(getComputedStyle(node.parentElement ?? node).rowGap) || 0;
-    return {
-      duration: 200,
-      css: (t: number) => `overflow: hidden; height: ${t * h}px; margin-top: ${(t - 1) * gap}px; opacity: ${t};`,
-    };
-  }
 
   function arg(args: unknown, ...keys: string[]): string {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -489,42 +335,21 @@
 ${e.text}` : e.text;
         return;
       }
-      if (e.kind === "tool_result") return;
+      // Notices, compactions and messages from other sessions are in the
+      // Running card; old plan, task and tidy cards are not shown.
+      if (e.kind === "tool_result" || e.kind === "checkpoint" || (e.kind === "widget" && UNSHOWN.has(e.fence))) return;
+      if (e.kind === "system" && !isStop(e.text)) return;
       group = null;
-      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary, at: e.at, before: e.before, after: e.after });
+      if (e.kind === "system") out.push({ key, kind: "stop", at: e.at });
       else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message, at: e.at });
       else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       else if (e.kind === "artifact") out.push({ key, ...e });
-      else if (e.kind === "assistant" && echoLine(e.text)) {
-        pushSys(key, out, echoLine(e.text), e.at);
-      } else if (e.kind === "system" && interOf(e.text)) {
-        const m = interOf(e.text)!;
-        out.push({ key, kind: "inter", from: m.from, text: m.body, at: e.at });
-      } else if (e.kind === "system") {
-        pushSys(key, out, e.text, e.at);
-      } else out.push({ key, kind: e.kind, text: e.text, at: e.at });
+      else if (e.kind === "assistant" && echoLine(e.text)) out.push({ key, kind: "echo", text: echoLine(e.text), at: e.at });
+      else out.push({ key, kind: e.kind, text: e.text, at: e.at });
     });
     return out;
   }
-
-  function pushSys(key: string, out: Item[], text: string, at?: number) {
-    const prev = out[out.length - 1];
-    if (prev?.kind === "system" && sysTone(prev.text) === "line" && sysTone(text) === "line") {
-      prev.text = `${prev.text} · ${text.trim()}`;
-      return;
-    }
-    out.push({ key, kind: "system", text, at });
-  }
-
-  function interOf(text: string): { from: string; body: string } | null {
-    if (!text.startsWith("parzi-inter:1")) return null;
-    try {
-      const m = JSON.parse(text.slice("parzi-inter:1".length));
-      return { from: sessionTitle(String(m.from_run ?? "")), body: String(m.body ?? "") };
-    } catch {
-      return null;
-    }
-  }
+  const UNSHOWN = new Set(["parzi-todo", "parzi-task", "parzi-tidy"]);
 
   function attachedImages(text: string): string[] {
     const m = /\[attached: ([^\]]+)\]/.exec(text);
@@ -533,14 +358,6 @@ ${e.text}` : e.text;
 
   function isStop(text: string): boolean {
     return /^stopped$/i.test(text.trim());
-  }
-
-  function sysTone(text: string): "line" | "block" {
-    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message|session\.send):|^stopped$/i.test(
-      text.trim(),
-    )
-      ? "line"
-      : "block";
   }
 
   function stripMarker(text: string): string {
@@ -672,16 +489,16 @@ ${e.text}` : e.text;
     {@const hidden = shut(item.key, openFolds)}
     {@const folded = folds.inside.has(item.key)}
     {#if fold}
-      <button class="fold" class:live={fold.live} aria-expanded={openFolds.has(fold.key)} on:click={() => toggleFold(fold.key)}>
-        <span class="fold-text">{foldLabel(fold)}</span>
-        <span class="chev" class:open={openFolds.has(fold.key)}><Icon name="chevDown" size={12} /></span>
+      {@const canOpen = fold.work || (fold.live && liveWork)}
+      <button class="fold" class:live={fold.live} disabled={!canOpen} aria-expanded={canOpen ? openFolds.has(fold.key) : undefined} on:click={() => toggleFold(fold.key)}>
+        <span class="fold-text">{turnLabel(fold, liveSecs(fold.start, now))}</span>
+        {#if canOpen}<span class="chev" class:open={openFolds.has(fold.key)}><Icon name="chevDown" size={12} /></span>{/if}
       </button>
     {/if}
-    {#if !(hidden && item.kind !== "steps")}
+    {#if !hidden || item.kind === "steps"}
       {#if item.kind === "user"}
         {@const images = attachedImages(item.text)}
         {@const said = splitQuotes(stripMarker(item.text))}
-        {@const tidyOf = tidied.get(userNth.get(item.key) ?? -1) ?? ""}
         {@const from = sideFrom(item.text)}
         <div class="row user">
           {#if from}<span class="side-from">Side session from {from}</span>{/if}
@@ -695,11 +512,6 @@ ${e.text}` : e.text;
             <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text })}>
               <Icon name="pencil" />
             </button>
-            {#if tidyOf}
-              <button class="copy" class:on={!asTyped.has(item.key)} use:tooltip={asTyped.has(item.key) ? "Show tidied" : "Show as typed"} on:click={() => toggleTyped(item.key)}>
-                <Icon name="spark" />
-              </button>
-            {/if}
             {#if userNth.has(item.key)}
               <button
                 class="copy"
@@ -710,7 +522,7 @@ ${e.text}` : e.text;
               </button>
             {/if}
             {#if said.text}
-              <div class="bubble msg">{@html mdHtml(tidyOf && !asTyped.has(item.key) ? tidyOf : said.text, $richReady)}</div>
+              <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
             {:else}
               <div class="quotes">{#each said.titles as t, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">{t}</span></span>{/each}</div>
             {/if}
@@ -736,8 +548,8 @@ ${e.text}` : e.text;
                 <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
               {:else if seg.kind === "widget"}
                 <Widget data={seg.body} />
-      {:else if seg.kind === "artifact"}
-        <ArtifactCard data={seg.body} inline />
+              {:else if seg.kind === "artifact"}
+                <ArtifactCard data={seg.body} inline />
               {:else if seg.kind === "viz"}
                 <Viz spec={seg.body} />
               {/if}
@@ -759,58 +571,34 @@ ${e.text}` : e.text;
           {/if}
         </div>
       {:else if item.kind === "steps"}
-        {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
-
-        <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
-        {@const tests = lastTestRun(item.tools)}
-        {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
-      {:else if item.kind === "checkpoint"}
-        <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
-      {:else if item.kind === "system" && !folds.told.has(item.key)}
-        {#if sysTone(item.text) === "line"}
-          <div class="sysline" class:in-fold={folded} title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
-        {:else}
-          <div class="system" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
-        {/if}
-      {:else if item.kind === "inter"}
-        <div class="inter" title={whenTitle(item.at)}>
-          <span class="inter-from">From {item.from}</span>
-          <span class="inter-body">{item.text.slice(0, 2000)}</span>
-        </div>
-      {:else if item.kind === "error"}
-        {@const msg = errLead(item.message)}
-        {@const reset = item.class === "rate_limit" ? resetLine(provider, $board) : ""}
-        <div class="turn-error" role="alert" title={whenTitle(item.at)}>
-          <div class="err-head">
-            <span class="err-dot" aria-hidden="true" />
-            <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
-            {#if reset}<span class="err-when">{reset.replace(/\.$/, "")}</span>{/if}
+        {#if !hidden}
+          {@const tests = lastTestRun(item.tools)}
+          <div class="work in-fold">
+            <Steps reasoning={item.reasoning} tools={item.tools} />
+            {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
           </div>
-          <span class="err-msg">{msg.lead}</span>
-          {#if msg.more}
-            <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
-          {/if}
+        {/if}
+        <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
+      {:else if item.kind === "echo"}
+        <div class="echo in-fold">{item.text}</div>
+      {:else if item.kind === "error"}
+        {@const reset = item.class === "rate_limit" ? resetLine(provider, $board) : ""}
+        <div class="turn-error" role="alert" use:tooltip={shortErr(item.message)}>
+          <span class="err-dot" aria-hidden="true" />
+          <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
+          <span class="err-msg">{reset ? reset.replace(/\.$/, "") : shortErr(item.message)}</span>
           {#if item.key === lastError && !streaming}
-            {#if fix || fixWait}
-              <div class="err-fix">
-                {#if fixWait}
-                  <span class="err-hint">{fixWait.note}</span>
-                {:else if fix}
-                  <button class="btn" on:click={() => fix?.run(provider)}>{fix.label}</button>
-                  <span class="err-hint">Then try again.</span>
-                {/if}
-              </div>
+            {#if fixWait}
+              <span class="err-msg">{fixWait.note}</span>
+            {:else if fix}
+              <button class="btn sm" on:click={() => fix?.run(provider)}>{fix.label}</button>
             {:else if item.class === "context_overflow"}
-              <div class="err-fix"><button class="btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
-            {:else if item.class === "context_overflow"}
-              <span class="err-hint">Start a new session to go on.</span>
+              <button class="btn sm" on:click={() => dispatch("compact")}>Compact</button>
             {:else if item.class === "rate_limit"}
-              <div class="err-fix">
-                <button class="btn sm primary" use:tooltip={"Pick another model; it carries on this thread"} on:click={() => dispatch("pickModel")}>Switch model</button>
-                <button class="btn sm" on:click={() => dispatch("retry")}>Try again</button>
-              </div>
+              <button class="btn sm primary" on:click={() => dispatch("pickModel")}>Switch model</button>
+              <button class="btn sm" on:click={() => dispatch("retry")}>Try again</button>
             {:else if RETRYABLE.has(item.class)}
-              <div class="err-fix"><button class="btn" on:click={() => dispatch("retry")}>Try again</button></div>
+              <button class="btn sm" on:click={() => dispatch("retry")}>Try again</button>
             {/if}
           {/if}
         </div>
@@ -819,38 +607,27 @@ ${e.text}` : e.text;
           <Widget data={item.payload} />
         {:else if item.fence === "viz"}
           <Viz spec={item.payload} />
-        <!-- parzi-task is an old suggested-session card (drafts replaced it): not shown. -->
-        {:else if item.fence !== "parzi-replies" && item.fence !== "parzi-todo" && item.fence !== "parzi-task" && item.fence !== "parzi-tidy"}
+        {:else if item.fence !== "parzi-replies"}
           <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
         {/if}
-    {:else if item.kind === "artifact"}
-      {#if (item.version ?? 1) >= (newest.get(item.id) ?? 0)}
-        <ArtifactCard
-          data={item.payload}
-          fallbackId={item.id}
-          fallbackTitle={item.title}
-          fallbackKind={item.artifact_kind}
-          inline
-        />
-      {/if}
+      {:else if item.kind === "artifact"}
+        {#if (item.version ?? 1) >= (newest.get(item.id) ?? 0)}
+          <ArtifactCard data={item.payload} fallbackId={item.id} fallbackTitle={item.title} fallbackKind={item.artifact_kind} inline />
         {/if}
+      {/if}
     {/if}
   {/each}
 
   {#if folds.tail}
-    <button class="fold live" aria-expanded={openFolds.has(folds.tail.key)} on:click={() => folds.tail && toggleFold(folds.tail.key)}>
-      <span class="fold-text">{foldLabel(folds.tail)}</span>
-      <span class="chev" class:open={openFolds.has(folds.tail.key)}><Icon name="chevDown" size={12} /></span>
+    {@const tail = folds.tail}
+    {@const canOpen = tail.work || (tail.live && liveWork)}
+    <button class="fold" class:live={tail.live} disabled={!canOpen} aria-expanded={canOpen ? openFolds.has(tail.key) : undefined} on:click={() => toggleFold(tail.key)}>
+      <span class="fold-text">{turnLabel(tail, liveSecs(tail.start, now))}</span>
+      {#if canOpen}<span class="chev" class:open={openFolds.has(tail.key)}><Icon name="chevDown" size={12} /></span>{/if}
     </button>
   {/if}
 
-  {#if activityShown}
-    <div transition:fade|local={spring}>
-      <LiveActivity shown={2} tools={stepsShown ? liveTools : []} said={stepsShown ? liveSaid : ""} helpers={liveHelpers} on:open={(e) => dispatch("openSession", e.detail)} />
-    </div>
-  {/if}
-
-  {#if showLiveSteps && folds.live && openFolds.has(folds.live.key)}
+  {#if liveWork && folds.live && openFolds.has(folds.live.key)}
     <div class="in-fold" transition:fade|local={spring}>
       <Steps reasoning={liveReasoning} tools={liveTools} />
     </div>
@@ -878,16 +655,12 @@ ${e.text}` : e.text;
     </div>
   {/if}
 
-    {#each liveArtifacts.filter((a) => a.version > (newest.get(a.id) ?? 0)) as a (a.id)}
+  {#each liveArtifacts.filter((a) => a.version > (newest.get(a.id) ?? 0)) as a (a.id)}
     {#key a.version}
       <ArtifactCard data={a.payload} fallbackId={a.id} fallbackTitle={a.title} fallbackKind={a.artifact_kind} inline />
     {/key}
   {/each}
 
-  {#if todo}<TodoList {todo} working={streaming} />{/if}
-  <!-- Folds away rather than vanishing, so the reply above glides the last
-       few pixels as the saved message's actions take its place. -->
-  {#if streaming}<div class="live-slot" out:foldAway|local><LiveLine text={lineText} tokens={lineTokens} /></div>{/if}
   {#if !streaming && replyAt >= 0}
     {@const offer = items[replyAt]}
     {#if offer.kind === "widget"}
@@ -988,8 +761,11 @@ ${e.text}` : e.text;
     font-size: var(--fs-sm);
     cursor: pointer;
   }
-  .fold:hover {
+  .fold:hover:not(:disabled) {
     color: var(--text);
+  }
+  .fold:disabled {
+    cursor: default;
   }
   .fold.live .fold-text {
     animation: breathe 1.6s ease-in-out infinite;
@@ -1006,6 +782,17 @@ ${e.text}` : e.text;
     margin-left: var(--space);
     padding-left: calc(var(--space) * 4);
     border-left: 1px solid var(--line);
+  }
+  .work {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 2);
+  }
+  .echo {
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    overflow-wrap: anywhere;
   }
   .side-from {
     margin-bottom: var(--space);
@@ -1131,7 +918,7 @@ ${e.text}` : e.text;
     transition: opacity var(--dur) ease;
   }
   .row:hover .copy,
-  .copy:focus-visible {
+  .row:focus-within .copy {
     opacity: 1;
   }
   .when {
@@ -1144,65 +931,23 @@ ${e.text}` : e.text;
     transition: opacity var(--dur) ease;
     cursor: default;
   }
-  .row:hover .when {
+  .row:hover .when,
+  .row:focus-within .when {
     opacity: 1;
   }
   .copy:hover {
     background: var(--line);
     color: var(--text);
   }
-  .system {
-    font-family: var(--mono);
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  /* A turn's end said in a line ("Stopped", "Asked the user: …"): the
-     same small, quiet type as the fold above it. */
-  .sysline {
-    min-height: var(--h-sm);
-    display: flex;
-    align-items: center;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .inter {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-    padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    background: var(--surface);
-    border: 1px solid var(--edge);
-    -webkit-backdrop-filter: var(--blur);
-    backdrop-filter: var(--blur);
-    border-radius: var(--radius);
-    font-size: var(--fs-sm);
-  }
-  .inter-from {
-    font-weight: 600;
-    color: var(--muted);
-  }
-  .inter-body {
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  /* A failed turn is a card like the rest: the surface, no red frame. A
-     dot carries the colour; the reset time sits on the title row. */
+  /* A failed turn is one line: what went wrong, why in short, and the
+     button that goes on. The whole message is in its tooltip. */
   .turn-error {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-    padding: calc(var(--space) * 3);
-    background: var(--surface);
-    border: 1px solid var(--edge);
-    -webkit-backdrop-filter: var(--blur);
-    backdrop-filter: var(--blur);
-    border-radius: var(--radius);
-    font-size: var(--fs-sm);
-  }
-  .err-head {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
+    min-width: 0;
+    min-height: var(--h-sm);
+    font-size: var(--fs-sm);
   }
   .err-dot {
     width: 6px;
@@ -1212,44 +957,19 @@ ${e.text}` : e.text;
     background: var(--bad);
   }
   .err-class {
-    font-size: var(--fs-md);
-    font-weight: 600;
-  }
-  .err-when {
-    margin-left: auto;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
+    flex: none;
+    font-weight: 500;
   }
   .err-msg {
-    color: var(--muted);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .err-hint {
-    color: var(--muted);
-    font-size: var(--fs-sm);
-  }
-  .err-more summary {
-    cursor: pointer;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--muted);
   }
-  .err-more pre {
-    max-height: 160px;
-    margin: var(--space) 0 0;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
-    color: var(--muted);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .err-fix {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    margin-top: calc(var(--space) * 2);
-  }
-  .err-fix .btn.sm {
+  .turn-error .btn.sm {
+    flex: none;
     align-self: auto;
   }
 
@@ -1360,10 +1080,6 @@ ${e.text}` : e.text;
     background: var(--line);
     border-color: transparent;
     color: var(--text);
-  }
-  .live-slot {
-    display: flex;
-    flex-direction: column;
   }
   .earlier {
     align-self: center;

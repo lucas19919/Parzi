@@ -12,7 +12,7 @@
 
 {#if replies.length}
   <div class="replies">
-    {#if p.question}<div class="q t-section">{p.question}</div>{/if}
+    {#if p.question}<div class="q">{p.question}</div>{/if}
     <div class="row">
       {#each replies as r, i (i)}
         <button class="btn" class:primary={i === 0} on:click={() => dispatch("reply", { text: r.message || r.label })}>{r.label}</button>
@@ -25,8 +25,11 @@
   .replies {
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 2);
-    margin: var(--space) 0 var(--space);
+    gap: var(--space);
+  }
+  .q {
+    color: var(--muted);
+    font-size: var(--fs-sm);
   }
   .row {
     display: flex;
@@ -34,8 +37,8 @@
     gap: calc(var(--space) * 2);
   }
   button {
-    height: 30px;
-    padding: 0 calc(var(--space) * 4);
+    height: var(--h-sm);
+    padding: 0 calc(var(--space) * 3);
     font-size: var(--fs-sm);
   }
 </style>
