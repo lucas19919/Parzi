@@ -80,13 +80,8 @@
     {#if summary}
       <button class="pin targets" use:tooltip={targetsTip} on:click={openPlan}>
         <Icon name="project" size={12} />
-        <span class="text">
-          {#each summary.open as t, i}
-            {#if i}<span class="sep">·</span>{/if}
-            {#if t.working}<i class="working" aria-label="Being worked on" />{/if}{t.title}
-          {/each}
-          {#if summary.done}{#if summary.open.length}<span class="sep">·</span>{/if}<span class="done">{summary.done} done</span>{/if}
-        </span>
+        {#if summary.open.some((t) => t.working)}<i class="working" aria-label="Being worked on" />{/if}
+        <span class="text">{summary.done}/{summary.done + summary.open.length}</span>
       </button>
     {/if}
   </div>
@@ -139,9 +134,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .sep {
-    margin: 0 var(--space);
   }
   .working {
     display: inline-block;

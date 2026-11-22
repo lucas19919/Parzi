@@ -193,18 +193,23 @@
         {streaming}
         on:compact={() => dispatch("compact")}
       />
-    {:else if contextUsed > 0}
-      <div class="info-line"><span class="info-v">{tokenCount(contextUsed)} tokens used</span></div>
-      <div class="info-line quiet"><span class="info-v">{agent || "The agent"} hasn't said how big its window is</span></div>
     {:else}
-      <div class="info-line quiet"><span class="info-v">Shows once {agent || "the agent"} replies</span></div>
+      <div class="info-line">
+        <span class="info-v">Used</span>
+        <span class="pct" class:quiet={!contextUsed}>{contextUsed ? tokenCount(contextUsed) : "—"}</span>
+      </div>
     {/if}
   </InfoCard>
 
-  {#if provider}
+  <!-- Plan limits as rows; no prose. Claude and Codex show their windows
+       empty until read; an agent with no plan limits has no card. -->
+  {#if provider && (onKey || limits.length || READS_LIMITS.has(provider))}
     <InfoCard id="usage" title="Usage">
-      <svelte:fragment slot="aside">{agent}{onKey ? " · API key" : ""}</svelte:fragment>
-      {#if limits.length && !onKey}
+      <svelte:fragment slot="aside">{onKey ? "API key" : agent}</svelte:fragment>
+      {#if onKey}
+        <div class="info-line"><span class="info-v">Tokens</span><span class="pct">{tokenCount(tokensIn + tokensOut)}</span></div>
+        <div class="info-line"><span class="info-v">Cost</span><span class="pct">${costUsd.toFixed(2)}</span></div>
+      {:else if limits.length}
         {#each limits as w (w.label)}
           <div class="info-line">
             <span class="info-v">{w.label}</span>
@@ -213,17 +218,9 @@
           </div>
         {/each}
       {:else}
-        {#if tokensIn || tokensOut}
-          <div class="info-line"><span class="info-v">{tokenCount(tokensIn)} in · {tokenCount(tokensOut)} out this session</span></div>
-        {:else}
-          <div class="info-line quiet"><span class="info-v">Nothing used in this session yet</span></div>
-        {/if}
-        {#if costUsd > 0}<div class="info-line"><span class="info-v">${costUsd.toFixed(2)} this session</span></div>{/if}
-        {#if !onKey}
-          <div class="info-line quiet">
-            <span class="info-v">{READS_LIMITS.has(provider) ? "Plan limits not read yet" : `${agent} doesn't report its plan limits`}</span>
-          </div>
-        {/if}
+        {#each ["Session", "Weekly"] as label (label)}
+          <div class="info-line"><span class="info-v">{label}</span><span class="pct quiet">—</span></div>
+        {/each}
       {/if}
     </InfoCard>
   {/if}
