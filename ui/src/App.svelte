@@ -603,6 +603,7 @@
     // The tab this load is for: switching to a page tab doesn't bump navSeq,
     // so a late reply must also check the tab is still the one in front.
     const at = activeId;
+    const targetTab = tabs.find((t) => t.id === at);
     shown = id;
     if (unseen[id]) unseen = Object.fromEntries(Object.entries(unseen).filter(([k]) => k !== id));
     clearLive();
@@ -611,13 +612,19 @@
       meta = cached.meta;
       showStored(id, cached.events);
       context = { used: cached.meta.context_tokens ?? 0, limit: cached.meta.context_limit ?? 0 };
-      if (cached.meta.model) {
-        tab.composer.model = cached.meta.model;
+      if (targetTab && targetTab.sessionId === id && cached.meta.model) {
+        targetTab.composer.model = cached.meta.model;
         comp = comp;
       }
       noteThreads([cached.meta]);
-      if (tab.sessionId === id && cached.meta.title) patchTab(tab.id, { title: cached.meta.title });
+      if (targetTab && targetTab.sessionId === id && cached.meta.title) {
+        patchTab(targetTab.id, { title: cached.meta.title });
+      }
       void scrollToBottom();
+    } else {
+      meta = null;
+      showStored(id, []);
+      context = { used: 0, limit: 0 };
     }
     try {
       const [m, ev] = await api.getThread(id);
@@ -627,12 +634,15 @@
       meta = m;
       if (changed) showStored(id, ev);
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      if (m.model) {
-        tab.composer.model = m.model;
+      const currentTab = tabs.find((t) => t.id === at);
+      if (currentTab && currentTab.sessionId === id && m.model) {
+        currentTab.composer.model = m.model;
         comp = comp;
       }
       noteThreads([m]);
-      if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
+      if (currentTab && currentTab.sessionId === id && m.title) {
+        patchTab(currentTab.id, { title: m.title });
+      }
       if (changed) await scrollToBottom();
     } catch (e) {
       if (my === navSeq) toastError(e);
@@ -1163,7 +1173,6 @@
       });
       act({ type: "started", key, sid });
       rememberModel(draft.model, draft.effort);
-      clearDraft();
       if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || "New session").slice(0, 40) });
       else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
@@ -1180,7 +1189,7 @@
       }
       // What failed goes back to the composer, unless the person is
       // already typing something else there.
-      if (!given || (!draft.input.trim() && !draft.attachments.length)) {
+      if (!draft.input.trim() && !draft.attachments.length) {
         draft.input = prompt;
         draft.attachments = files;
         comp = comp;

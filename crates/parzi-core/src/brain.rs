@@ -1438,7 +1438,9 @@ fn note_path(path: &str) -> Result<String> {
 
 fn confined(root: &Path, full: &Path) -> bool {
     let Ok(base) = std::fs::canonicalize(root) else {
-        return true;
+        return std::fs::symlink_metadata(root)
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            && full.starts_with(root);
     };
     full.ancestors()
         .find_map(|a| std::fs::canonicalize(a).ok())

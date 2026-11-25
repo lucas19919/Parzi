@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -97,19 +97,47 @@ impl Provider for Claude {
         }
         // An expired token is renewed by Claude Code itself, which a quick
         // `claude auth status` makes it do; Parzi never writes its sign-in.
-        let token = match oauth_token() {
-            Some(t) => t,
-            None => {
-                let program = self.program()?;
-                let env = agent_env(ID, self.billing);
-                let _ = process::output(&program, &["auth", "status"], 30, &env).await;
-                oauth_token()?
-            }
-        };
-        tokio::task::spawn_blocking(move || plan_usage(&token))
+        let mut refreshed = false;
+        let token = match tokio::task::spawn_blocking(oauth_token)
             .await
             .ok()
             .flatten()
+        {
+            Some(t) => t,
+            None => {
+                refreshed = true;
+                let program = self.program()?;
+                let env = agent_env(ID, self.billing);
+                let _ = process::output(&program, &["auth", "status"], 30, &env).await;
+                tokio::task::spawn_blocking(oauth_token)
+                    .await
+                    .ok()
+                    .flatten()?
+            }
+        };
+        match tokio::task::spawn_blocking(move || plan_usage(&token))
+            .await
+            .ok()?
+        {
+            UsageFetch::Ok(windows) => Some(windows),
+            UsageFetch::Unauthorized if !refreshed => {
+                let program = self.program()?;
+                let env = agent_env(ID, self.billing);
+                let _ = process::output(&program, &["auth", "status"], 30, &env).await;
+                let fresh = tokio::task::spawn_blocking(oauth_token)
+                    .await
+                    .ok()
+                    .flatten()?;
+                match tokio::task::spawn_blocking(move || plan_usage(&fresh))
+                    .await
+                    .ok()?
+                {
+                    UsageFetch::Ok(windows) => Some(windows),
+                    UsageFetch::Unauthorized | UsageFetch::Unavailable => None,
+                }
+            }
+            UsageFetch::Unauthorized | UsageFetch::Unavailable => None,
+        }
     }
 
     async fn run_turn(
@@ -451,6 +479,7 @@ struct Link {
     stdin: Mutex<Option<Box<dyn AsyncWrite + Send + Unpin>>>,
     waiters: Waiters,
     counter: AtomicU64,
+    closed: AtomicBool,
 }
 
 struct Waiting<'a> {
@@ -476,6 +505,7 @@ impl Link {
             stdin: Mutex::new(Some(Box::new(writer))),
             waiters: std::sync::Mutex::new(HashMap::new()),
             counter: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
         });
         let (tx, rx) = mpsc::unbounded_channel();
         let reading = link.clone();
@@ -548,6 +578,11 @@ impl Link {
             waiters: &self.waiters,
             id: &id,
         };
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ProviderError::process(format!(
+                "Claude Code exited during {subtype}"
+            )));
+        }
         self.send(&json!({"type": "control_request", "request_id": id, "request": request}))
             .await?;
         match tokio::time::timeout(limit, rx).await {
@@ -587,6 +622,7 @@ impl Link {
     }
 
     fn fail_all(&self) {
+        self.closed.store(true, Ordering::Release);
         if let Ok(mut w) = self.waiters.lock() {
             w.clear();
         }
@@ -1106,22 +1142,59 @@ fn keychain_credentials() -> Option<String> {
     None
 }
 
+enum UsageFetch {
+    Ok(Vec<UsageWindow>),
+    Unauthorized,
+    Unavailable,
+}
+
 /// What Claude Code's `/usage` shows: the plan's 5-hour and weekly windows
 /// (and any model-only weekly ones), from Anthropic's usage endpoint for
 /// signed-in Claude Code. The endpoint is not public API, so anything
 /// unexpected reads as no answer rather than an error.
-fn plan_usage(token: &str) -> Option<Vec<UsageWindow>> {
-    let mut reply = ureq::get("https://api.anthropic.com/api/oauth/usage")
+fn plan_usage(token: &str) -> UsageFetch {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .into();
+    let mut reply = match agent
+        .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", &format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .header("User-Agent", "claude-code")
         .call()
-        .map_err(|e| tracing::debug!("Claude usage was not read: {e}"))
-        .ok()?;
-    let text = reply.body_mut().read_to_string().ok()?;
-    let v: Value = serde_json::from_str(&text).ok()?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!("Claude usage was not read: {e}");
+            return UsageFetch::Unavailable;
+        }
+    };
+    let status = reply.status().as_u16();
+    if status == 401 {
+        return UsageFetch::Unauthorized;
+    }
+    if !(200..300).contains(&status) {
+        return UsageFetch::Unavailable;
+    }
+    let Ok(text) = reply
+        .body_mut()
+        .with_config()
+        .limit(512 * 1024)
+        .read_to_string()
+    else {
+        return UsageFetch::Unavailable;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
+        return UsageFetch::Unavailable;
+    };
     let windows = oauth_windows(&v);
-    (!windows.is_empty()).then_some(windows)
+    if windows.is_empty() {
+        UsageFetch::Unavailable
+    } else {
+        UsageFetch::Ok(windows)
+    }
 }
 
 fn oauth_windows(v: &Value) -> Vec<UsageWindow> {

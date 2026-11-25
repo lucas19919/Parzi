@@ -4,7 +4,7 @@
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
-  import { mdHtml, richReady } from "./md";
+  import { fenced, mdHtml, richReady } from "./md";
   import type { Step } from "./live";
 
   export let reasoning = "";
@@ -59,7 +59,7 @@
           {/if}
         </button>
         {#if t.output && shown.has(t.id)}
-          <div class="output">{@html mdHtml("```text\n" + t.output.slice(0, 6000) + "\n```", $richReady)}</div>
+          <div class="output">{@html mdHtml(fenced(t.output.slice(0, 6000), "text"), $richReady)}</div>
         {/if}
       {/each}
     </div>

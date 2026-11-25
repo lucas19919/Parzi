@@ -5,7 +5,7 @@
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { handleLinkClick } from "./links";
-  import { codeBlockClick, htmlBlocks, liveHtml, mdHtml, richReady, splitSegments } from "./md";
+  import { codeBlockClick, fenced, htmlBlocks, liveHtml, mdHtml, richReady, splitSegments } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Viz from "./viz/Viz.svelte";
@@ -112,12 +112,14 @@
   $: items = buildItems(events);
   // Large sessions (hundreds of steps/messages) render the recent tail first so
   // switching sessions stays instant; older history loads on demand.
+  let openFolds = new Set<string>();
   const WINDOW_STEP = 80;
   let visibleCount = WINDOW_STEP;
   let prevSession = "";
   $: if (session !== prevSession) {
     prevSession = session;
     visibleCount = WINDOW_STEP;
+    openFolds = new Set();
   }
   $: windowStart = (() => {
     if (items.length <= visibleCount + 12) return 0;
@@ -131,7 +133,6 @@
     visibleCount += WINDOW_STEP;
   }
 
-  let openFolds = new Set<string>();
   $: folds = foldTurns(items, streaming ? { steps: liveTools.length } : null);
   // The running turn's clock, from its message, or from when this window
   // saw the run start.
@@ -197,7 +198,7 @@
     }
     return -1;
   })();
-  $: lastError = [...items].reverse().find((i) => i.kind === "error")?.key;
+  $: lastError = items.length && items[items.length - 1].kind === "error" ? items[items.length - 1].key : undefined;
   $: fix = provider ? nextStep($board.find((b) => b.provider === provider)) : null;
   $: fixWait = provider ? $setupWaits.get(provider) : undefined;
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
@@ -608,7 +609,7 @@ ${e.text}` : e.text;
         {:else if item.fence === "viz"}
           <Viz spec={item.payload} />
         {:else if item.fence !== "parzi-replies"}
-          <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
+          <div class="msg">{@html mdHtml(fenced(JSON.stringify(item.payload, null, 2), item.fence), $richReady)}</div>
         {/if}
       {:else if item.kind === "artifact"}
         {#if (item.version ?? 1) >= (newest.get(item.id) ?? 0)}

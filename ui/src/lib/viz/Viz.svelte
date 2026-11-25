@@ -54,7 +54,12 @@
   $: target = real ? numbersOf(real) : [];
   $: s = real ? withNumbers(real, $nums.length === target.length ? $nums : target, $grow) : null;
 
+  const SEEN_MAX = 400;
   function reveal() {
+    if (seen.size >= SEEN_MAX) {
+      const oldest = seen.values().next().value;
+      if (oldest !== undefined) seen.delete(oldest);
+    }
     seen.add(key);
     waiting = false;
     rising = true;
@@ -82,7 +87,7 @@
 </script>
 
 {#if s}
-  <figure bind:this={figure} class="viz" class:waiting class:rising data-viz={s.type} aria-label={!title ? title || undefined : undefined}>
+  <figure bind:this={figure} class="viz" class:waiting class:rising data-viz={s.type} aria-label={!title ? `${s.type} chart` : undefined}>
     {#if title}<figcaption class="t-section">{title}</figcaption>{/if}
     {#if s.type === "stat"}
       <div class="stats">

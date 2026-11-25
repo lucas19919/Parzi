@@ -78,18 +78,30 @@
     if (await api.shellKill(session, j.id).catch(() => false)) void load();
   }
 
+  let loadTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleLoad() {
+    if (loadTimer) return;
+    loadTimer = setTimeout(() => {
+      loadTimer = undefined;
+      void load();
+    }, 250);
+  }
+
   onMount(() => {
     let tick = 0;
     const timer = setInterval(() => {
+      if (document.hidden || busy === 0) return;
       now = Date.now();
       if (commands.some((j) => j.running) && ++tick % 2 === 0) void load();
     }, 1000);
     const un = onRunEvent((e) => {
       if (e.session !== session) return;
-      if (e.kind === "tool_call" || e.kind === "tool_result" || e.kind === "done" || e.kind === "error") void load();
+      if (e.kind === "done" || e.kind === "error") void load();
+      else if (e.kind === "tool_call" || e.kind === "tool_result") scheduleLoad();
     });
     return () => {
       clearInterval(timer);
+      if (loadTimer) clearTimeout(loadTimer);
       un.then((f) => f()).catch(() => {});
     };
   });
@@ -99,7 +111,7 @@
 {#if rows.length}
 <InfoCard id="running" title="Running">
   <svelte:fragment slot="aside">{busy ? `${busy} running` : ""}</svelte:fragment>
-  {#if earlier || showAll}
+  {#if earlier || (showAll && rows.length > SHOWN)}
     <button class="info-line row quiet" aria-expanded={showAll} on:click={() => (showAll = !showAll)}>
       <span class="chev" class:open={showAll}><Icon name="chevDown" size={12} /></span>
       <span class="info-v">{showAll ? "Show fewer" : `${earlier} earlier`}</span>

@@ -33,7 +33,7 @@
   import ResizeGrip from "./ResizeGrip.svelte";
   import { api, brain } from "./api";
   import { saveFile } from "./saveFile";
-  import { codeBlockClick, mdHtml, richReady } from "./md";
+  import { codeBlockClick, fenced, mdHtml, richReady } from "./md";
   import { handleLinkClick } from "./links";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
@@ -69,12 +69,6 @@
   $: markdown = !!doc && (doc.kind === "markdown" || doc.kind === "md");
   $: image = !!doc && doc.kind === "image";
   $: diff = !!doc && doc.kind === "diff";
-  /** A code fence longer than any backtick run inside, so nothing closes it early. */
-  function fenced(text: string, lang: string): string {
-    const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((r) => r.length));
-    const fence = "`".repeat(longest + 1);
-    return `${fence}${lang}\n${text.replace(/\n$/, "")}\n${fence}`;
-  }
   // A file's id is its absolute path, a note's id its vault path.
   $: revealable = !!doc && /[\\/]/.test(doc.id);
   $: onDisk = !!doc && ABSOLUTE.test(doc.id);

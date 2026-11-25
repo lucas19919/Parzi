@@ -31,7 +31,7 @@
   const PHONE_IDS: PhoneId[] = ["iphone", "android", "duo"];
   let roomW = 0;
   let roomH = 0;
-  $: phone = devices && device !== "laptop" ? phoneFor(device, closed) : null;
+  $: phone = !immersive && devices && device !== "laptop" ? phoneFor(device, closed) : null;
   $: view = phone ? viewport(phone) : null;
   $: fit = phone ? phoneFit(phone, { width: roomW, height: roomH }) : 1;
   $: screenBg = tab.bg || "rgb(255, 255, 255)";
@@ -48,8 +48,15 @@
     clearTimeout(emulateTimer);
     if (key === emulated) return;
     emulateTimer = setTimeout(() => {
-      emulated = key;
-      api.browserEmulate(id, d).catch((e) => dispatch("error", { text: String(e) }));
+      api
+        .browserEmulate(id, d)
+        .then(() => {
+          if (wanted === key) emulated = key;
+        })
+        .catch((e) => {
+          if (wanted === key) wanted = emulated;
+          dispatch("error", { text: String(e) });
+        });
     }, 150);
   }
   onMount(() => () => clearTimeout(emulateTimer));
@@ -250,9 +257,12 @@
     else if (yes && p.url) dispatch("openTab", { url: p.url });
   }
 
+  let stage: HTMLDivElement | null = null;
+
   onMount(() => {
     const ro = new ResizeObserver(schedule);
     if (slot) ro.observe(slot);
+    if (stage) ro.observe(stage);
     window.addEventListener("resize", schedule);
     if (!url) void focusAddress();
     return () => {
@@ -362,7 +372,7 @@
       <SuggestList rows={$suggest.rows} active={$suggest.active} typed={$suggest.typed} on:pick={(e) => pick(e.detail.row)} on:hover={(e) => suggest.hover(e.detail.index)} />
     </div>
   {/if}
-  <div class="stage" class:framed={!!phone} bind:clientWidth={roomW} bind:clientHeight={roomH}>
+  <div class="stage" class:framed={!!phone} bind:this={stage} bind:clientWidth={roomW} bind:clientHeight={roomH}>
   <PhoneFrame {phone} {fit} bg={screenBg}>
   <div
     class="slot"

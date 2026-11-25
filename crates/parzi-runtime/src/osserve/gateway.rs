@@ -103,12 +103,12 @@ fn needs(op: &str, req: &Value) -> Scope {
         // Approving every tool of a run at once is the person's call alone.
         "session.send" if req.get("yes").and_then(Value::as_bool) == Some(true) => Scope::Admin,
         "session.send" | "session.kill" | "session.fork" | "session.rename" | "session.compact"
-        | "approval.answer" | "question.answer" | "mirror.adopt" | "project.folder" => {
-            Scope::Operate
-        }
+        | "approval.answer" | "question.answer" | "mirror.adopt" => Scope::Operate,
         _ => Scope::Admin,
     }
 }
+
+const MAX_INFLIGHT: usize = 16;
 
 pub(super) struct Gateway {
     pub addr: SocketAddr,
@@ -227,13 +227,19 @@ async fn connection(sock: TcpStream, state: Arc<State>) -> Result<(), String> {
             .unwrap_or("")
             .to_string();
         let req = Value::Object(req);
+        let Some(current) = devices::verify_id(&device.id) else {
+            let _ = tx
+                .send(json!({ "rid": rid, "ok": false, "error": "this device was unpaired" }))
+                .await;
+            break;
+        };
         let need = needs(&op, &req);
-        if device.scope < need {
+        if current.scope < need {
             let _ = tx
                 .send(json!({
                     "rid": rid,
                     "ok": false,
-                    "error": format!("`{op}` needs the {} level; this device has {}", need.as_str(), device.scope.as_str()),
+                    "error": format!("`{op}` needs the {} level; this device has {}", need.as_str(), current.scope.as_str()),
                 }))
                 .await;
             continue;
@@ -242,8 +248,12 @@ async fn connection(sock: TcpStream, state: Arc<State>) -> Result<(), String> {
             if follower.as_ref().is_none_or(JoinHandle::is_finished) {
                 let mut feed = EventFeed::new(&state);
                 let tx = tx.clone();
+                let device_id = device.id.clone();
                 follower = Some(tokio::spawn(async move {
                     while let Some(ev) = feed.next().await {
+                        if devices::verify_id(&device_id).is_none() {
+                            break;
+                        }
                         if tx.send(json!({ "event": ev })).await.is_err() {
                             break;
                         }
@@ -255,12 +265,11 @@ async fn connection(sock: TcpStream, state: Arc<State>) -> Result<(), String> {
                 .await;
             continue;
         }
-        // A device that was unpaired while connected stops here.
-        if devices::verify_id(&device.id).is_none() {
+        if inflight.len() >= MAX_INFLIGHT {
             let _ = tx
-                .send(json!({ "rid": rid, "ok": false, "error": "this device was unpaired" }))
+                .send(json!({ "rid": rid, "ok": false, "error": "too many requests in flight" }))
                 .await;
-            break;
+            continue;
         }
         let state = state.clone();
         let tx = tx.clone();

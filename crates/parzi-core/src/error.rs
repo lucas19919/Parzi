@@ -87,7 +87,7 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
         SEQ.fetch_add(1, Relaxed)
     ));
     let write = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut f = open_tmp(&tmp, mode)?;
         keep_mode(&f, path, mode)?;
         f.write_all(bytes)?;
         f.sync_all()
@@ -122,6 +122,25 @@ fn patiently<T>(mut step: impl FnMut() -> std::io::Result<T>) -> std::io::Result
 /// Reads a file that atomic_write may be replacing right now.
 pub fn read_settled(path: &Path) -> std::io::Result<String> {
     patiently(|| std::fs::read_to_string(path))
+}
+
+#[cfg(unix)]
+fn open_tmp(path: &Path, mode: Option<u32>) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    if let Some(bits) = mode {
+        opts.mode(bits);
+    }
+    opts.open(path)
+}
+
+#[cfg(not(unix))]
+fn open_tmp(path: &Path, _mode: Option<u32>) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }
 
 #[cfg(unix)]

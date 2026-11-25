@@ -532,10 +532,19 @@ fn guarded() -> Vec<(PathBuf, bool)> {
         out.push((h.join(".codex").join("auth.json"), false));
     }
     for root in roots {
-        for f in ["gui.json", "serve.json", "config.toml"] {
+        for f in [
+            "gui.json",
+            "serve.json",
+            "config.toml",
+            "devices.json",
+            "gateway.json",
+            "remote.json",
+        ] {
             out.push((root.join(f), false));
         }
-        out.push((root.join("ssh"), true));
+        for d in ["ssh", "keys", "mcp-auth"] {
+            out.push((root.join(d), true));
+        }
     }
     out
 }
@@ -633,14 +642,20 @@ pub fn protected_path(raw: &str, cwd: &str) -> bool {
             .iter()
             .any(|gf| forms.iter().any(|f| inside(f, gf, *dir)))
     });
-    let named = p
-        .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
+    let file_name = p.file_name().map(|n| n.to_string_lossy().to_lowercase());
+    let named = file_name
+        .as_deref()
         .is_some_and(|n| n == "gui.json" || n == "serve.json")
         && p.parent()
             .and_then(Path::file_name)
             .is_some_and(|d| d.to_string_lossy().eq_ignore_ascii_case(".parzi"));
-    hit || named
+    let askpass = file_name
+        .as_deref()
+        .is_some_and(|n| n.starts_with("askpass-"))
+        && p.parent()
+            .and_then(Path::file_name)
+            .is_some_and(|d| d.to_string_lossy().eq_ignore_ascii_case("tmp"));
+    hit || named || askpass
 }
 
 #[must_use]
@@ -666,8 +681,14 @@ pub fn mentions_protected(cmd: &str, cwd: &str) -> bool {
         "gui.json",
         "serve.json",
         "config.toml",
+        "devices.json",
+        "gateway.json",
+        "remote.json",
         "id_ed25519",
         "/ssh",
+        "/keys",
+        "mcp-auth",
+        "askpass-",
     ]
     .iter()
     .any(|n| l.contains(n));

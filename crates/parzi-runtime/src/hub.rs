@@ -373,6 +373,17 @@ pub fn project_folder(req: &Value) -> Value {
     if !folder.starts_with('/') && !folder.starts_with('~') {
         return fail("give the folder as a path on the server, like /home/you/src/app");
     }
+    let trimmed = folder.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty()
+        || trimmed == "~"
+        || folder.contains("..")
+        || crate::desk::protected_path(folder, "")
+        || crate::desk::protected_root(folder, "")
+        || trimmed.ends_with("/.ssh")
+        || trimmed == "~/.ssh"
+    {
+        return fail("that folder cannot be registered as a project");
+    }
     match parzi_core::brain::project_upsert(slug, title, folder) {
         Ok(p) => json!({ "ok": true, "project": p }),
         Err(e) => fail(e.to_string()),

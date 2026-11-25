@@ -5,7 +5,7 @@
   import { cubicOut } from "svelte/easing";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api } from "../api";
-  import { codeBlockClick, mdHtml, richReady } from "../md";
+  import { codeBlockClick, fenced, mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
   import { popover, placeAbove } from "../popover";
   import { previewSpecOf, previewProblem } from "../previewRegistry";
@@ -29,19 +29,10 @@
    */
   export let inline = false;
 
-  const d = data ?? {};
-  const id: string = String(d.id ?? fallbackId ?? "artifact");
-  const title: string = String(d.title || fallbackTitle || id);
-  const kind: string = String(d.kind ?? fallbackKind ?? "text");
-  const language: string = String(d.language ?? "");
-  const content: string = String(d.content ?? "");
-  const version: number = Number(d.version ?? 1) || 1;
-
   const LOCAL_ONLY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:">`;
   const RESIZE = `<script>function tell(){try{var h=document.documentElement.scrollHeight;parent.postMessage({parziArt:1,height:h},"*")}catch(e){}}addEventListener("load",tell);setTimeout(tell,400);setTimeout(tell,1500);<\/script>`;
   const MAX_FRAME = 4000;
   const FOLD = 360;
-  const bad = !content.trim() && kind !== "preview";
 
   const ICONS: Record<string, IconName> = {
     markdown: "file",
@@ -55,10 +46,19 @@
     html: "browser",
     preview: "spark",
   };
-  const icon = ICONS[kind] ?? "file";
+
+  $: d = data ?? {};
+  $: id = String(d.id ?? fallbackId ?? "artifact");
+  $: title = String(d.title || fallbackTitle || id);
+  $: kind = String(d.kind ?? fallbackKind ?? "text");
+  $: language = String(d.language ?? "");
+  $: content = String(d.content ?? "");
+  $: version = Number(d.version ?? 1) || 1;
+  $: bad = !content.trim() && kind !== "preview";
+  $: icon = ICONS[kind] ?? "file";
   // A picture's content is its path and a preview's a spec: neither is what a person wants to copy.
-  const copyable = kind !== "image" && kind !== "preview";
-  const savable = kind !== "preview";
+  $: copyable = kind !== "image" && kind !== "preview";
+  $: savable = kind !== "preview";
 
   $: preview = kind === "preview" ? previewSpecOf(content) : null;
   $: previewProps = preview ? preview.entry.props(preview.variant, preview.extra) : {};
@@ -72,14 +72,31 @@
   // Only the mock has no such origin, and it has no policy to get around either.
   let pageSrc = "";
   let pageFallback = false;
-  if (kind === "html" && content.trim()) {
-    api.artifactFrame(RESIZE + content).then(
+  let frameSeq = 0;
+  function loadFrame(html: string) {
+    const seq = ++frameSeq;
+    pageSrc = "";
+    pageFallback = false;
+    api.artifactFrame(RESIZE + html).then(
       (token) => {
+        if (seq !== frameSeq) return;
         if (token) pageSrc = convertFileSrc(token, "parzi-art");
         else pageFallback = true;
       },
-      () => (pageFallback = true),
+      () => {
+        if (seq === frameSeq) pageFallback = true;
+      },
     );
+  }
+  function clearFrame() {
+    frameSeq++;
+    pageSrc = "";
+    pageFallback = false;
+  }
+  $: if (kind === "html" && content.trim()) {
+    loadFrame(content);
+  } else {
+    clearFrame();
   }
   let copied = false;
 
@@ -175,7 +192,7 @@
   {:else}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="code" on:click={codeClick}>
-      {@html mdHtml("```" + (language || kind) + "\n" + content + "\n```", $richReady)}
+      {@html mdHtml(fenced(content, language || kind), $richReady)}
     </div>
   {/if}
 {:else}
@@ -244,7 +261,7 @@
         {/if}
         <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
         <div class="code" on:click={codeClick}>
-          {@html mdHtml("```" + (language || kind) + "\n" + content + "\n```", $richReady)}
+          {@html mdHtml(fenced(content, language || kind), $richReady)}
         </div>
       {/if}
     </div>

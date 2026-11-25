@@ -346,8 +346,7 @@ impl ToolHost {
                 return Some(self.refused(name, why));
             }
             // The plan tools refuse these in read-only mode too, without saying why.
-            if self.p.mode == ApprovalMode::Deny
-                && matches!(name, "plan.write" | "session.rename")
+            if self.p.mode == ApprovalMode::Deny && matches!(name, "plan.write" | "session.rename")
             {
                 return Some(self.refused(name, Refusal::ReadOnly));
             }
@@ -430,12 +429,19 @@ impl ToolHost {
 
     async fn gate(&self, req: &PermissionRequest) -> PermissionDecision {
         let parzi = display_name(&req.tool);
-        if parzi != req.tool {
+        if parzi != req.tool
+            && (crate::tools::is_parzi_tool(&parzi) || self.relay().await.find(&parzi).is_some())
+        {
             return PermissionDecision::Allow;
         }
-        let ours = |t: &str| crate::tools::is_parzi_tool(&display_name(t)) && display_name(t) != t;
+        let ours = |t: &str| {
+            let d = display_name(t);
+            d != t && crate::tools::is_parzi_tool(&d)
+        };
         let wrapped = req.input.get("tool_name").and_then(Value::as_str);
-        if ours(&req.title) || (req.title == "use_tool" && wrapped.is_some_and(ours)) {
+        if req.tool == "other"
+            && (ours(&req.title) || (req.title == "use_tool" && wrapped.is_some_and(ours)))
+        {
             return PermissionDecision::Allow;
         }
         let kind = category(&req.tool);
@@ -730,11 +736,12 @@ impl ToolHost {
     /// Keeps a proposed plan on the session for the person to answer and
     /// tells the agent to end its turn.
     fn propose_plan(&self, payload: &Value) -> (bool, String) {
-        let Some(plan) =
+        let Some(mut plan) =
             parzi_core::store::SessionPlan::from_payload(payload).filter(|p| !p.items.is_empty())
         else {
             return (false, "plan.write: a proposal needs steps".into());
         };
+        self.sanitize_plan_doc(&mut plan);
         if let Err(e) = self.p.store.set_proposal(&self.p.session_id, Some(plan)) {
             return (false, e.to_string());
         }
@@ -1613,7 +1620,10 @@ impl ToolHost {
                 payload: payload.clone(),
             },
         );
-        let plan = parzi_core::store::SessionPlan::from_payload(&payload);
+        let mut plan = parzi_core::store::SessionPlan::from_payload(&payload);
+        if let Some(ref mut p) = plan {
+            self.sanitize_plan_doc(p);
+        }
         if let Err(e) = self.p.store.set_plan(&self.p.session_id, plan) {
             tracing::warn!(session = %self.p.session_id, "plan not saved: {e}");
         }
@@ -1622,6 +1632,39 @@ impl ToolHost {
             "the plan is cleared".into()
         } else {
             "the plan is saved on this session and shows in the thread".into()
+        }
+    }
+
+    fn sanitize_plan_doc(&self, plan: &mut parzi_core::store::SessionPlan) {
+        let Some(raw) = plan.doc.as_deref().map(str::trim).filter(|d| !d.is_empty()) else {
+            return;
+        };
+        if parzi_core::paths::is_network_path(raw)
+            || crate::desk::protected_path(raw, &self.p.tools.cwd)
+        {
+            plan.doc = None;
+            return;
+        }
+        let in_worktree = worktree_relative(&self.p.tools.cwd, raw).is_some();
+        let candidate = std::path::Path::new(&self.p.tools.cwd).join(raw);
+        let real = std::fs::canonicalize(&candidate).ok();
+        let in_dir = |dir: std::path::PathBuf| {
+            real.as_ref().is_some_and(|r| {
+                std::fs::canonicalize(dir)
+                    .ok()
+                    .is_some_and(|base| r.starts_with(&base))
+            })
+        };
+        let in_scratch = parzi_core::paths::scratch_dir(&self.p.session_id)
+            .ok()
+            .is_some_and(in_dir);
+        let in_session = parzi_core::paths::sessions_dir()
+            .ok()
+            .is_some_and(|d| in_dir(d.join(&self.p.session_id)));
+        let in_brain = parzi_core::paths::brain_dir().ok().is_some_and(in_dir);
+        if !(in_worktree || in_scratch || in_session || in_brain) {
+            tracing::warn!(session = %self.p.session_id, "dropped plan.doc outside workspace and scratch");
+            plan.doc = None;
         }
     }
 

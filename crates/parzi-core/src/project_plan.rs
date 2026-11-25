@@ -201,22 +201,27 @@ pub fn update<R>(slug: &str, change: impl FnOnce(&mut ProjectPlan) -> (bool, R))
 /// plan. Says what happened, for an agent to read.
 #[must_use]
 pub fn link_session(slug: &str, title: &str, session: &str) -> String {
-    if load(slug).is_none() {
+    let _one = WRITING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(mut plan) = load(slug) else {
         return format!("no project plan in {slug} to link the target to");
+    };
+    if !plan.link(title, session) {
+        return format!("no target \"{title}\" in the project plan");
     }
-    match update(slug, |plan| {
-        let linked = plan.link(title, session);
-        (linked, linked)
-    }) {
-        Ok(true) => format!("linked to the target \"{title}\""),
-        Ok(false) => format!("no target \"{title}\" in the project plan"),
+    match save(slug, &plan) {
+        Ok(()) => format!("linked to the target \"{title}\""),
         Err(e) => format!("could not link the target: {e}"),
     }
 }
 
 /// Where the plan note sits on disk, for opening it.
 pub fn doc_path(slug: &str) -> Option<std::path::PathBuf> {
-    let path = crate::paths::brain_dir().ok()?.join(note_path(slug));
+    let path = crate::brain::Vault::open()
+        .ok()?
+        .resolve(&note_path(slug))
+        .ok()?;
     path.is_file().then_some(path)
 }
 

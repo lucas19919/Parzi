@@ -188,15 +188,80 @@ fn param(header: &str, key: &str) -> Option<String> {
     Some(v.to_string()).filter(|v| !v.is_empty())
 }
 
+const MAX_OAUTH_BODY: u64 = 1024 * 1024;
+
+fn url_host(url: &str) -> Option<&str> {
+    let (_, rest) = url.split_once("://")?;
+    let auth = rest.split(['/', '?', '#']).next()?;
+    if auth.is_empty() || auth.contains('@') {
+        return None;
+    }
+    if let Some(rest) = auth.strip_prefix('[') {
+        rest.split(']').next()
+    } else {
+        Some(auth.split(':').next().unwrap_or(auth))
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    if h == "localhost" || h == "::1" || h.ends_with(".localhost") {
+        return true;
+    }
+    h.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+}
+
+fn is_private_ip_literal(host: &str) -> bool {
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+        }
+        std::net::IpAddr::V6(v6) => {
+            let seg0 = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (seg0 & 0xfe00) == 0xfc00
+                || (seg0 & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn validate_oauth_url(url: &str, allow_loopback: bool) -> Result<(), String> {
+    parzi_core::urls::check_open_url(url)?;
+    let host = url_host(url).ok_or_else(|| format!("`{url}` has no valid host"))?;
+    let loopback = is_loopback_host(host);
+    if !url.starts_with("https://") && !(allow_loopback && loopback) {
+        return Err(format!("OAuth address must use https:// (`{url}`)"));
+    }
+    if !allow_loopback && (loopback || is_private_ip_literal(host)) {
+        return Err(format!(
+            "OAuth address `{url}` cannot point to a local or private network address"
+        ));
+    }
+    Ok(())
+}
+
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(Duration::from_secs(30)))
+        .max_redirects(0)
         .build()
         .into()
 }
 
-fn get_json(url: &str) -> Option<Value> {
+fn get_json(url: &str, allow_loopback: bool) -> Option<Value> {
+    validate_oauth_url(url, allow_loopback).ok()?;
     let mut res = agent()
         .get(url)
         .header("Accept", "application/json")
@@ -205,7 +270,13 @@ fn get_json(url: &str) -> Option<Value> {
     if res.status().as_u16() != 200 {
         return None;
     }
-    serde_json::from_str(&res.body_mut().read_to_string().ok()?).ok()
+    let text = res
+        .body_mut()
+        .with_config()
+        .limit(MAX_OAUTH_BODY)
+        .read_to_string()
+        .ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,9 +288,11 @@ pub struct Endpoints {
 }
 
 pub fn discover(server: &str, www_auth: Option<&str>) -> Result<Endpoints, String> {
+    let allow_loopback = url_host(server).is_some_and(is_loopback_host);
+    validate_oauth_url(server, allow_loopback)?;
     let resource = resource_metadata_urls(server, www_auth)
         .into_iter()
-        .find_map(|u| get_json(&u));
+        .find_map(|u| get_json(&u, allow_loopback));
     let scopes: Vec<String> = resource
         .as_ref()
         .and_then(|r| r.get("scopes_supported"))
@@ -237,9 +310,10 @@ pub fn discover(server: &str, www_auth: Option<&str>) -> Result<Endpoints, Strin
         .and_then(|a| a.first())
         .and_then(Value::as_str)
         .map_or_else(|| origin.clone(), str::to_string);
+    validate_oauth_url(&issuer, allow_loopback)?;
     let meta = auth_server_metadata_urls(&issuer)
         .into_iter()
-        .find_map(|u| get_json(&u));
+        .find_map(|u| get_json(&u, allow_loopback));
     let field = |k: &str| {
         meta.as_ref()
             .and_then(|m| m.get(k))
@@ -259,17 +333,30 @@ pub fn discover(server: &str, www_auth: Option<&str>) -> Result<Endpoints, Strin
     } else {
         scopes
     };
+    let authorize =
+        field("authorization_endpoint").unwrap_or_else(|| format!("{iss_origin}/authorize"));
+    let token = field("token_endpoint").unwrap_or_else(|| format!("{iss_origin}/token"));
+    let register = field("registration_endpoint")
+        .or_else(|| meta.is_none().then(|| format!("{iss_origin}/register")));
+    validate_oauth_url(&authorize, allow_loopback)?;
+    validate_oauth_url(&token, allow_loopback)?;
+    if let Some(ref reg) = register {
+        validate_oauth_url(reg, allow_loopback)?;
+    }
     Ok(Endpoints {
-        authorize: field("authorization_endpoint")
-            .unwrap_or_else(|| format!("{iss_origin}/authorize")),
-        token: field("token_endpoint").unwrap_or_else(|| format!("{iss_origin}/token")),
-        register: field("registration_endpoint")
-            .or_else(|| meta.is_none().then(|| format!("{iss_origin}/register"))),
+        authorize,
+        token,
+        register,
         scopes,
     })
 }
 
-fn register(endpoint: &str, redirect: &str) -> Result<(String, Option<String>), String> {
+fn register(
+    endpoint: &str,
+    redirect: &str,
+    allow_loopback: bool,
+) -> Result<(String, Option<String>), String> {
+    validate_oauth_url(endpoint, allow_loopback)?;
     let body = serde_json::json!({
         "client_name": "Parzi",
         "redirect_uris": [redirect],
@@ -284,7 +371,12 @@ fn register(endpoint: &str, redirect: &str) -> Result<(String, Option<String>), 
         .send(body.to_string())
         .map_err(|e| format!("registering with the sign-in service failed: {e}"))?;
     let status = res.status().as_u16();
-    let text = res.body_mut().read_to_string().unwrap_or_default();
+    let text = res
+        .body_mut()
+        .with_config()
+        .limit(MAX_OAUTH_BODY)
+        .read_to_string()
+        .unwrap_or_default();
     if !(200..300).contains(&status) {
         return Err(format!(
             "the sign-in service refused Parzi ({status}): {}",
@@ -304,7 +396,12 @@ fn register(endpoint: &str, redirect: &str) -> Result<(String, Option<String>), 
     ))
 }
 
-fn token_request(endpoint: &str, form: &[(&str, &str)]) -> Result<Value, String> {
+fn token_request(
+    endpoint: &str,
+    form: &[(&str, &str)],
+    allow_loopback: bool,
+) -> Result<Value, String> {
+    validate_oauth_url(endpoint, allow_loopback)?;
     let mut res = agent()
         .post(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -312,7 +409,12 @@ fn token_request(endpoint: &str, form: &[(&str, &str)]) -> Result<Value, String>
         .send(query(form))
         .map_err(|e| format!("the sign-in service did not answer: {e}"))?;
     let status = res.status().as_u16();
-    let text = res.body_mut().read_to_string().unwrap_or_default();
+    let text = res
+        .body_mut()
+        .with_config()
+        .limit(MAX_OAUTH_BODY)
+        .read_to_string()
+        .unwrap_or_default();
     if !(200..300).contains(&status) {
         return Err(format!(
             "the sign-in service said no ({status}): {}",
@@ -366,7 +468,11 @@ pub fn refresh(name: &str) -> Result<Token, String> {
     if let Some(secret) = old.client_secret.as_deref() {
         form.push(("client_secret", secret));
     }
-    let fresh = token_from(&token_request(&old.token_endpoint, &form)?, &old)?;
+    let allow_loopback = url_host(&old.resource).is_some_and(is_loopback_host);
+    let fresh = token_from(
+        &token_request(&old.token_endpoint, &form, allow_loopback)?,
+        &old,
+    )?;
     save(name, &fresh)?;
     Ok(fresh)
 }
@@ -405,6 +511,7 @@ pub async fn sign_in(
     www_auth: Option<String>,
     open: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<Token, String> {
+    let allow_loopback = url_host(server).is_some_and(is_loopback_host);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| e.to_string())?;
@@ -417,7 +524,7 @@ pub async fn sign_in(
             .register
             .clone()
             .ok_or("this server's sign-in does not let apps register; add an API key instead")?;
-        let (id, secret) = register(&endpoint, &redirect_s)?;
+        let (id, secret) = register(&endpoint, &redirect_s, allow_loopback)?;
         Ok::<_, String>((ends, id, secret))
     })
     .await
@@ -443,12 +550,18 @@ pub async fn sign_in(
     } else {
         '?'
     };
-    open(&format!("{}{sep}{}", ends.authorize, query(&q)))?;
+    let auth_url = format!("{}{sep}{}", ends.authorize, query(&q));
+    validate_oauth_url(&auth_url, allow_loopback)?;
+    open(&auth_url)?;
     let code = tokio::time::timeout(SIGN_IN_WAIT, async {
         loop {
             let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
             let mut buf = vec![0u8; 8192];
-            let n = sock.read(&mut buf).await.map_err(|e| e.to_string())?;
+            let Ok(Ok(n)) =
+                tokio::time::timeout(Duration::from_secs(5), sock.read(&mut buf)).await
+            else {
+                continue;
+            };
             let request = String::from_utf8_lossy(&buf[..n]).to_string();
             let Some(q) = callback_query(&request) else {
                 let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
@@ -496,7 +609,10 @@ pub async fn sign_in(
         if let Some(s) = secret.as_deref() {
             form.push(("client_secret", s));
         }
-        let t = token_from(&token_request(&base.token_endpoint, &form)?, &base)?;
+        let t = token_from(
+            &token_request(&base.token_endpoint, &form, allow_loopback)?,
+            &base,
+        )?;
         save(&name, &t)?;
         Ok(t)
     })

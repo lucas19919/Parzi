@@ -1171,7 +1171,7 @@
     border: 1px solid transparent;
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
-    border-radius: 50%;
+    border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
   }

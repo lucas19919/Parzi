@@ -5,7 +5,10 @@
     const key = folder;
     let p = cache.get(key);
     if (!p) {
-      p = api.contextParts(folder).catch(() => null);
+      p = api.contextParts(folder).catch(() => {
+        cache.delete(key);
+        return null;
+      });
       cache.set(key, p);
     }
     return p;
@@ -26,7 +29,7 @@
   const dispatch = createEventDispatcher<{ compact: void }>();
 
   let parts: Parts | null = null;
-  let partsKey = "";
+  let partsKey: string | null = null;
   $: if (folder !== partsKey) {
     partsKey = folder;
     const key = partsKey;
@@ -37,19 +40,28 @@
   }
 
   $: pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  $: ours = parts ? parts.instructions + parts.tools + parts.notes : 0;
+  $: rawOurs = parts ? parts.instructions + parts.tools + parts.notes : 0;
+  $: scale = used > 0 && rawOurs > used ? used / rawOurs : 1;
+  $: scaledParts = parts
+    ? {
+        instructions: Math.round(parts.instructions * scale),
+        tools: Math.round(parts.tools * scale),
+        notes: Math.round(parts.notes * scale),
+      }
+    : null;
+  $: ours = scaledParts ? scaledParts.instructions + scaledParts.tools + scaledParts.notes : 0;
   $: rows = [
     { id: "conv", label: "Conversation", n: Math.max(0, used - ours) },
-    ...(parts
+    ...(scaledParts
       ? [
-          { id: "inst", label: "Parzi instructions", n: parts.instructions },
-          { id: "tools", label: "Parzi tools", n: parts.tools },
-          { id: "notes", label: "Project notes", n: parts.notes },
+          { id: "inst", label: "Parzi instructions", n: scaledParts.instructions },
+          { id: "tools", label: "Parzi tools", n: scaledParts.tools },
+          { id: "notes", label: "Project notes", n: scaledParts.notes },
         ]
       : []),
   ].filter((r) => r.n > 0);
   $: filled = rows.reduce((s, r) => s + r.n, 0);
-  $: free = Math.max(0, limit - filled);
+  $: free = Math.max(0, limit - Math.max(used, filled));
 
   function share(n: number) {
     if (limit <= 0) return "0%";

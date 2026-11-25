@@ -472,7 +472,9 @@ impl Orchestrator {
             }
         }
         if super::headless() {
-            allowed.retain(|t| !t.starts_with("browser.") && !t.starts_with("desk."));
+            allowed.retain(|t| {
+                !t.starts_with("browser.") && !t.starts_with("desk.") && !t.starts_with("app.")
+            });
         }
         // Every enabled connector; each tool's own choice and the session's
         // approval mode still decide whether a call runs.

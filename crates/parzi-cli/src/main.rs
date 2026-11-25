@@ -442,7 +442,7 @@ fn explain_and_wait() -> Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
     if opened_with_nothing_to_do() {
         return explain_and_wait();
@@ -498,11 +498,7 @@ fn boot() -> Result<(ParziConfig, SessionStore)> {
 }
 
 fn cmd_init() -> Result<()> {
-    let root = paths::ensure_dirs().context("creating ~/.parzi")?;
-    let cfg = ParziConfig::load().unwrap_or_default();
-    cfg.save().context("writing config")?;
-    let theme = parzi_core::theme::Theme::load().unwrap_or_default();
-    theme.save().context("writing theme")?;
+    let root = cmd_init_quiet()?;
     println!("parzi home: {}", root.display());
     Ok(())
 }
@@ -578,10 +574,14 @@ async fn cmd_setup(spec: Option<&std::path::Path>, enable: bool, json: bool) -> 
                 if !spec.from.is_empty() {
                     emit(Step::ok("spec", format!("from {}", spec.from)));
                 }
+                let mut spec_ok = true;
                 for step in provision::apply_spec(&spec) {
+                    spec_ok &= step.ok;
                     emit(step);
                 }
-                let _ = std::fs::remove_file(path);
+                if spec_ok {
+                    let _ = std::fs::remove_file(path);
+                }
             }
             Err(e) => emit(Step::fail("spec", e)),
         }
@@ -662,8 +662,11 @@ fn cmd_init_quiet() -> Result<std::path::PathBuf> {
     if !paths::config_path()?.exists() {
         ParziConfig::default().save().context("writing config")?;
     }
-    let theme = parzi_core::theme::Theme::load().unwrap_or_default();
-    theme.save().context("writing theme")?;
+    if !root.join("theme.toml").exists() {
+        parzi_core::theme::Theme::default()
+            .save()
+            .context("writing theme")?;
+    }
     Ok(root)
 }
 
@@ -1075,9 +1078,7 @@ async fn session_show(id: &str, json: bool, export: bool) -> Result<()> {
             let (_, store) = boot()?;
             let id = resolve_id(&store, id)?;
             if export || !json {
-                let md =
-                    std::fs::read_to_string(paths::sessions_dir()?.join(&id).join("session.md"))
-                        .context("reading transcript")?;
+                let md = store.transcript_md(&id).context("reading transcript")?;
                 println!("{md}");
                 return Ok(());
             }
@@ -1277,8 +1278,7 @@ async fn send_local(
                 break;
             }
             RunEvent::Error(e) => {
-                eprintln!("\nerror: {e}");
-                break;
+                anyhow::bail!("{e}");
             }
             RunEvent::Paused { reason } => {
                 eprintln!("\npaused: {reason}");

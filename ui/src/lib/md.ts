@@ -156,7 +156,7 @@ md.core.ruler.after("parzi-bare-names", "parzi-bare-links", (state) => {
 
 const defaultValidateLink = md.validateLink.bind(md);
 md.validateLink = (url: string) => {
-  if (/^(?:file|brain|parzi):/i.test(url)) return true;
+  if (/^(?:file|brain|parzi|asset):/i.test(url)) return true;
   return defaultValidateLink(url);
 };
 
@@ -314,7 +314,12 @@ export function codeBlockClick(el: HTMLElement): boolean {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 const TASK_MARK = /^\[([ xX])\]\s+/;
@@ -443,6 +448,8 @@ const LOCAL_IMAGE = /^(data:image\/|asset:|https?:\/\/asset\.localhost\/)/i;
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   const tag = (node.tagName ?? "").toLowerCase();
   if (tag === "a") {
+    const href = node.getAttribute("href");
+    if (href && /^data:/i.test(href.trim())) node.removeAttribute("href");
     node.setAttribute("target", "_blank");
     node.setAttribute("rel", "noopener noreferrer");
   } else if (tag === "img" || tag === "image") {
@@ -454,6 +461,13 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   }
 });
 
+/** Wraps text in a backtick fence longer than any backtick run inside it. */
+export function fenced(text: string, lang = ""): string {
+  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((r) => r.length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}${lang}\n${text.replace(/\n$/, "")}\n${fence}`;
+}
+
 export function renderMarkdown(src: string, cache = true): string {
   if (src.includes("```") || src.includes("~~~") || src.includes("$")) void ensureRich();
   if (cache) {
@@ -463,7 +477,7 @@ export function renderMarkdown(src: string, cache = true): string {
     }
   }
   const res = DOMPurify.sanitize(md.render(src), {
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi|brain|file):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi|brain|file|asset):|data:image\/|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
   if (!cache) return res;
   if (mdCache.size >= MD_CACHE_MAX) {

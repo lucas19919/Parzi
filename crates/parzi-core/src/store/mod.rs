@@ -461,12 +461,17 @@ impl SessionStore {
 
     /// The plan's document is copied into the session's own folder as
     /// `plan.md`, so it outlives the agent's scratch folder and the plan pin
-    /// keeps working. A path that is missing or already the session's copy
-    /// stays as it is.
+    /// keeps working. Network paths, protected secret locations, and files over
+    /// 1 MiB or non-UTF-8 are rejected.
     fn keep_plan_doc(&self, id: &str, mut plan: SessionPlan) -> SessionPlan {
+        const MAX_PLAN_DOC: u64 = 1024 * 1024;
         let Some(doc) = plan.doc.as_deref().map(str::trim).filter(|d| !d.is_empty()) else {
             return plan;
         };
+        if paths::is_network_path(doc) {
+            plan.doc = None;
+            return plan;
+        }
         let Some(dir) = self
             .events_path(id)
             .parent()
@@ -476,10 +481,37 @@ impl SessionStore {
         };
         let kept = dir.join("plan.md");
         let source = std::path::Path::new(doc);
-        if source == kept || !source.is_file() {
+        if source == kept {
             return plan;
         }
-        if std::fs::copy(source, &kept).is_ok() {
+        let Ok(real) = std::fs::canonicalize(source) else {
+            return plan;
+        };
+        if let Ok(real_kept) = std::fs::canonicalize(&kept) {
+            if real == real_kept {
+                plan.doc = Some(kept.to_string_lossy().into_owned());
+                return plan;
+            }
+        }
+        if !plan_doc_allowed(&real, &dir, id) {
+            plan.doc = None;
+            return plan;
+        }
+        let Ok(meta) = std::fs::metadata(&real) else {
+            return plan;
+        };
+        if !meta.is_file() || meta.len() > MAX_PLAN_DOC {
+            plan.doc = None;
+            return plan;
+        }
+        let Ok(bytes) = std::fs::read(&real) else {
+            return plan;
+        };
+        if std::str::from_utf8(&bytes).is_err() {
+            plan.doc = None;
+            return plan;
+        }
+        if crate::error::atomic_write_private(&kept, &bytes).is_ok() {
             plan.doc = Some(kept.to_string_lossy().into_owned());
         }
         plan
@@ -566,6 +598,29 @@ impl SessionStore {
     pub fn cached_sessions(&self) -> usize {
         self.cache().sessions.len()
     }
+}
+
+fn plan_doc_allowed(real: &std::path::Path, session_dir: &std::path::Path, id: &str) -> bool {
+    let under = |root: &std::path::Path| {
+        std::fs::canonicalize(root)
+            .ok()
+            .is_some_and(|r| real.starts_with(&r))
+    };
+    if let Ok(parzi) = paths::parzi_dir() {
+        if under(&parzi) {
+            let own_scratch = paths::scratch_dir(id).ok().is_some_and(|d| under(&d));
+            let own_brain = paths::brain_dir().ok().is_some_and(|d| under(&d));
+            return under(session_dir) || own_scratch || own_brain;
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        for secret in [".parzi", ".claude", ".codex", ".ssh", ".aws", ".gnupg"] {
+            if under(&home.join(secret)) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn read_from(path: &std::path::Path, from: u64) -> Result<Vec<u8>> {

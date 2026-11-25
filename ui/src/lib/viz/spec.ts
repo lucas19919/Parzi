@@ -305,8 +305,12 @@ function readHist(o: Obj, data: unknown): Partial<VizSpec> | string {
     .map((x) => (isObj(x) ? num(pick(x, VALUE_KEYS)) : num(x)))
     .filter((v): v is number => v !== null);
   if (!vals.length) return 'a histogram needs numbers, like {"data": [12, 19, 8, 21, 15]}';
-  let lo = Math.min(...vals);
-  let hi = Math.max(...vals);
+  let lo = vals[0];
+  let hi = vals[0];
+  for (let i = 1; i < vals.length; i++) {
+    if (vals[i] < lo) lo = vals[i];
+    if (vals[i] > hi) hi = vals[i];
+  }
   if (lo === hi) {
     const pad = Math.abs(lo) * 0.1 || 1;
     lo -= pad;

@@ -73,9 +73,7 @@ fn one(agent: &Value, platform: &str) -> Option<RegistryAgent> {
         });
     }
     let binary = dist.get("binary")?;
-    let plat = binary
-        .get(platform)
-        .or_else(|| binary.get("windows-x86_64"))?;
+    let plat = binary.get(platform)?;
     let cmd = plat.get("cmd")?.as_str()?;
     let command = std::path::Path::new(cmd)
         .file_name()

@@ -330,6 +330,7 @@ impl ParziConfig {
                 "grok" | "xai" | "grok-cli" => Some("grok"),
                 "antigravity" => Some("antigravity"),
                 "cursor" => Some("cursor"),
+                "acp" => Some("acp"),
                 _ => None,
             }
         };

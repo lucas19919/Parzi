@@ -446,6 +446,24 @@ pub async fn tool_image(
             return Err("no tool in this session made that picture".into());
         }
         let p = Path::new(&path);
+        let allowed = confined_path(orch.store(), &path).is_ok() || {
+            let real = std::fs::canonicalize(p).ok();
+            let under = |dir: PathBuf| {
+                real.as_ref().is_some_and(|r| {
+                    std::fs::canonicalize(dir)
+                        .ok()
+                        .is_some_and(|base| r.starts_with(&base))
+                })
+            };
+            parzi_core::paths::parzi_dir().ok().is_some_and(|root| {
+                under(root.join("shots").join(&session))
+                    || under(root.join("attachments"))
+                    || under(orch.store().artifact_dir(&session))
+            })
+        };
+        if !allowed {
+            return Err("pictures outside the workspace are not shown".into());
+        }
         let meta = std::fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
         if !meta.is_file() || meta.len() > READ_IMAGE_MAX {
             return Err(format!("{path} is not a picture Parzi can show"));

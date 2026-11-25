@@ -100,11 +100,14 @@ pub fn to_drafts(vault: &Vault, store: &SessionStore) -> usize {
         let Ok(note) = std::fs::read_to_string(&full) else {
             continue;
         };
+        if block(&note).is_none() {
+            continue;
+        }
         let items = match parse(&note) {
             Ok(items) => items,
             Err(e) => {
                 tracing::warn!(project = %p.slug, "old plan not moved to drafts: {e}");
-                vec![]
+                continue;
             }
         };
         // A draft per open item that no session already carries under that title.
