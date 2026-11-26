@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- The Usage card shows Grok, OpenCode Go and Antigravity's plan limits too, as their own /usage does: Grok's weekly (or monthly) credits, OpenCode Go's 5-hour, weekly and monthly spend, and Antigravity's 5-hour and weekly quota for each model group. Each is read from the agent's own sign-in, which Parzi never changes.
 - Remade the iPhone Duo browser viewer with real hardware proportions: landscape and portrait inner displays with a rotate toggle and hidden under-display camera, plus the closed outer display with its titanium spine, asymmetric corners, and right-side vertical Dynamic Island rail.
 - Opening or revealing local files and folders now works from any path without workspace-folder restrictions.
 - Added a branch and worktree picker in the Environment card to switch branches, jump between worktrees, or spin up a new worktree for a session.

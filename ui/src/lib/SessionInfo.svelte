@@ -123,7 +123,7 @@
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   $: agent = provider ? nameOf(provider) : "";
   /** Agents whose plan limits Parzi can read (their /usage or /status). */
-  const READS_LIMITS = new Set(["claude", "codex"]);
+  const READS_LIMITS = new Set(["claude", "codex", "grok", "opencode", "antigravity"]);
   // How the agent bills, from Settings: a plan shows its limits, a key its tokens and cost.
   let billing: Record<string, string> = {};
   $: onKey = billing[provider] === "api_key";
@@ -282,7 +282,7 @@
     {/if}
   </InfoCard>
 
-  <!-- Plan limits as rows; no prose. Claude and Codex show their windows
+  <!-- Plan limits as rows; no prose. Agents Parzi reads limits for show their windows
        empty until read; an agent with no plan limits has no card. -->
   {#if provider && (onKey || limits.length || READS_LIMITS.has(provider))}
     <InfoCard id="usage" title="Usage">

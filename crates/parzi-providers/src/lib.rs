@@ -6,6 +6,7 @@ pub use acp::{cached_models, drop_live_in, drop_parked};
 mod claude;
 mod codex;
 pub mod jsonrpc;
+mod plan_limits;
 pub mod process;
 mod setup;
 mod types;
@@ -192,7 +193,7 @@ mod live_usage {
     #[ignore = "reads the signed-in accounts over the network"]
     async fn live_usage() {
         let cfg = parzi_core::config::ParziConfig::default();
-        for id in ["claude", "codex"] {
+        for id in ["claude", "codex", "grok", "opencode", "antigravity"] {
             let p = super::provider(id, &cfg).expect("on the roster");
             match p.usage().await {
                 Some(windows) => {

@@ -17,7 +17,7 @@ use crate::setup;
 use crate::types::{
     or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
     PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
-    State, TurnEnd, TurnSpec, INSTALL_HINT, LOGIN_HINT,
+    State, TurnEnd, TurnSpec, UsageWindow, INSTALL_HINT, LOGIN_HINT,
 };
 
 const AUTH_REQUIRED: i64 = -32000;
@@ -687,6 +687,19 @@ impl Provider for Acp {
 
     fn gated(&self) -> bool {
         self.agent.gated
+    }
+
+    /// What the agent's own `/usage` shows: Grok's credit window, OpenCode
+    /// Go's spend limits, Antigravity's quota per model group.
+    async fn usage(&self) -> Option<Vec<UsageWindow>> {
+        if self.billing != Billing::Subscription {
+            return None;
+        }
+        let id = self.agent.id;
+        tokio::task::spawn_blocking(move || crate::plan_limits::read(id))
+            .await
+            .ok()
+            .flatten()
     }
 
     fn slow_start(&self) -> bool {
