@@ -21,7 +21,7 @@
   import SessionInfo from "./lib/SessionInfo.svelte";
   import SessionPins from "./lib/SessionPins.svelte";
   import type { Pin } from "./lib/pins";
-  import FileReader, { FILE_MAX, FILE_MIN, fileDoc as diskDoc, imageDoc, isImagePath } from "./lib/FileReader.svelte";
+  import FileReader, { fileDoc as diskDoc, imageDoc, isImagePath } from "./lib/FileReader.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import Thread from "./lib/Thread.svelte";
   import PageView from "./lib/PageView.svelte";
@@ -75,9 +75,7 @@
   }
 
   const restored = loadTabs();
-  // Pages open over a session now; only an agent's own pages are tabs, so a
-  // page tab the person had open is not brought back.
-  const restoredTabs = (restored?.tabs ?? []).filter((t) => (t as Partial<Tab>).kind !== "page" || !!(t as Partial<Tab>).owner);
+  const restoredTabs = restored?.tabs ?? [];
   let tabs: Tab[] = oneEmptyDraft(
     (restoredTabs.length ? restoredTabs : [sessionTab()]).map((t) => {
       const c = ensureComposer((t as Partial<Tab>).composer);
@@ -244,12 +242,6 @@
     const w = parseInt(localStorage.getItem("parzi.info.width") ?? "", 10);
     if (w >= 220 && w <= 520) infoWidth = w;
   } catch {}
-  let fileWidth = 420;
-  try {
-    const w = parseInt(localStorage.getItem("parzi.file.width") ?? "", 10);
-    // 264 was the first default, the same width as the session column.
-    if (w >= FILE_MIN && w <= FILE_MAX && w !== 264) fileWidth = w;
-  } catch {}
   let innerWidth = 1280;
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
@@ -322,19 +314,15 @@
     void loadBranch(folder);
     void loadProject(folder);
   }
-  // The page open over a session is on the desk too, under the id the desk
-  // gave it, so the command line can find, focus and close it.
-  $: deskTabs = coverPage ? [...tabs, coverPage] : tabs;
-  $: deskActive = coverPageOn && coverPage ? coverPage.id : activeId;
-  $: tabsKey = JSON.stringify([deskActive, deskTabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.group ?? "", t.cwd ?? ""])]);
+  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.group ?? "", t.cwd ?? ""])]);
   let lastTabsKey = "";
   $: if (tabsKey !== lastTabsKey) {
     lastTabsKey = tabsKey;
-    syncDesk(deskTabs, deskActive);
+    syncDesk(tabs, activeId);
     saveTabs(tabs, activeId);
   }
   $: pageVisible = tab.kind === "page";
-  $: toastsUp = (pageVisible || (coverOn && cover === "page")) && !immersive;
+  $: toastsUp = pageVisible && !immersive;
   const LAST_PAGE = "parzi.lastPage";
   let lastPageVisible: boolean | null = null;
   $: if (pageVisible !== lastPageVisible) {
@@ -366,25 +354,10 @@
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
-  let cover: "settings" | "sessions" | "page" | "file" | null = null;
+  // Settings and Sessions cover the session tab; pages and files are tabs.
+  let cover: "settings" | "sessions" | null = null;
   let coverFor = "";
-  // A link or a pin opens full screen over the thread, with the composer
-  // still floating over it; Settings and Sessions cover it without one.
-  let coverPage: Tab | null = null;
-  let coverDoc: ArtifactDoc | null = null;
-  /** The link or pin the open page or file came from. */
-  let coverTarget = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
-  $: coverComposer = coverOn && (cover === "page" || cover === "file");
-  $: coverPageOn = coverOn && cover === "page" && !!coverPage;
-  // Full screen in the page over a session (a video, say) takes the whole
-  // window: the composer and Back give way until it ends.
-  $: pageFull = immersive && coverPageOn;
-  let lastCoverPageOn = false;
-  $: if (coverPageOn !== lastCoverPageOn) {
-    lastCoverPageOn = coverPageOn;
-    if (!coverPageOn && immersive && !pageVisible) void setImmersive(false);
-  }
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
   $: overArt = showWallpaper && !!bg;
   $: onHome = showWallpaper;
@@ -414,19 +387,6 @@
   function clearCover() {
     cover = null;
     coverFor = "";
-    dropCoverPage();
-    coverDoc = null;
-    coverTarget = "";
-  }
-
-  /** The page over the thread is closed, not hidden: its native view would
-   *  otherwise stay drawn over whatever comes next. */
-  function dropCoverPage() {
-    if (!coverPage) return;
-    const id = coverPage.id;
-    coverPage = null;
-    dropTabPrompts(id);
-    api.browserClose(id).catch(toastError);
   }
 
   function sessionHost(): string {
@@ -441,10 +401,7 @@
     return draft.id;
   }
 
-  function showCover(kind: "settings" | "sessions" | "page" | "file") {
-    if (kind !== "page") dropCoverPage();
-    if (kind !== "file") coverDoc = null;
-    if (kind !== "page" && kind !== "file") coverTarget = "";
+  function showCover(kind: "settings" | "sessions") {
     const id = sessionHost();
     cover = kind;
     coverFor = id;
@@ -472,13 +429,7 @@
   $: pageInfoShown = tab.kind === "page" && infoOpen && innerWidth >= 900;
   $: sideId = pageOwner ?? shown ?? "";
   $: sideMeta = pageOwnerMeta ?? meta;
-  // A file or note opens side-by-side beside the thread (independent of SessionInfo).
-  $: readerShown = (tab.kind === "session" || tab.kind === "page") && !!fileDoc && !coverOn;
-  $: readerWidth = Math.max(FILE_MIN, Math.min(fileWidth, innerWidth - (infoShown || pageInfoShown ? infoWidth : 0) - 420));
-
-  $: shift = Math.round(
-    ((infoShown || pageInfoShown ? infoWidth + 8 : 0) + (readerShown ? readerWidth + 8 : 0)) / 2,
-  );
+  $: shift = infoShown || pageInfoShown ? Math.round((infoWidth + 8) / 2) : 0;
 
   function toggleInfo(open = !(infoShown || pageInfoShown)) {
     infoOpen = open;
@@ -492,13 +443,6 @@
     infoWidth = Math.min(520, Math.max(220, Math.round(e.detail.width)));
     try {
       localStorage.setItem("parzi.info.width", String(infoWidth));
-    } catch {}
-  }
-
-  function resizeFile(e: { detail: { width: number } }) {
-    fileWidth = Math.min(FILE_MAX, Math.max(FILE_MIN, Math.round(e.detail.width)));
-    try {
-      localStorage.setItem("parzi.file.width", String(fileWidth));
     } catch {}
   }
 
@@ -786,114 +730,91 @@
     void tick().then(() => omnibar?.focus());
   }
 
+  /** The session the current tab belongs to: its own, or the one it is stacked under. */
+  $: group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.owner ?? tab.group ?? null);
+
+  /** A page in a tab. One the person opens stacks under the session it came
+   *  from; an agent's own page (owner) stacks under that agent's session. */
   function openPage(url: string, id?: string, owner?: string | null, background = false) {
     if (!url) return;
     if (!background && coverOn) clearCover();
-    const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
+    const at = owner ?? group;
+    const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url && (t.owner ?? t.group ?? null) === at));
     if (existing) {
       if (url && existing.url !== url) patchTab(existing.id, { url, title: hostOf(url) });
       if (owner !== undefined && existing.owner !== owner) patchTab(existing.id, { owner: owner ?? null });
       if (!background) selectTab(existing.id);
-    } else {
-      const t = pageTab(url, id, owner ?? null);
-      if (background) tabs = placeTab(tabs, t, activeId);
-      else addTab(t);
+      return;
     }
+    const t = pageTab(url, id, owner ?? null, owner ? null : group);
+    t.composer = ensureComposer(t.composer);
+    tabs = placeTab(tabs, t, activeId, at);
+    if (!background) selectTab(t.id);
   }
 
-  // Side-by-side file reader keeps one open file/note per session (tabs outside a session share one).
-  let sessionDocs: Record<string, ArtifactDoc> = {};
-  let looseDoc: ArtifactDoc | null = null;
-  $: group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
-  $: fileDoc = group ? (sessionDocs[group] ?? null) : looseDoc;
-
-  function closeFile() {
-    if (!group) looseDoc = null;
-    else if (group in sessionDocs) {
-      const { [group]: _, ...rest } = sessionDocs;
-      sessionDocs = rest;
+  /** A doc in a tab stacked under `at`; an open one is refreshed, not doubled. */
+  function openDocTab(doc: ArtifactDoc, at: string | null, file: boolean, background = false) {
+    const existing = tabs.find((t) => t.kind === "artifact" && t.doc?.id === doc.id && (t.group ?? null) === at);
+    if (existing) {
+      // Reopening bumps the version so the reader shows it fresh.
+      patchTab(existing.id, { doc: { ...doc, version: (existing.doc?.version ?? 0) + 1 }, title: doc.title });
+      if (!background) selectTab(existing.id);
+      return;
     }
+    const t = artifactTab(doc, at, file);
+    tabs = placeTab(tabs, t, activeId, at);
+    if (!background) selectTab(t.id);
   }
 
-  function putFile(doc: ArtifactDoc, at = group) {
-    const prev = at ? sessionDocs[at] : looseDoc;
-    // Reopening the same file bumps the version so the card re-renders.
-    const version = prev?.id === doc.id ? Math.max(prev.version + 1, doc.version || 1) : doc.version || 1;
-    const next = { ...doc, version };
-    if (at) sessionDocs = { ...sessionDocs, [at]: next };
-    else looseDoc = next;
-    if (at === group && coverOn) clearCover();
-  }
-
-  /** An agent's ui.show_file: the file or brain note opens beside the session.
-   *  Errors go back to the agent rather than to a toast. */
-  async function showFileFor(session: string, path: string, note: boolean): Promise<{ text: string }> {
-    const at = session || group;
+  /** A file or brain note as a doc; `null` when it can't be read as text. */
+  async function readDoc(path: string, note: boolean): Promise<ArtifactDoc | null> {
     if (note) {
       const content = await brain.read(path).catch(() => null);
-      if (content == null) throw new Error(`There is no note ${path} in the brain, and no file of that name in the session's folder.`);
+      if (content == null) return null;
       const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
-      putFile({ id: path, title, kind: "markdown", content, version: 1 }, at);
-    } else {
-      if (isImagePath(path)) putFile(imageDoc(path), at);
-      else putFile(diskDoc(path, await api.readTextFile(path)), at);
+      return { id: path, title, kind: "markdown", content, version: 1 };
     }
-    return { text: `${path} is open beside the session${at === group ? "" : "; the person sees it when they open this session"}.` };
+    if (isImagePath(path)) return imageDoc(path);
+    const content = await api.readTextFile(path).catch(() => null);
+    return content == null ? null : diskDoc(path, content);
   }
 
-  /** A linked file opens side-by-side beside the thread; non-text files open outside Parzi. */
-  async function openFileInCard(path: string) {
+  /** A linked file opens in a tab stacked under the session; one that isn't
+   *  text opens outside Parzi. */
+  async function openFile(path: string) {
     const at = group;
-    if (isImagePath(path)) {
-      putFile(imageDoc(path), at);
-      return;
-    }
-    let content: string;
-    try {
-      content = await api.readTextFile(path);
-    } catch {
-      await api.openFilePath(path).catch(toastError);
-      return;
-    }
-    putFile(diskDoc(path, content), at);
+    const doc = await readDoc(path, false);
+    if (doc) openDocTab(doc, at, true);
+    else await api.openFilePath(path).catch(toastError);
   }
 
-  /** A linked brain note opens side-by-side beside the thread. */
-  async function openNoteInCard(path: string) {
-    const content = await brain.read(path).catch(() => null);
-    if (content == null) {
-      toast("That note can't be read.", true);
-      return;
+  async function openNote(path: string) {
+    const at = group;
+    const doc = await readDoc(path, true);
+    if (doc) openDocTab(doc, at, true);
+    else toast("That note can't be read.", true);
+  }
+
+  /** An agent's ui.show_file: the file or note opens in a tab under its
+   *  session, in the background. Errors go back to the agent. */
+  async function showFileFor(session: string, path: string, note: boolean): Promise<{ text: string }> {
+    const at = session || group;
+    const doc = await readDoc(path, note);
+    if (!doc) {
+      if (note) throw new Error(`There is no note ${path} in the brain, and no file of that name in the session's folder.`);
+      throw new Error(`${path} can't be read as text.`);
     }
-    const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
-    putFile({ id: path, title, kind: "markdown", content, version: 1 }, group);
+    openDocTab(doc, at, true, true);
+    return { text: `${path} is open in a tab under the session.` };
   }
 
   function openArtifact(doc: ArtifactDoc) {
-    if (doc.kind === "markdown" || doc.kind === "md") {
-      putFile(doc);
-      return;
-    }
-    const existing = tabs.find((t) => t.kind === "artifact" && t.doc?.id === doc.id && (t.group ?? null) === group);
-    if (existing) {
-      patchTab(existing.id, { doc, title: doc.title });
-      selectTab(existing.id);
-      return;
-    }
-    const t = artifactTab(doc, group);
-    tabs = placeTab(tabs, t, activeId, group);
-    selectTab(t.id);
+    openDocTab(doc, group, doc.kind === "markdown" || doc.kind === "md");
   }
 
   function openPin(pin: Pin) {
-    if (pin.kind === "url") {
-      openPage(pin.target);
-      return;
-    }
-    if (pin.kind === "file") {
-      if (readerShown && fileDoc?.id === pin.target) closeFile();
-      else void openFileInCard(pin.target);
-    }
+    if (pin.kind === "url") openPage(pin.target);
+    else if (pin.kind === "file") void openFile(pin.target);
   }
 
   function openFromPage(opener: string, url: string) {
@@ -905,14 +826,8 @@
     api.browserPrepare(t.id, url, owner).catch(() => {});
   }
 
-  /** A page tab, or the page open over the thread. */
   function pageById(id: string): Tab | null {
-    return coverPage?.id === id ? coverPage : (tabs.find((t) => t.id === id) ?? null);
-  }
-
-  function patchPage(id: string, patch: Partial<Tab>) {
-    if (coverPage?.id === id) coverPage = { ...coverPage, ...patch };
-    else patchTab(id, patch);
+    return tabs.find((t) => t.id === id) ?? null;
   }
 
   async function recoverPage(id: string) {
@@ -922,11 +837,11 @@
       toastError(e);
     }
     await new Promise((r) => setTimeout(r, 250));
-    patchPage(id, { crashed: undefined, loading: false });
+    patchTab(id, { crashed: undefined, loading: false });
   }
 
   function navigatePage(id: string, url: string) {
-    patchPage(id, { url, title: hostOf(url) });
+    patchTab(id, { url, title: hostOf(url) });
     api.browserNavigate(id, url).catch(toastError);
   }
 
@@ -964,8 +879,8 @@
         pendingTitles.delete(e.tab);
       }
     }
-    patchPage(e.tab, patch);
-    if (e.fullscreen !== undefined && (e.tab === activeId || (coverPageOn && e.tab === coverPage?.id))) void setImmersive(e.fullscreen);
+    patchTab(e.tab, patch);
+    if (e.fullscreen !== undefined && e.tab === activeId) void setImmersive(e.fullscreen);
   }
 
   function browse(url: string) {
@@ -1484,10 +1399,6 @@
     try {
       await api.deleteThread(id);
       act({ type: "deleted", key: id });
-      if (sessionDocs[id]) {
-        const { [id]: _, ...rest } = sessionDocs;
-        sessionDocs = rest;
-      }
       const open = tabs.filter((t) => t.sessionId === id).map((t) => t.id);
       for (const tid of open) closeTab(tid);
       void refreshThreads();
@@ -1758,15 +1669,9 @@
     if (cmd.op === "open" && cmd.url) {
       openPage(cmd.url, cmd.id, cmd.owner ?? null, !cmd.focus);
     }
-    else if (cmd.op === "navigate" && cmd.id && cmd.url) patchPage(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
-    else if (cmd.op === "focus" && cmd.id) {
-      if (coverPage?.id === cmd.id) showCover("page");
-      else selectTab(cmd.id);
-    }
-    else if (cmd.op === "close" && cmd.id) {
-      if (coverPage?.id === cmd.id) clearCover();
-      else closeTab(cmd.id);
-    }
+    else if (cmd.op === "navigate" && cmd.id && cmd.url) patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
+    else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
+    else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     else if (cmd.op === "show") showFromDesk(cmd);
     else if (cmd.op === "call" && cmd.id) void answerCall(cmd.id, cmd.call ?? {});
     else if (cmd.op === "theme") {
@@ -1801,10 +1706,9 @@
 
   /** Where the window is, in a line, for an agent looking at it. */
   function whereNow(): string {
-    const covers = { settings: `Settings, ${settingsSection}`, sessions: "Sessions", page: `the page ${coverPage?.url ?? ""}`, file: `the file ${coverDoc?.title ?? ""}` };
-    const page = coverOn && cover ? covers[cover] : "";
-    const kind = tab.kind === "page" ? "web page" : tab.kind === "session" ? (hasSession ? "session" : "Home") : tab.kind;
-    return `Window: ${kind} tab "${tab.title || "New session"}"${page ? `, showing ${page}` : ""}${infoShown ? ", side column open" : ""}${readerShown && fileDoc ? `, reading ${fileDoc.title}` : ""}.`;
+    const page = coverOn && cover ? (cover === "settings" ? `Settings, ${settingsSection}` : "Sessions") : "";
+    const kind = tab.kind === "page" ? "web page" : tab.kind === "session" ? (hasSession ? "session" : "Home") : tab.file ? "file" : tab.kind;
+    return `Window: ${kind} tab "${tab.title || "New session"}"${page ? `, showing ${page}` : ""}${infoShown ? ", side column open" : ""}.`;
   }
 
   /** Answers the desk: an agent listing or running Parzi's actions, or
@@ -1874,10 +1778,9 @@
       { id: "session.fork", title: "Branch the current session into a copy", when: () => hasSession, run: async () => { await fork(); return "Forked the session."; } },
       { id: "session.compact", title: "Summarise the current session to free context", when: () => hasSession, run: async () => { await compact(); return "Compacting the session."; } },
       { id: "settings.open", title: "Open Settings at a page", args: [{ name: "section", type: "string", choices: ["general", "providers", "connections", "appearance"] }], run: (a) => { openSettings(String(a.section ?? "general")); return `Opened Settings, ${a.section ?? "general"}. Use app_screen to see its controls.`; } },
-      { id: "settings.close", title: "Close Settings, the sessions list, or the page or file open over the session", when: () => coverOn, run: () => void clearCover() },
+      { id: "settings.close", title: "Close Settings or the sessions list", when: () => coverOn, run: () => void clearCover() },
       { id: "sidebar.toggle", title: "Show or hide the session's side column", args: [{ name: "open", type: "boolean" }], run: (a) => { toggleInfo(onOff(a.open, infoShown)); return infoOpen ? "The side column is open." : "The side column is hidden."; } },
-      { id: "files.open", title: "Open a file in the side bar, beside the cards", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFileInCard(String(a.path)); return `Opened ${a.path}.`; } },
-      { id: "files.close", title: "Close the file open in the side bar", run: () => { closeFile(); return "Closed the file."; } },
+      { id: "files.open", title: "Open a file in a tab under the current session", args: [{ name: "path", type: "string", required: true }], run: async (a) => { await openFile(String(a.path)); return `Opened ${a.path}.`; } },
       { id: "window.fullscreen", title: "Turn full screen on or off", args: [{ name: "on", type: "boolean" }], run: async (a) => { await setImmersive(onOff(a.on, immersive)); return immersive ? "Full screen is on." : "Full screen is off."; } },
       { id: "composer.model", title: "Pick the model for the next message", args: [{ name: "model", type: "string", required: true, choices: () => $board.flatMap((b) => b.models.map((m) => `${b.provider}/${m.id}`)) }], run: (a) => { comp.model = String(a.model); comp = comp; return `The next message goes to ${a.model}.`; } },
       { id: "composer.effort", title: "Set the reasoning effort", args: [{ name: "effort", type: "string", required: true, choices: () => effortsFor(comp.model, $board) }], run: (a) => { comp.effort = String(a.effort); comp = comp; return `Effort is ${a.effort}.`; } },
@@ -1942,12 +1845,12 @@
     document.addEventListener("parzi:open-artifact", onOpenArtifact);
     const onOpenNote = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
-      if (path) void openNoteInCard(path);
+      if (path) void openNote(path);
     };
     document.addEventListener("parzi:open-note", onOpenNote);
     const onOpenFile = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
-      if (path) void openFileInCard(path);
+      if (path) void openFile(path);
     };
     document.addEventListener("parzi:open-file", onOpenFile);
     const unClear = provideClearSessions(clearFinishedSessions);
@@ -2048,7 +1951,13 @@
 
   <div class="content">
     <main>
-    {#if tab.kind === "artifact" && tab.doc}
+    {#if tab.kind === "artifact" && tab.doc && tab.file}
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        {#key `${tab.id}:${tab.doc.version}`}
+          <FileReader doc={tab.doc} folder={threads.find((t) => t.id === tab.group)?.cwd ?? folder} full on:close={() => closeTab(activeId)} />
+        {/key}
+      </div>
+    {:else if tab.kind === "artifact" && tab.doc}
       <div class="fill col ghost" in:fade={{ duration: 150 }}>
         <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
         {#key `${tab.id}:${tab.doc.version}`}
@@ -2072,9 +1981,6 @@
             />
           {/key}
         </div>
-        {#if readerShown && fileDoc}
-          <FileReader doc={fileDoc} folder={sideMeta?.cwd ?? folder} width={readerWidth} on:close={closeFile} on:resize={resizeFile} />
-        {/if}
         <SessionInfo
           session={sideId}
           project={sessionProject}
@@ -2107,7 +2013,7 @@
         <div class="stagerow" class:solo={!hasSession && !coverOn} out:fade|local={{ duration: motion.duration }}>
           {#if hasSession || coverOn}
           <section class="session" out:fade|local={{ duration: motion.duration }}>
-            {#if (coverOn || parent) && !pageFull}
+            {#if coverOn || parent}
               <button
                 class="back icon-btn"
                 aria-label={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
@@ -2121,25 +2027,6 @@
             {#if coverOn && cover === "settings"}
               <div class="cover" transition:fade|global={motion}>
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
-              </div>
-            {:else if coverOn && cover === "page" && coverPage}
-              <div class="cover" class:under-dock={!pageFull} style:--dock="{dockHeight}px" transition:fade|global={motion}>
-                {#key coverPage.id}
-                  <PageView
-                    tab={coverPage}
-                    {immersive}
-                    devices={phonesWork}
-                    on:navigate={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
-                    on:error={(e) => toast(e.detail.text, true)}
-                    on:openTab={(e) => coverPage && navigatePage(coverPage.id, e.detail.url)}
-                    on:recover={() => coverPage && recoverPage(coverPage.id)}
-                    on:resume={() => coverPage && patchPage(coverPage.id, { crashed: undefined })}
-                  />
-                {/key}
-              </div>
-            {:else if coverOn && cover === "file" && coverDoc}
-              <div class="cover" style:--dock="{dockHeight}px" transition:fade|global={motion}>
-                <FileReader doc={coverDoc} {folder} full on:close={clearCover} />
               </div>
             {:else if coverOn && cover === "sessions"}
               <div class="cover" transition:fade|global={motion}>
@@ -2205,9 +2092,6 @@
             {/if}
           </section>
           {/if}
-          {#if readerShown && fileDoc}
-            <FileReader doc={fileDoc} {folder} width={readerWidth} on:close={closeFile} on:resize={resizeFile} />
-          {/if}
           <SessionInfo
             session={shown ?? ""}
             project={sessionProject}
@@ -2244,7 +2128,7 @@
         </div>
       {/if}
 
-      {#if (!coverOn || coverComposer) && !pageFull}
+      {#if !coverOn}
       <div
         class="composer"
         class:docked={hasSession || coverOn}
@@ -2257,7 +2141,6 @@
             project={sessionProject}
             sessionPlan={meta?.plan ?? null}
             {streaming}
-            current={readerShown && fileDoc ? fileDoc.id : ""}
             on:open={(e) => openPin(e.detail)}
           />
         {/if}
@@ -2578,11 +2461,6 @@
     inset: 0;
     display: flex;
     flex-direction: column;
-  }
-  /* A page's native view is drawn above the window's HTML, so it stops
-     short of the composer floating at the foot. */
-  .cover.under-dock {
-    padding-bottom: calc(var(--dock) + var(--space) * 6);
   }
   .cover :global(.page) {
     flex: 1;

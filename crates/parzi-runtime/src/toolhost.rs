@@ -1318,7 +1318,7 @@ impl ToolHost {
                 true,
                 v.pointer("/result/text")
                     .and_then(Value::as_str)
-                    .unwrap_or("It is open beside the session.")
+                    .unwrap_or("It is open in a tab under the session.")
                     .to_string(),
             ),
             Err(e) => (

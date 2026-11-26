@@ -35,9 +35,10 @@ and present. It stays as it is for now, and gets a review later.
   project instead.
 
 **Opening things**
-- A link or a pin opens full screen over the current tab, and the composer
-  stays floating over it so you can keep prompting.
-- Settings opens the same way, without the composer.
+- A link or a pin opens in a tab stacked under its session (pages and
+  files alike). Tried full screen over the tab first (2026-11-21); the
+  stacked tabs read better, so they came back on 2026-11-26.
+- Settings and Sessions open over the session tab, without the composer.
 - Most of the full browser goes.
 
 **Projects** are the home of context, meaning the codebase. They show in
@@ -262,9 +263,10 @@ Done when sending, queueing, stopping and switching are covered by tests and
 - **Side column:** Environment, Context, Usage (Claude and Codex first),
   Running.
 - **Pins** above the composer.
-- **A link or pin opens full screen** over the tab, with the composer
-  floating. Settings opens the same way, without the composer.
-- **Page tabs go.**
+- **A link or pin opens a tab stacked under its session** (pages and
+  files). Settings and Sessions open over the session tab, without the
+  composer.
+- **Page tabs stay, stacked under their session.**
 
 Done when a session with a dev server and a plan works end to end without
 leaving its tab.

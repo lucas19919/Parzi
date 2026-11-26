@@ -78,6 +78,8 @@ export interface Tab {
   zoom?: number;
   crashed?: string;
   doc?: ArtifactDoc;
+  /** An artifact tab holding a file or note, shown in the file reader. */
+  file?: boolean;
   composer: TabComposerState;
 }
 
@@ -120,8 +122,8 @@ export function restoreTab<T extends { kind?: unknown; title?: unknown }>(t: T):
   return typeof t.kind === "string" && RESTORED.has(t.kind) ? t : null;
 }
 
-export function artifactTab(doc: ArtifactDoc, group: string | null): Tab {
-  return { id: tabId(), kind: "artifact", title: doc.title, group, doc, composer: defaultComposer() };
+export function artifactTab(doc: ArtifactDoc, group: string | null, file = false): Tab {
+  return { id: tabId(), kind: "artifact", title: doc.title, group, doc, file: file || undefined, composer: defaultComposer() };
 }
 
 /** The host and port a URL points at, without "www.", or "" when it has none. */

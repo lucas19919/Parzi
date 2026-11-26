@@ -13,8 +13,6 @@
   export let project = "";
   export let sessionPlan: SessionMeta["plan"] = null;
   export let streaming = false;
-  /** The pin currently open in a tab or file viewer, if any. */
-  export let current = "";
 
   const dispatch = createEventDispatcher<{ open: Pin }>();
 
@@ -202,7 +200,7 @@
 
     <div class="pins">
       {#each pins as p (p.kind + ":" + p.target)}
-        {@const active = p.kind === "plan" ? openPop === "plan" : current === p.target}
+        {@const active = p.kind === "plan" && openPop === "plan"}
         <button
           class="pin"
           class:on={active}
