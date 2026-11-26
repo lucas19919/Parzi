@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bareWebRefs, chipLabel, fileLink, gitRefs, isBranchLike, joinPath, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
+import { bareWebRefs, chipLabel, fileLink, fileRefHref, fileRefs, gitRefs, isBranchLike, joinPath, safeDecode, vaultRefs, webLink, wholeRef, wikiRefs } from "../src/lib/linkRules.ts";
 
 test("relative links resolve beside the note or file they sit in", () => {
   assert.equal(joinPath("projects/parzi", "mobile-viewers.md"), "projects/parzi/mobile-viewers.md");
@@ -220,4 +220,41 @@ test("intranet http links keep their scheme in a tab", () => {
   assert.deepEqual(webLink("http://foo.lan:8080/x"), { kind: "tab", url: "http://foo.lan:8080/x" });
   assert.deepEqual(webLink("http://printer/status"), { kind: "tab", url: "http://printer/status" });
   assert.deepEqual(webLink("http://example.com/a"), { kind: "open", url: "https://example.com/a" });
+});
+
+
+test("wikilinks parse targets, aliases, and default .md extensions", () => {
+  assert.deepEqual(wikiRefs("See [[projects/parzi/mobile-viewers.md]] next."), [
+    { path: "brain://projects/parzi/mobile-viewers.md", label: "mobile-viewers.md", index: 4, length: 36 },
+  ]);
+  assert.deepEqual(wikiRefs("Check [[notes/plan|The Plan]] and [[inbox]]."), [
+    { path: "brain://notes/plan.md", label: "The Plan", index: 6, length: 23 },
+    { path: "brain://inbox.md", label: "inbox.md", index: 34, length: 9 },
+  ]);
+  assert.deepEqual(wikiRefs("Ignore `[[notes/a]]` in backticks."), []);
+  assert.deepEqual(wholeRef("[[projects/parzi/mobile-viewers.md]]"), {
+    path: "brain://projects/parzi/mobile-viewers.md",
+    vault: true,
+    label: "mobile-viewers.md",
+  });
+});
+
+test("workspace file paths and root configs are linked cleanly", () => {
+  assert.deepEqual(
+    fileRefs("Edit ui/src/lib/md.ts:42 and src-tauri/src/files.rs.").map((r) => r.path),
+    ["ui/src/lib/md.ts:42", "src-tauri/src/files.rs"],
+  );
+  assert.deepEqual(
+    fileRefs("Check Cargo.toml:12 and README.md now.").map((r) => r.path),
+    ["Cargo.toml:12", "README.md"],
+  );
+  assert.deepEqual(fileRefs("Ignore https://example.com/a/b.ts and v1.4.2."), []);
+  assert.deepEqual(fileRefs("Ignore `src/main.rs` in backticks."), []);
+  assert.equal(fileRefHref("Cargo.toml:12"), "./Cargo.toml:12");
+  assert.equal(fileRefHref("D:\\Repos\\Parzi\\src\\main.rs"), "file:///D:/Repos/Parzi/src/main.rs");
+  assert.deepEqual(wholeRef("`ui/src/App.svelte:10-20`"), {
+    path: "ui/src/App.svelte:10-20",
+    vault: false,
+    label: "ui/src/App.svelte:10-20",
+  });
 });

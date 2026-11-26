@@ -14,7 +14,7 @@
   import { appFor } from "./pageRules";
   import { toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
-  import { PHONES, phoneFit, phoneFor, viewport, type DeviceId, type PhoneId } from "./devices";
+  import { PHONES, phoneFit, phoneFor, viewport, type DeviceId, type DuoPose, type PhoneId } from "./devices";
   import PhoneFrame from "./PhoneFrame.svelte";
   import { NO_VEIL, stepVeil, type Veil } from "./veil";
 
@@ -25,13 +25,14 @@
 
   // A phone is emulated for real (screen, pixel density, user agent, touch)
   // and drawn as the phone, scaled down to the room the page has. The page
-  // gets the screen below the status bar and above the home indicator.
+  // gets the screen inside its system bars and side rail.
   let device: DeviceId = "laptop";
-  let closed = false;
+  let duoPose: DuoPose = "open";
+  let duoOpenPose: "open" | "portrait" = "open";
   const PHONE_IDS: PhoneId[] = ["iphone", "android", "duo"];
   let roomW = 0;
   let roomH = 0;
-  $: phone = !immersive && devices && device !== "laptop" ? phoneFor(device, closed) : null;
+  $: phone = !immersive && devices && device !== "laptop" ? phoneFor(device, duoPose) : null;
   $: view = phone ? viewport(phone) : null;
   $: fit = phone ? phoneFit(phone, { width: roomW, height: roomH }) : 1;
   $: screenBg = tab.bg || "rgb(255, 255, 255)";
@@ -100,7 +101,7 @@
   $: trackLoad(url, !!tab.loading);
   $: veiled = !!url && !tab.crashed && !!tab.loading && veil.fresh;
   $: secure = url.startsWith("https://");
-  $: url, immersive, $covered, slot, tab.crashed, veiled, schedule();
+  $: url, immersive, $covered, slot, tab.crashed, veiled, phone, fit, schedule();
   $: open = editing && $suggest.rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
   $: if (open && form) listStyle = `left:${form.offsetLeft}px;width:${form.offsetWidth}px`;
@@ -327,14 +328,41 @@
           </button>
           {#each PHONE_IDS as id (id)}
             <button class="nav label" class:on={device === id} aria-pressed={device === id} use:tooltip={PHONES[id].tip} on:click={() => (device = id)}>
-              <Icon name="phone" size={14} />{PHONES[id].label}
+              <Icon name={id === "duo" ? "duo" : "phone"} size={14} />{PHONES[id].label}
             </button>
           {/each}
         </div>
         {#if device === "duo"}
           <div class="devices" data-ui-segmented>
-            <button class="nav label" class:on={!closed} aria-pressed={!closed} use:tooltip={"Unfolded: the inner screen"} on:click={() => (closed = false)}>Open</button>
-            <button class="nav label" class:on={closed} aria-pressed={closed} use:tooltip={"Folded: the outer screen"} on:click={() => (closed = true)}>Closed</button>
+            <button
+              class="nav label"
+              class:on={duoPose !== "closed"}
+              aria-pressed={duoPose !== "closed"}
+              use:tooltip={"Unfolded: 7.6-inch inner screen"}
+              on:click={() => (duoPose = duoOpenPose)}>Open</button
+            >
+            <button
+              class="nav label"
+              class:on={duoPose === "closed"}
+              aria-pressed={duoPose === "closed"}
+              use:tooltip={"Folded: 5.4-inch outer screen"}
+              on:click={() => (duoPose = "closed")}>Closed</button
+            >
+            {#if duoPose !== "closed"}
+              <button
+                class="nav"
+                class:on={duoPose === "portrait"}
+                aria-pressed={duoPose === "portrait"}
+                aria-label="Rotate inner screen"
+                use:tooltip={duoPose === "portrait" ? "Rotate to landscape (951x669)" : "Rotate to portrait (669x951)"}
+                on:click={() => {
+                  duoOpenPose = duoPose === "portrait" ? "open" : "portrait";
+                  duoPose = duoOpenPose;
+                }}
+              >
+                <Icon name="rotate" size={14} />
+              </button>
+            {/if}
           </div>
         {/if}
       {/if}

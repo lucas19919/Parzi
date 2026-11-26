@@ -157,12 +157,112 @@ export function gitRefs(text: string): GitRef[] {
   return out.filter((r, i, all) => !all.slice(0, i).some((p) => r.index < p.index + p.length));
 }
 
+export interface WikiRef {
+  path: string;
+  label: string;
+  index: number;
+  length: number;
+}
+
+const WIKI_RE = /\[\[([^\]\n|`]+?)(?:\|([^\]\n`]+?))?\]\]/g;
+
+/** Obsidian/Parzi `[[note]]` and `[[projects/foo/bar.md|Alias]]` wikilinks. */
+export function wikiRefs(text: string): WikiRef[] {
+  const out: WikiRef[] = [];
+  WIKI_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let guard = 0;
+  while ((m = WIKI_RE.exec(text)) !== null && guard++ < 1000) {
+    if (m[0].length === 0) {
+      WIKI_RE.lastIndex++;
+      continue;
+    }
+    const rawTarget = m[1].trim();
+    if (!rawTarget) continue;
+    const at = m.index;
+    if (text[at - 1] === "`" || text[at + m[0].length] === "`") {
+      WIKI_RE.lastIndex = at + m[0].length;
+      continue;
+    }
+    const [targetPart, anchor] = rawTarget.split("#", 2);
+    const normalized = /\.[a-z0-9]+$/i.test(targetPart) ? targetPart : `${targetPart}.md`;
+    const href = `brain://${normalized.replace(/\\/g, "/")}${anchor ? `#${anchor}` : ""}`;
+    const alias = m[2]?.trim();
+    const label = alias || chipLabel(normalized.replace(/\\/g, "/"), true);
+    out.push({ path: href, label, index: at, length: m[0].length });
+    WIKI_RE.lastIndex = at + m[0].length;
+  }
+  WIKI_RE.lastIndex = 0;
+  return out;
+}
+
+const FILE_EXT =
+  "rs|ts|tsx|mts|cts|js|jsx|mjs|cjs|svelte|vue|py|go|c|h|cc|cpp|cxx|hpp|cs|java|kt|swift|rb|php|css|scss|less|html|htm|xml|svg|json|jsonc|toml|yaml|yml|md|mdx|txt|sql|sh|bash|zsh|ps1|lock|ini|cfg|conf|env|graphql|proto|tex|csv|pdf|png|jpg|jpeg|webp|gif";
+
+const FILE_PATH_RE = new RegExp(
+  `(?<![A-Za-z0-9_@:/\\\\.-])((?:[A-Za-z]:[\\\\/]|(?:\\.\\.?|[A-Za-z0-9_.@-]+)[\\\\/])(?:[A-Za-z0-9_.@-]+[\\\\/])*[A-Za-z0-9_.@-]+\\.(?:${FILE_EXT})(?::\\d+(?:[-:]\\d+)?)?(?:#L\\d+(?:-L?\\d+)?)?)(?![A-Za-z0-9_/-]|\\.[A-Za-z0-9])`,
+  "gi",
+);
+
+const ROOT_FILE_RE =
+  /(?<![A-Za-z0-9_@:/\\.-])((?:Cargo\.toml|Cargo\.lock|package\.json|tsconfig\.json|README\.md|CHANGELOG\.md|LICENSE\.md|CLAUDE\.md|AGENTS\.md|vite\.config\.[cm]?[jt]s|svelte\.config\.[cm]?[jt]s|tauri\.conf\.json)(?::\d+(?:[-:]\d+)?)?(?:#L\d+(?:-L?\d+)?)?)(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])/g;
+
+/** Normalizes a workspace or absolute file ref into a DOMPurify-safe href. */
+export function fileRefHref(path: string): string {
+  const clean = path.replace(/\\/g, "/");
+  if (/^[A-Za-z]:\//.test(clean)) return `file:///${clean}`;
+  if (clean.startsWith("/")) return `file://${clean}`;
+  if (!clean.includes("/") && clean.includes(":")) return `./${clean}`;
+  return clean;
+}
+
+/** Workspace-relative or absolute source file paths (and known root configs) in prose. */
+export function fileRefs(text: string): VaultRef[] {
+  const out: VaultRef[] = [];
+  const take = (re: RegExp) => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    let guard = 0;
+    while ((m = re.exec(text)) !== null && guard++ < 1000) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      let path = m[1];
+      const trail = TRAIL.exec(path);
+      if (trail) path = path.slice(0, -trail[0].length);
+      if (!path) continue;
+      const at = m.index + m[0].indexOf(m[1]);
+      if (text[at - 1] === "`" || text[at + path.length] === "`") {
+        re.lastIndex = m.index + m[0].length;
+        continue;
+      }
+      out.push({ path, index: at, length: path.length });
+      re.lastIndex = at + path.length;
+    }
+    re.lastIndex = 0;
+  };
+  take(FILE_PATH_RE);
+  take(ROOT_FILE_RE);
+  out.sort((a, b) => a.index - b.index || b.length - a.length);
+  return out.filter((r, i, all) => !all.slice(0, i).some((p) => r.index < p.index + p.length));
+}
+
 /** True when the whole trimmed line is exactly one linkable ref. */
-export function wholeRef(line: string): { path: string; vault: boolean } | null {
+export function wholeRef(line: string): { path: string; vault: boolean; label?: string } | null {
   const t = line.trim().replace(/^`+|`+$/g, "").trim();
-  if (!t || /\s/.test(t)) return null;
+  if (!t) return null;
+  const w = wikiRefs(t);
+  if (w.length === 1 && w[0].index === 0 && w[0].length === t.length) {
+    return { path: w[0].path, vault: true, label: w[0].label };
+  }
+  if (/\s/.test(t)) return null;
   const v = vaultRefs(t);
   if (v.length === 1 && v[0].index === 0 && v[0].length === t.length) return { path: v[0].path, vault: true };
+  const f = fileRefs(t);
+  if (f.length === 1 && f[0].index === 0 && f[0].length === t.length) {
+    return { path: fileRefHref(f[0].path), vault: false, label: f[0].path };
+  }
   const g = gitRefs(t);
   if (g.length === 1 && g[0].index === 0 && g[0].length === t.length) return { path: g[0].path, vault: false };
   return null;

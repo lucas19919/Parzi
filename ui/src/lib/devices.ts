@@ -3,35 +3,46 @@
 export type DeviceId = "laptop" | "iphone" | "android" | "duo";
 export type PhoneId = Exclude<DeviceId, "laptop">;
 
-/** How a phone is drawn: its body, camera and buttons. */
-export type Art = "iphone" | "android" | "duo-open" | "duo-closed";
+/** How a phone is drawn: its body, camera, hinge and buttons. */
+export type Art = "iphone" | "android" | "duo-open" | "duo-open-portrait" | "duo-closed";
+
+/** The iPhone Duo's physical states: unfolded wide, unfolded rotated, or folded. */
+export type DuoPose = "open" | "portrait" | "closed";
 
 export interface Phone {
   label: string;
   /** The toolbar tooltip. */
   tip: string;
   art: Art;
-  /** The whole screen in CSS pixels, portrait. */
+  /** The whole screen in CSS pixels (logical points). */
   width: number;
   height: number;
   /** Device pixels per CSS pixel. */
   scale: number;
   userAgent: string;
-  /** The status bar and the home indicator area, drawn inside the screen in
-   *  the page's colour: the page sits between them, as in Safari or Chrome,
-   *  so the camera and the round screen corners are never over the page. */
+  /** Insets reserved inside the screen for system chrome (status bar, home
+   *  indicator, or the closed Duo's 84pt right bar), painted in the page's
+   *  colour: the page sits inside them so the camera, rail and round screen
+   *  corners never overlap the page. */
   top: number;
   bottom: number;
-  /** The screen's corner radius. The page is a sharp rectangle, so the
-   *  bars are deep enough that its corners stay inside the round corners. */
+  left?: number;
+  right?: number;
+  /** The screen's corner radius (outer/right corners when asymmetric). */
   radius: number;
+  /** Hinge-side (left) corner radius when asymmetric (the closed Duo's 8pt edge). */
+  leftRadius?: number;
   /** Black glass between the screen and the metal edge, and the edge itself. */
   bezel: number;
   edge: number;
+  /** Extra titanium hinge spine width along the left edge (closed Duo). */
+  spine?: number;
 }
 
+// iOS 27 / Safari 27.1 sends the frozen iPhone OS 18_7 token on both slab iPhones
+// and the iPhone Duo (no foldable-specific token).
 const IPHONE_UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1";
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1";
 
 export const PHONES: Record<PhoneId, Phone> = {
   // iPhone 16 Pro: 402x874 points at 3x; the status bar is its 62pt top safe
@@ -68,66 +79,113 @@ export const PHONES: Record<PhoneId, Phone> = {
     bezel: 16,
     edge: 6,
   },
-  // The iPhone Duo, Apple's foldable, open: its 7.6-inch inner screen
-  // (1878 x 2670 px at 3x). DUO_CLOSED below is the 5.4-inch outer one.
-  // Its browser is Safari, so the user agent is the iPhone's.
+  // The iPhone Duo unfolded (native landscape): 7.6-inch inner display.
+  // iOS 27 renders at 951x669 pt (2853x2007 px at 3x, scaled to 2670x1878)
+  // with 55pt symmetric corners and an under-display camera. Full-screen
+  // Safari spans all 951 CSS px between the top bar and home indicator.
   duo: {
     label: "Duo",
     tip: "As on an iPhone Duo",
     art: "duo-open",
-    width: 626,
-    height: 890,
+    width: 951,
+    height: 669,
     scale: 3,
     userAgent: IPHONE_UA,
     top: 50,
-    bottom: 30,
-    radius: 30,
-    bezel: 9,
-    edge: 4,
+    bottom: 46,
+    radius: 55,
+    bezel: 14,
+    edge: 6,
   },
 };
 
-/** The iPhone Duo closed: its 5.4-inch outer screen (1398 x 2034 px at 3x). */
+/** The iPhone Duo unfolded and rotated to portrait: 669x951 pt at 3x, with
+ *  the hinge running horizontally and a traditional top status bar. */
+export const DUO_PORTRAIT: Phone = {
+  ...PHONES.duo,
+  art: "duo-open-portrait",
+  width: 669,
+  height: 951,
+  top: 48,
+  bottom: 46,
+};
+
+/** The iPhone Duo folded: its 5.4-inch passport outer screen (466x678 pt,
+ *  1398x2034 px at 3x) with asymmetric corners (8pt at the left titanium hinge
+ *  spine, 59pt on the outer right edge). Safari 27.1 reserves an 84pt vertical
+ *  bar on the right for the vertical Dynamic Island and circular status module,
+ *  leaving 382x618 CSS px for pages. */
 export const DUO_CLOSED: Phone = {
   ...PHONES.duo,
   art: "duo-closed",
   width: 466,
   height: 678,
-  top: 62,
-  bottom: 38,
-  radius: 46,
+  top: 24,
+  bottom: 36,
+  right: 84,
+  radius: 59,
+  leftRadius: 8,
   bezel: 10,
+  edge: 5,
+  spine: 8,
 };
 
-export function phoneFor(id: PhoneId, closed = false): Phone {
-  return id === "duo" && closed ? DUO_CLOSED : PHONES[id];
+export function phoneFor(id: PhoneId, pose: DuoPose | boolean = "open"): Phone {
+  if (id !== "duo") return PHONES[id];
+  if (pose === true || pose === "closed") return DUO_CLOSED;
+  if (pose === "portrait") return DUO_PORTRAIT;
+  return PHONES.duo;
 }
 
-/** What the page gets: the screen between the status bar and the home indicator. */
-/** How far a corner of the page reaches outside the screen's round corner,
- *  at full size: under a pixel for every phone. */
+/** How far a corner of the page rectangle reaches outside its rounded screen
+ *  corner at full size: under a pixel for every phone and pose. */
 export function cornerOverhang(p: Phone): number {
-  const r = p.radius;
-  const rise = r - Math.min(p.top, p.bottom);
-  return rise <= 0 ? 0 : r - Math.sqrt(r * r - rise * rise);
+  const left = p.left ?? 0;
+  const right = p.right ?? 0;
+  const rL = p.leftRadius ?? p.radius;
+  const rR = p.radius;
+  const corners: Array<[number, number, number]> = [
+    [rL, left, p.top],
+    [rL, left, p.bottom],
+    [rR, right, p.top],
+    [rR, right, p.bottom],
+  ];
+  let max = 0;
+  for (const [r, dx, dy] of corners) {
+    if (dx >= r || dy >= r) continue;
+    const rise = r - dy;
+    const reach = r - dx - Math.sqrt(r * r - rise * rise);
+    if (reach > max) max = reach;
+  }
+  return max;
 }
 
+/** What the page gets: the screen inside its system bars and side rail. */
 export function viewport(p: Phone): { width: number; height: number } {
-  return { width: p.width, height: p.height - p.top - p.bottom };
+  return {
+    width: p.width - (p.left ?? 0) - (p.right ?? 0),
+    height: p.height - p.top - p.bottom,
+  };
 }
 
 /** How far the side buttons stand out of the body, at full size. */
 export const BUTTON = 3;
 
-/** Where the screen starts inside the drawing, at full size. */
+/** Standard distance from the drawing edge to the screen, at full size. */
 export function screenAt(p: Phone): number {
   return BUTTON + p.edge + p.bezel;
 }
 
-/** The whole drawing (buttons, body, screen) at full size. */
+/** Where the screen starts inside the drawing, accounting for a left hinge spine. */
+export function screenOrigin(p: Phone): { x: number; y: number } {
+  const at = screenAt(p);
+  return { x: at + (p.spine ?? 0), y: at };
+}
+
+/** The whole drawing (buttons, hinge spine, body, screen) at full size. */
 export function frameSize(p: Phone): { width: number; height: number } {
   const around = 2 * screenAt(p);
-  return { width: p.width + around, height: p.height + around };
+  return { width: p.width + around + (p.spine ?? 0), height: p.height + around };
 }
 
 /** Space kept free around the drawing (not scaled), for its shadow. */

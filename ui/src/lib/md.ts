@@ -5,7 +5,7 @@ import { toast } from "./toast";
 import { reportMarkdown } from "./mdReport";
 import { mathAt, readableTex } from "./mdMath";
 import { splitBlocks } from "./liveBlocks";
-import { bareWebRefs, chipLabel, gitRefs, vaultRefs, wholeRef } from "./linkRules";
+import { bareWebRefs, chipLabel, fileRefHref, fileRefs, gitRefs, vaultRefs, wholeRef, wikiRefs } from "./linkRules";
 
 export const richReady = writable(false);
 
@@ -52,19 +52,26 @@ export function ensureRich(): Promise<void> {
       core.registerLanguage("py", python);
       core.registerLanguage("javascript", javascript);
       core.registerLanguage("js", javascript);
+      core.registerLanguage("jsx", javascript);
       core.registerLanguage("typescript", typescript);
       core.registerLanguage("ts", typescript);
+      core.registerLanguage("tsx", typescript);
       core.registerLanguage("bash", bash);
       core.registerLanguage("sh", bash);
       core.registerLanguage("shell", bash);
       core.registerLanguage("zsh", bash);
+      core.registerLanguage("ps1", bash);
+      core.registerLanguage("powershell", bash);
       core.registerLanguage("json", json);
+      core.registerLanguage("jsonc", json);
       core.registerLanguage("toml", ini);
       core.registerLanguage("ini", ini);
       core.registerLanguage("xml", xml);
       core.registerLanguage("html", xml);
       core.registerLanguage("svg", xml);
+      core.registerLanguage("svelte", xml);
       core.registerLanguage("css", css);
+      core.registerLanguage("scss", css);
       core.registerLanguage("sql", sql);
       core.registerLanguage("go", go);
       core.registerLanguage("golang", go);
@@ -75,7 +82,10 @@ export function ensureRich(): Promise<void> {
       core.registerLanguage("diff", diff);
       core.registerLanguage("patch", diff);
       core.registerLanguage("c", c);
+      core.registerLanguage("h", c);
       core.registerLanguage("cpp", cpp);
+      core.registerLanguage("cc", cpp);
+      core.registerLanguage("hpp", cpp);
       hljs = core;
       mdCache.clear();
       richReady.set(true);
@@ -165,7 +175,7 @@ function texHtml(tex: string, display: boolean): string | null {
   try {
     return katex.renderToString(readableTex(tex, display), {
       displayMode: display,
-      throwOnError: true,
+      throwOnError: false,
       output: "html",
       strict: false,
     });
@@ -174,40 +184,63 @@ function texHtml(tex: string, display: boolean): string | null {
   }
 }
 
-md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) => {
-  const first = state.getLines(start, start + 1, 0, false).trim();
-  if (!first.startsWith("$$")) return false;
-  let line = start;
-  let body = first.slice(2);
-  if (body.includes("$$")) {
-    body = body.slice(0, body.indexOf("$$"));
-  } else {
-    line++;
-    const parts: string[] = [body];
-    let closed = false;
-    for (; line <= end; line++) {
-      const text = state.getLines(line, line + 1, 0, false);
-      const cut = text.indexOf("$$");
-      if (cut >= 0) {
-        parts.push(text.slice(0, cut));
-        closed = true;
-        break;
-      }
-      parts.push(text);
+md.block.ruler.before(
+  "fence",
+  "parzi-math-block",
+  (state, start, end, silent) => {
+    if (state.sCount[start] - state.blkIndent >= 4) return false;
+    const firstPos = state.bMarks[start] + state.tShift[start];
+    const firstMax = state.eMarks[start];
+    const first = state.src.slice(firstPos, firstMax).trim();
+    let openDelim: "$$" | "\\[" | null = null;
+    let closeDelim: "$$" | "\\]" | null = null;
+    if (first.startsWith("$$")) {
+      openDelim = "$$";
+      closeDelim = "$$";
+    } else if (first.startsWith("\\[")) {
+      openDelim = "\\[";
+      closeDelim = "\\]";
+    } else {
+      return false;
     }
-    if (!closed) return false;
-    body = parts.join("\n");
-  }
-  if (silent) return true;
-  const tok = state.push("parzi_math", "div", 0);
-  tok.content = body;
-  tok.meta = { display: true };
-  tok.map = [start, line + 1];
-  state.line = line + 1;
-  return true;
-});
+    let line = start;
+    let body = first.slice(openDelim.length);
+    const inlineClose = body.indexOf(closeDelim);
+    if (inlineClose >= 0) {
+      if (body.slice(inlineClose + closeDelim.length).trim()) return false;
+      body = body.slice(0, inlineClose);
+    } else {
+      line++;
+      const parts: string[] = [body];
+      let closed = false;
+      for (; line < end; line++) {
+        const pos = state.bMarks[line] + state.tShift[line];
+        const max = state.eMarks[line];
+        const text = state.src.slice(pos, max);
+        const cut = text.indexOf(closeDelim);
+        if (cut >= 0) {
+          parts.push(text.slice(0, cut));
+          closed = true;
+          break;
+        }
+        parts.push(text);
+      }
+      if (!closed) return false;
+      body = parts.join("\n");
+    }
+    if (!body.trim()) return false;
+    if (silent) return true;
+    const tok = state.push("parzi_math", "div", 0);
+    tok.content = body;
+    tok.meta = { display: true };
+    tok.map = [start, line + 1];
+    state.line = line + 1;
+    return true;
+  },
+  { alt: ["paragraph", "reference", "blockquote", "list"] },
+);
 
-md.inline.ruler.after("escape", "parzi-math-inline", (state, silent) => {
+md.inline.ruler.before("escape", "parzi-math-inline", (state, silent) => {
   const span = mathAt(state.src, state.pos);
   if (!span) return false;
   if (silent) return true;
@@ -241,12 +274,13 @@ const PLAIN_FENCES = new Set([
 let streamingFence = false;
 
 function linkWholeLine(l: string): string {
-  // Fenced code stays code: only a line that is exactly one vault/SHA/
+  // Fenced code stays code: only a line that is exactly one vault/file/SHA/
   // branch/UUID ref becomes the same file-ref chip used in prose.
   const ref = wholeRef(l);
   if (!ref) return escapeHtml(l) || " ";
   const m = /^(\s*)(.*?)(\s*)$/.exec(l) ?? ["", "", l, ""];
-  return `${escapeHtml(m[1])}<a class="file-ref" href="${escapeHtml(ref.path)}" title="${escapeHtml(ref.path)}">${escapeHtml(chipLabel(ref.path, ref.vault))}</a>${escapeHtml(m[3])}`;
+  const label = ref.label ?? chipLabel(ref.path, ref.vault);
+  return `${escapeHtml(m[1])}<a class="file-ref" href="${escapeHtml(ref.path)}" title="${escapeHtml(label)}">${escapeHtml(label)}</a>${escapeHtml(m[3])}`;
 }
 
 md.renderer.rules.fence = (tokens, idx) => {
@@ -385,27 +419,30 @@ md.core.ruler.push("parzi-file-links", (state) => {
         // which case it becomes the same chip used in prose.
         const ref = wholeRef(tok.content);
         if (!ref) continue;
+        const shown = ref.label ?? chipLabel(ref.path, ref.vault);
         const open = new state.Token("link_open", "a", 1);
         open.attrs = [
           ["href", ref.path],
           ["class", "file-ref"],
-          ["title", ref.path],
+          ["title", shown],
         ];
         const label = new state.Token("text", "", 0);
-        label.content = chipLabel(ref.path, ref.vault);
+        label.content = shown;
         const close = new state.Token("link_close", "a", -1);
         kids.splice(i, 1, open, label, close);
         i += 2;
         continue;
       }
       if (tok.type !== "text") continue;
-      // Vault notes win ties: a SHA inside a note path stays one link.
+      // Wikilinks and vault notes win ties over workspace paths and git refs.
       const refs = [
-        ...vaultRefs(tok.content).map((r) => ({ ...r, pri: 0 })),
-        ...gitRefs(tok.content).map((r) => ({ ...r, pri: 1 })),
+        ...wikiRefs(tok.content).map((r) => ({ index: r.index, length: r.length, href: r.path, label: r.label, title: r.label, pri: 0 })),
+        ...vaultRefs(tok.content).map((r) => ({ index: r.index, length: r.length, href: r.path, label: chipLabel(r.path, true), title: r.path, pri: 1 })),
+        ...fileRefs(tok.content).map((r) => ({ index: r.index, length: r.length, href: fileRefHref(r.path), label: r.path, title: r.path, pri: 2 })),
+        ...gitRefs(tok.content).map((r) => ({ index: r.index, length: r.length, href: r.path, label: chipLabel(r.path, false), title: r.path, pri: 3 })),
       ]
-        .sort((a, b) => a.index - b.index || a.pri - b.pri)
-        .filter((r, i, all) => !all.slice(0, i).some((p) => r.index < p.index + p.length));
+        .sort((a, b) => a.index - b.index || a.pri - b.pri || b.length - a.length)
+        .filter((r, idx, all) => !all.slice(0, idx).some((p) => r.index < p.index + p.length));
       if (!refs.length) continue;
       const nodes: typeof kids = [];
       let at = 0;
@@ -417,12 +454,12 @@ md.core.ruler.push("parzi-file-links", (state) => {
         }
         const open = new state.Token("link_open", "a", 1);
         open.attrs = [
-          ["href", r.path],
+          ["href", r.href],
           ["class", "file-ref"],
-          ["title", r.path],
+          ["title", r.title],
         ];
         const label = new state.Token("text", "", 0);
-        label.content = chipLabel(r.path, r.pri === 0);
+        label.content = r.label;
         const close = new state.Token("link_close", "a", -1);
         nodes.push(open, label, close);
         at = r.index + r.length;
@@ -469,7 +506,7 @@ export function fenced(text: string, lang = ""): string {
 }
 
 export function renderMarkdown(src: string, cache = true): string {
-  if (src.includes("```") || src.includes("~~~") || src.includes("$")) void ensureRich();
+  if (src.includes("```") || src.includes("~~~") || src.includes("$") || src.includes("\\(") || src.includes("\\[")) void ensureRich();
   if (cache) {
     const hit = mdCache.get(src);
     if (hit !== undefined) {

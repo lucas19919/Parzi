@@ -47,3 +47,18 @@ test("no plan, or a plan with no targets, shows no row", () => {
   assert.equal(targetsSummary({ goal: "Ship", targets: [] }), null);
   assert.deepEqual(targetsSummary({ goal: "", targets: [{ title: "A", state: "done" }] }), { open: [], done: 1 });
 });
+
+
+test("a session plan with steps pins as a live checklist even without a doc path", () => {
+  const items = [
+    { title: "One", state: "done" as const },
+    { title: "Two", state: "active" as const },
+    { title: "Three", state: "pending" as const },
+  ];
+  assert.deepEqual(sessionPins([], null, items), [
+    { kind: "plan", label: "Plan · 1/3", target: "plan" },
+  ]);
+  assert.deepEqual(sessionPins([], "C:\\s\\plan.md", items), [
+    { kind: "plan", label: "Plan · 1/3", target: "C:\\s\\plan.md" },
+  ]);
+});

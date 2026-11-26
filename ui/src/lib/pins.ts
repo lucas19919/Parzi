@@ -1,10 +1,15 @@
 import type { HostJob, ProjectPlan } from "./api";
 
-/** A link the session keeps coming back to, shown above the composer. */
+/** A link or popover the session keeps coming back to, shown above the composer. */
 export interface Pin {
-  kind: "url" | "file";
+  kind: "url" | "file" | "plan";
   label: string;
   target: string;
+}
+
+export interface PlanStepRef {
+  title: string;
+  state: "pending" | "active" | "done";
 }
 
 const LOCAL = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -20,8 +25,8 @@ function localHost(url: string): string {
 }
 
 /** The session's pins: each running dev server's first localhost address,
- *  then the plan's document when it has one. */
-export function sessionPins(hosts: HostJob[], planDoc?: string | null): Pin[] {
+ *  then the session's plan checklist (or its plan document when it has no steps). */
+export function sessionPins(hosts: HostJob[], planDoc?: string | null, planItems?: PlanStepRef[] | null): Pin[] {
   const out: Pin[] = [];
   const seen = new Set<string>();
   for (const h of hosts) {
@@ -31,7 +36,13 @@ export function sessionPins(hosts: HostJob[], planDoc?: string | null): Pin[] {
     seen.add(url);
     out.push({ kind: "url", label: localHost(url), target: url });
   }
-  if (planDoc?.trim()) out.push({ kind: "file", label: "Plan", target: planDoc.trim() });
+  const items = Array.isArray(planItems) ? planItems : [];
+  if (items.length > 0) {
+    const done = items.filter((i) => i.state === "done").length;
+    out.push({ kind: "plan", label: `Plan · ${done}/${items.length}`, target: planDoc?.trim() || "plan" });
+  } else if (planDoc?.trim()) {
+    out.push({ kind: "file", label: "Plan", target: planDoc.trim() });
+  }
   return out;
 }
 

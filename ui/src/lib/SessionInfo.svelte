@@ -13,6 +13,7 @@
   import { folderName } from "./tabs";
   import type { Notice } from "./turns";
   import ProjectMenu from "./ProjectMenu.svelte";
+  import BranchMenu from "./BranchMenu.svelte";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
 
@@ -22,6 +23,7 @@
   export let folder = "";
   export let branch = "";
   export let remoteHost = "";
+  export let remoteAvailable = "";
   export let contextUsed = 0;
   export let contextLimit = 0;
   export let compacting = false;
@@ -46,15 +48,22 @@
     compact: void;
     resize: { width: number };
     moved: { meta: SessionMeta };
+    branchChanged: { branch: string };
+    toggleRemote: { on: boolean };
   }>();
 
   // Where the session runs can change while it is stopped: another project,
-  // or another folder of this one (a worktree, which brings its branch).
+  // another branch, or a worktree.
   $: local = !remoteHost && !/^[a-z]:/.test(session);
-  $: stuck = !session ? "" : !local ? "Moving works on this computer's sessions for now" : streaming ? "Stop the run to move the session" : "";
+  $: stuck = !session ? "" : !local ? "Moving works on this computer's sessions for now" : streaming ? "Stop the run to switch environment" : "";
   $: movable = !!session && !stuck;
+  $: canSwitchBranch = !!folder && local && !streaming;
+  $: canToggleHost = !session && !!remoteAvailable && !streaming;
+  $: sessionTitle = threads.find((t) => t.id === session)?.title ?? "";
   let projBtn: HTMLButtonElement | null = null;
+  let branchBtn: HTMLButtonElement | null = null;
   let projOpen = false;
+  let branchOpen = false;
   let moving = false;
 
   async function move(cwd: string, slug?: string) {
@@ -64,6 +73,20 @@
       const meta = await api.setSessionEnvironment(session, cwd, slug ?? project);
       dispatch("moved", { meta });
       toast(`Moved to ${folderName(meta.cwd || cwd)}`);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      moving = false;
+    }
+  }
+
+  async function switchBranch(target: string) {
+    if (!folder || moving || !canSwitchBranch) return;
+    moving = true;
+    try {
+      const next = await api.gitSwitchBranch(folder, target);
+      dispatch("branchChanged", { branch: next || target });
+      toast(`Switched to ${next || target}`);
     } catch (e) {
       toastError(e);
     } finally {
@@ -136,10 +159,22 @@
   <div class="col">
   <InfoCard id="env" title="Environment" foldedAside>
     <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
-    <div class="info-line">
-      <Icon name={remoteHost ? "server" : "desktop"} size={12} />
-      <span class="info-v">{remoteHost || "This computer"}</span>
-    </div>
+    {#if canToggleHost}
+      <button
+        class="info-line row"
+        use:tooltip={remoteHost ? `Switch to this computer (currently ${remoteHost})` : `Switch to remote host ${remoteAvailable}`}
+        on:click={() => dispatch("toggleRemote", { on: !remoteHost })}
+      >
+        <Icon name={remoteHost ? "server" : "desktop"} size={12} />
+        <span class="info-v">{remoteHost || "This computer"}</span>
+        <span class="row-chev" aria-hidden="true"><Icon name="chevDown" size={12} /></span>
+      </button>
+    {:else}
+      <div class="info-line" use:tooltip={remoteAvailable && session ? "Host is fixed once a session starts" : ""}>
+        <Icon name={remoteHost ? "server" : "desktop"} size={12} />
+        <span class="info-v">{remoteHost || "This computer"}</span>
+      </div>
+    {/if}
     {#if session}
       <button
         bind:this={projBtn}
@@ -147,16 +182,34 @@
         aria-disabled={!movable || moving}
         aria-haspopup="menu"
         aria-expanded={projOpen}
-        use:tooltip={stuck || `In ${folder}. Pick another project to move the session there.`}
-        on:click={() => movable && !moving && (projOpen = !projOpen)}
+        use:tooltip={stuck || `In ${folder}. Click to switch project.`}
+        on:click={() => {
+          if (!movable || moving) return;
+          branchOpen = false;
+          projOpen = !projOpen;
+        }}
       >
         <Icon name={project ? "project" : "folder"} size={12} />
         <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
+        {#if movable}<span class="row-chev" aria-hidden="true"><Icon name="chevDown" size={12} /></span>{/if}
       </button>
       {#if folder}
-        <button class="info-line row" aria-disabled={!movable || moving} use:tooltip={stuck || "Move to another folder, such as a worktree on another branch"} on:click={pickFolder}>
+        <button
+          bind:this={branchBtn}
+          class="info-line row"
+          aria-disabled={!canSwitchBranch || moving}
+          aria-haspopup="menu"
+          aria-expanded={branchOpen}
+          use:tooltip={stuck || "Switch branch, worktree, or folder"}
+          on:click={() => {
+            if (!canSwitchBranch || moving) return;
+            projOpen = false;
+            branchOpen = !branchOpen;
+          }}
+        >
           <Icon name="branch" size={12} />
           <span class="info-v mono">{branch || "No branch"}</span>
+          {#if canSwitchBranch}<span class="row-chev" aria-hidden="true"><Icon name="chevDown" size={12} /></span>{/if}
         </button>
       {/if}
     {:else}
@@ -164,11 +217,23 @@
         <Icon name={project ? "project" : "folder"} size={12} />
         <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
       </div>
-      {#if branch}
-        <div class="info-line">
+      {#if folder}
+        <button
+          bind:this={branchBtn}
+          class="info-line row"
+          aria-disabled={!canSwitchBranch || moving}
+          aria-haspopup="menu"
+          aria-expanded={branchOpen}
+          use:tooltip={streaming ? "Stop the run to switch branch" : "Switch git branch"}
+          on:click={() => {
+            if (!canSwitchBranch || moving) return;
+            branchOpen = !branchOpen;
+          }}
+        >
           <Icon name="branch" size={12} />
-          <span class="info-v mono">{branch}</span>
-        </div>
+          <span class="info-v mono">{branch || "No branch"}</span>
+          {#if canSwitchBranch}<span class="row-chev" aria-hidden="true"><Icon name="chevDown" size={12} /></span>{/if}
+        </button>
       {/if}
     {/if}
   </InfoCard>
@@ -182,6 +247,19 @@
       on:close={() => (projOpen = false)}
       on:error={(e) => toast(e.detail.text, true)}
       on:project={(e) => e.detail.path && void move(e.detail.path, e.detail.slug)}
+    />
+  {/if}
+  {#if branchOpen && folder}
+    <BranchMenu
+      anchor={branchBtn}
+      {folder}
+      {branch}
+      {sessionTitle}
+      on:close={() => (branchOpen = false)}
+      on:error={(e) => toast(e.detail.text, true)}
+      on:switchBranch={(e) => void switchBranch(e.detail.branch)}
+      on:moveFolder={(e) => void move(e.detail.path)}
+      on:pickFolder={() => void pickFolder()}
     />
   {/if}
 
@@ -269,5 +347,14 @@
   .pct {
     flex: none;
     font-variant-numeric: tabular-nums;
+  }
+  .row-chev {
+    flex: none;
+    display: inline-flex;
+    color: var(--faint);
+    transition: color var(--dur) ease;
+  }
+  button.info-line.row:hover .row-chev {
+    color: var(--text);
   }
 </style>

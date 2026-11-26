@@ -6,6 +6,10 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Remade the iPhone Duo browser viewer with real hardware proportions: landscape and portrait inner displays with a rotate toggle and hidden under-display camera, plus the closed outer display with its titanium spine, asymmetric corners, and right-side vertical Dynamic Island rail.
+- Opening or revealing local files and folders now works from any path without workspace-folder restrictions.
+- Added a branch and worktree picker in the Environment card to switch branches, jump between worktrees, or spin up a new worktree for a session.
+- Polished session cards and markdown: proposed plans collapse long step lists with quick expand, questions support number-key shortcuts, Running cards label shell commands by intent, and links, math, and pins render more cleanly.
 - Hardening and reliability fixes across the engine, providers, gateway, CLI, and UI: preserved project plans and ACP settings, tightened tool approval gates, secret path guards, OAuth URL validation, and image path checks, fixed Claude usage retries and child-exit handling, kept remote device unpairing/scope checks live, and fixed session switching, draft recovery, phone-frame fullscreen, markdown fences, artifact updates, and context/running cards.
 - The thread is quieter: each turn is one line (Worked 2m · 12 steps, or Thinking… while it runs) that opens to its steps. Notices such as plan saved, compacted or stopped, and messages from other sessions, are in the Running card. Errors are one line with their buttons, timestamps and rewind show on hover, the plan checklist lives behind the Plan pin, and reply chips are smaller. The tidied display of your messages is gone.
 - The session manager lists sessions only: drafts stay on the card that wrote them, and the filters above the list are your projects, not folders.

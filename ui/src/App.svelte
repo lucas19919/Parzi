@@ -458,7 +458,7 @@
     closedTabs.set(rest);
     if (!last) return;
     if (last.sessionId) openSession(last.sessionId);
-    else openFullPage(last.url);
+    else openPage(last.url);
   }
 
   $: sessionProject = (hasSession ? meta?.project : "") || sideMeta?.project || project?.slug || "";
@@ -472,11 +472,9 @@
   $: pageInfoShown = tab.kind === "page" && infoOpen && innerWidth >= 900;
   $: sideId = pageOwner ?? shown ?? "";
   $: sideMeta = pageOwnerMeta ?? meta;
-  // A file open in the side bar takes its second column, beside the cards.
-  // It gives way before the thread does: never wider than leaves the
-  // thread 480px.
-  $: readerShown = (infoShown || pageInfoShown) && !!fileDoc;
-  $: readerWidth = Math.max(FILE_MIN, Math.min(fileWidth, innerWidth - infoWidth - 480));
+  // A file or note opens side-by-side beside the thread (independent of SessionInfo).
+  $: readerShown = (tab.kind === "session" || tab.kind === "page") && !!fileDoc && !coverOn;
+  $: readerWidth = Math.max(FILE_MIN, Math.min(fileWidth, innerWidth - (infoShown || pageInfoShown ? infoWidth : 0) - 420));
 
   $: shift = Math.round(
     ((infoShown || pageInfoShown ? infoWidth + 8 : 0) + (readerShown ? readerWidth + 8 : 0)) / 2,
@@ -789,6 +787,8 @@
   }
 
   function openPage(url: string, id?: string, owner?: string | null, background = false) {
+    if (!url) return;
+    if (!background && coverOn) clearCover();
     const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
     if (existing) {
       if (url && existing.url !== url) patchTab(existing.id, { url, title: hostOf(url) });
@@ -801,7 +801,7 @@
     }
   }
 
-  // The side bar reads one file per session (tabs outside a session share one).
+  // Side-by-side file reader keeps one open file/note per session (tabs outside a session share one).
   let sessionDocs: Record<string, ArtifactDoc> = {};
   let looseDoc: ArtifactDoc | null = null;
   $: group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
@@ -822,13 +822,11 @@
     const next = { ...doc, version };
     if (at) sessionDocs = { ...sessionDocs, [at]: next };
     else looseDoc = next;
-    // Shown here: the side bar opens to read it.
-    if (at === group && !infoOpen) toggleInfo(true);
+    if (at === group && coverOn) clearCover();
   }
 
-  /** An agent's ui.show_file: the file or brain note opens in that session's
-   *  side bar, beside the cards. Errors go back to the agent rather than to
-   *  a toast. */
+  /** An agent's ui.show_file: the file or brain note opens beside the session.
+   *  Errors go back to the agent rather than to a toast. */
   async function showFileFor(session: string, path: string, note: boolean): Promise<{ text: string }> {
     const at = session || group;
     if (note) {
@@ -843,7 +841,7 @@
     return { text: `${path} is open beside the session${at === group ? "" : "; the person sees it when they open this session"}.` };
   }
 
-  /** A linked file opens in the side bar; one that isn't workspace text opens outside Parzi. */
+  /** A linked file opens side-by-side beside the thread; non-text files open outside Parzi. */
   async function openFileInCard(path: string) {
     const at = group;
     if (isImagePath(path)) {
@@ -858,6 +856,17 @@
       return;
     }
     putFile(diskDoc(path, content), at);
+  }
+
+  /** A linked brain note opens side-by-side beside the thread. */
+  async function openNoteInCard(path: string) {
+    const content = await brain.read(path).catch(() => null);
+    if (content == null) {
+      toast("That note can't be read.", true);
+      return;
+    }
+    const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
+    putFile({ id: path, title, kind: "markdown", content, version: 1 }, group);
   }
 
   function openArtifact(doc: ArtifactDoc) {
@@ -876,71 +885,24 @@
     selectTab(t.id);
   }
 
-  /** A web page full screen over the current tab. A new link gets a fresh
-   *  page rather than the last one's history. `id` is the one the desk
-   *  gave a page the command line opened. */
-  function openFullPage(url: string, id?: string) {
-    if (!url) return;
-    dropCoverPage();
-    coverPage = pageTab(url, id);
-    coverTarget = url;
-    showCover("page");
-  }
-
-  /** A file full screen over the current tab, in the file reader; one that
-   *  isn't text opens outside Parzi. */
-  async function openFullFile(path: string) {
-    let doc: ArtifactDoc;
-    if (isImagePath(path)) doc = imageDoc(path);
-    else {
-      try {
-        doc = diskDoc(path, await api.readTextFile(path));
-      } catch {
-        await api.openFilePath(path).catch(toastError);
-        return;
-      }
-    }
-    showFullDoc(doc, path);
-  }
-
-  async function openFullNote(path: string) {
-    const content = await brain.read(path).catch(() => null);
-    if (content == null) {
-      toast("That note can't be read.", true);
+  function openPin(pin: Pin) {
+    if (pin.kind === "url") {
+      openPage(pin.target);
       return;
     }
-    const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
-    showFullDoc({ id: path, title, kind: "markdown", content, version: 1 }, path);
-  }
-
-  function showFullDoc(doc: ArtifactDoc, target: string) {
-    // Reopening the same file bumps the version so the reader re-renders.
-    const version = coverDoc?.id === doc.id ? coverDoc.version + 1 : doc.version || 1;
-    coverDoc = { ...doc, version };
-    coverTarget = target;
-    showCover("file");
-  }
-
-  function openPin(pin: Pin) {
-    if (pin.kind === "url") openFullPage(pin.target);
-    else void openFullFile(pin.target);
+    if (pin.kind === "file") {
+      if (readerShown && fileDoc?.id === pin.target) closeFile();
+      else void openFileInCard(pin.target);
+    }
   }
 
   function openFromPage(opener: string, url: string) {
     const from = pageById(opener);
-    // The page over a session keeps its place: what it opens in a new
-    // window goes to the system browser.
-    if (from && from === coverPage) {
-      api.openConfirmedUrl(url).catch(toastError);
-      return;
-    }
-    if (!from?.owner) {
-      openFullPage(url);
-      return;
-    }
-    const t = pageTab(url, undefined, from.owner);
+    const owner = from?.owner ?? null;
+    const t = pageTab(url, undefined, owner);
     tabs = placeTab(tabs, t, opener);
-    api.browserPrepare(t.id, url, from.owner).catch(() => {});
+    if (!owner) selectTab(t.id);
+    api.browserPrepare(t.id, url, owner).catch(() => {});
   }
 
   /** A page tab, or the page open over the thread. */
@@ -1007,7 +969,7 @@
   }
 
   function browse(url: string) {
-    openFullPage(url);
+    openPage(url);
   }
 
   function openSession(id: string) {
@@ -1793,11 +1755,8 @@
   }
 
   function onDeskCmd(cmd: DeskCmd) {
-    // An agent's own page (browser.open) stays a tab it drives in the
-    // background; any other page opens over the current tab.
     if (cmd.op === "open" && cmd.url) {
-      if (cmd.owner) openPage(cmd.url, cmd.id, cmd.owner, !cmd.focus);
-      else openFullPage(cmd.url, cmd.id);
+      openPage(cmd.url, cmd.id, cmd.owner ?? null, !cmd.focus);
     }
     else if (cmd.op === "navigate" && cmd.id && cmd.url) patchPage(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
     else if (cmd.op === "focus" && cmd.id) {
@@ -1905,7 +1864,7 @@
     return [
       { id: "tabs.list", title: "List the open tabs", run: () => tabs.map((t) => `${t.id === activeId ? "* " : ""}${t.kind} "${t.title || "New session"}" (${t.id})${t.url ? ` ${t.url}` : ""}`).join("\n") },
       { id: "tabs.new", title: "Open a new session tab (Home)", run: () => void newSession() },
-      { id: "page.open", title: "Open a web page full screen over the current tab", args: [{ name: "url", type: "string", required: true, about: "an address or words to search" }], run: (a) => { const url = toAddress(String(a.url ?? "")); if (!url) throw new Error("Say which page to open."); openFullPage(url); return `Opened ${url}.`; } },
+      { id: "page.open", title: "Open a web page in a browser tab", args: [{ name: "url", type: "string", required: true, about: "an address or words to search" }], run: (a) => { const url = toAddress(String(a.url ?? "")); if (!url) throw new Error("Say which page to open."); openPage(url); return `Opened ${url}.`; } },
       { id: "tabs.select", title: "Switch to a tab by title or id", args: [{ name: "tab", type: "string", required: true }], run: (a) => { const t = tabNamed(a.tab); if (!t) throw new Error(`No tab "${a.tab}".`); selectTab(t.id); return `Switched to "${t.title || "New session"}".`; } },
       { id: "tabs.close", title: "Close a tab (the current one if none is named)", args: [{ name: "tab", type: "string" }], run: (a) => { const t = tabNamed(a.tab); if (!t) throw new Error(`No tab "${a.tab}".`); closeTab(t.id); return `Closed "${t.title || "the tab"}".`; } },
       { id: "tabs.reopen", title: "Reopen the last closed tab", run: () => void reopenClosed() },
@@ -1973,7 +1932,7 @@
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
       if (!url) return;
-      openFullPage(url);
+      openPage(url);
     };
     document.addEventListener("parzi:open-page", onOpenPage);
     const onOpenArtifact = (e: Event) => {
@@ -1983,12 +1942,12 @@
     document.addEventListener("parzi:open-artifact", onOpenArtifact);
     const onOpenNote = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
-      if (path) void openFullNote(path);
+      if (path) void openNoteInCard(path);
     };
     document.addEventListener("parzi:open-note", onOpenNote);
     const onOpenFile = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
-      if (path) void openFullFile(path);
+      if (path) void openFileInCard(path);
     };
     document.addEventListener("parzi:open-file", onOpenFile);
     const unClear = provideClearSessions(clearFinishedSessions);
@@ -2104,9 +2063,10 @@
               bind:this={page}
               {tab}
               {immersive}
+              devices={phonesWork}
               on:navigate={(e) => navigatePage(tab.id, e.detail.url)}
               on:error={(e) => toast(e.detail.text, true)}
-              on:openTab={(e) => navigatePage(tab.id, e.detail.url)}
+              on:openTab={(e) => openPage(e.detail.url)}
               on:recover={() => recoverPage(tab.id)}
               on:resume={() => patchTab(tab.id, { crashed: undefined })}
             />
@@ -2222,6 +2182,10 @@
                   on:voted={(e) => settle(e.detail.key)}
                   on:answered={(e) => settle(e.detail.key)}
                   on:proposal={(e) => void answerProposal(e.detail.session)}
+                  on:reviseProposal={() => {
+                    omnibar?.focus();
+                    toast("Type what to change in the composer.");
+                  }}
                   on:edited={(e) => {
                     comp.input = e.detail.text;
                     comp = comp;
@@ -2251,6 +2215,7 @@
             {folder}
             {branch}
             remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
+            remoteAvailable={$remoteInfo?.host ?? ""}
             contextUsed={context.used}
             contextLimit={context.limit}
             {compacting}
@@ -2270,6 +2235,11 @@
             on:openSession={(e) => openSession(e.detail.id)}
             on:compact={compact}
             on:moved={(e) => relocated(e.detail.meta)}
+            on:branchChanged={(e) => {
+              branch = e.detail.branch;
+              if (shown) threads = threads.map((t) => (t.id === shown ? { ...t, branch: e.detail.branch } : t));
+            }}
+            on:toggleRemote={(e) => setRemote(e.detail.on)}
           />
         </div>
       {/if}
@@ -2285,8 +2255,9 @@
           <SessionPins
             session={shown}
             project={sessionProject}
-            planDoc={meta?.plan?.doc ?? null}
-            current={coverComposer ? coverTarget : ""}
+            sessionPlan={meta?.plan ?? null}
+            {streaming}
+            current={readerShown && fileDoc ? fileDoc.id : ""}
             on:open={(e) => openPin(e.detail)}
           />
         {/if}
@@ -2621,6 +2592,8 @@
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
+    container-name: thread-scroll;
+    container-type: inline-size;
     padding-bottom: calc(var(--dock) + calc(var(--space) * 8));
     user-select: text;
   }

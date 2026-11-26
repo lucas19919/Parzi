@@ -88,9 +88,9 @@ export function spent(secs: number, fine = false): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-/** The turn's line: "Worked 2m · 12 steps", or "Thinking… 10s" while it runs. */
-export function turnLabel(f: Fold, liveSecs = 0): string {
-  if (f.live) return `Thinking… ${spent(liveSecs, true)}`;
+/** The turn's line: "Worked 2m · 12 steps", or "Running tests… 10s" / "Thinking… 10s" while it runs. */
+export function turnLabel(f: Fold, liveSecs = 0, liveAction = ""): string {
+  if (f.live) return `${liveAction || "Thinking…"} ${spent(liveSecs, true)}`;
   if (f.only && !f.stopped) return f.secs >= 1 ? `${f.only} · ${spent(f.secs)}` : f.only;
   const took = f.secs >= 1 ? spent(f.secs) : "";
   const head = f.stopped ? (took ? `Stopped after ${took}` : "Stopped") : took ? `Worked ${took}` : "Worked";

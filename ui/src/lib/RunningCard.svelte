@@ -10,6 +10,7 @@
   import type { LogStep } from "./runLog";
   import type { Notice } from "./turns";
   import { duration } from "./format";
+  import { commandIntent, isShellStepLabel, stepIntent } from "./intentLabel";
 
   /** What the agent is doing in this session, oldest first: the steps of its
    *  latest run, the commands it ran, the helper sessions it started, and
@@ -22,7 +23,7 @@
 
   const dispatch = createEventDispatcher<{ openSession: { id: string } }>();
   /** Rows shown before "earlier" folds the rest away. */
-  const SHOWN = 8;
+  const SHOWN = 6;
 
   let jobs: ShellJob[] = [];
   let loadedFor = "";
@@ -47,8 +48,13 @@
     | { key: string; at: number; kind: "job"; job: ShellJob }
     | { key: string; at: number; kind: "note"; note: Notice };
 
-  $: steps = $runLogs.get(session)?.steps ?? [];
+  $: rawSteps = $runLogs.get(session)?.steps ?? [];
   $: commands = jobs.filter((j) => !j.host_id);
+  // Dedupe shell tool steps that already have a richer ShellJob row at the same time.
+  $: steps = rawSteps.filter((s) => {
+    if (!isShellStepLabel(s.label)) return true;
+    return !commands.some((j) => Math.abs(j.started - s.at) < 3000);
+  });
   $: rows = [
     ...steps.map((s): Row => ({ key: `s:${s.id}`, at: s.at, kind: "step", step: s })),
     ...helpers.map((h): Row => ({ key: `h:${h.id}`, at: Date.parse(h.created) || 0, kind: "helper", helper: h })),
@@ -70,7 +76,10 @@
   /** What a subagent is on (its current step), or what it reported. */
   function detail(h: SessionMeta, tone: string, act: Map<string, { label: string }>): string {
     if (tone === "need") return "Needs you";
-    if (tone === "live") return act.get(h.id)?.label ?? "";
+    if (tone === "live") {
+      const raw = act.get(h.id)?.label ?? "";
+      return raw ? stepIntent(raw, true) : "";
+    }
     return (h.last_run?.summary ?? "").split("\n")[0].trim();
   }
 
@@ -120,13 +129,14 @@
   {#each rows.slice(earlier) as r (r.key)}
     {#if r.kind === "step"}
       {@const s = r.step}
+      {@const short = stepIntent(s.label, s.running)}
       <div class="info-line" class:quiet={!s.running}>
         {#if s.running}
           <i class="info-dot t-live" />
         {:else}
           <span class="status" class:bad={!s.ok}><Icon name={s.ok ? "check" : "xCircle"} size={12} /></span>
         {/if}
-        <span class="info-v" use:tooltip={s.ok || s.running ? s.label : `${s.label} (failed)`}>{s.label}</span>
+        <span class="info-v" use:tooltip={s.ok || s.running ? s.label : `${s.label} (failed)`}>{short}</span>
         <span class="info-time">{s.running ? span(now - s.at) : s.ms ? duration(s.ms) : ""}</span>
       </div>
     {:else if r.kind === "helper"}
@@ -158,16 +168,17 @@
       {/if}
     {:else}
       {@const j = r.job}
+      {@const short = commandIntent(j.cmd, j.urls, j.running)}
       <div class="info-line job" class:quiet={!j.running}>
         {#if j.running}
-          <Icon name="terminal" size={12} />
+          <i class="info-dot t-live" />
         {:else}
           <span class="status" class:bad={j.exit !== 0}><Icon name={j.exit === 0 ? "check" : "xCircle"} size={12} /></span>
         {/if}
-        <span class="info-v mono" use:tooltip={j.exit === 0 || j.running ? j.cmd : `${j.cmd} (exit ${j.exit})`}>{j.cmd}</span>
+        <span class="info-v" use:tooltip={j.exit === 0 || j.running ? j.cmd : `${j.cmd} (exit ${j.exit})`}>{short}</span>
         <span class="info-time">{span(took(j))}</span>
         {#if j.running && j.background}
-          <button class="stop" aria-label="Stop {j.cmd}" use:tooltip={"Stop"} on:click={() => stop(j)}><span class="square" /></button>
+          <button class="stop" aria-label="Stop {short}" use:tooltip={`Stop: ${j.cmd}`} on:click={() => stop(j)}><span class="square" /></button>
         {/if}
       </div>
     {/if}

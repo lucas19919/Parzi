@@ -1,20 +1,12 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant};
 
-use parzi_core::store::SessionStore;
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::oneshot;
 
 use crate::AppState;
-
-static GRANTED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
-static SESSION_ROOTS: Mutex<Option<(Instant, Vec<PathBuf>)>> = Mutex::new(None);
-const ROOTS_TTL: Duration = Duration::from_secs(5);
-const OUTSIDE: &str = "that location is outside the workspace, choose the folder first";
 
 /// Runs blocking work off the async threads; the one helper every command uses.
 pub(crate) async fn off_thread<T, F>(f: F) -> Result<T, String>
@@ -35,141 +27,6 @@ pub(crate) fn remote_or_device(raw: &str) -> bool {
     unc || nt
 }
 
-#[cfg(windows)]
-pub(crate) fn plain_local(p: &Path) -> bool {
-    use std::path::{Component, Prefix};
-    if remote_or_device(&p.to_string_lossy()) {
-        return false;
-    }
-    let mut parts = p.components();
-    let disk = matches!(
-        parts.next(),
-        Some(Component::Prefix(pre)) if matches!(pre.kind(), Prefix::Disk(_))
-    );
-    disk && matches!(parts.next(), Some(Component::RootDir))
-        && parts.all(|c| !c.as_os_str().to_string_lossy().contains(':'))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn plain_local(p: &Path) -> bool {
-    !remote_or_device(&p.to_string_lossy()) && p.is_absolute()
-}
-
-fn local_abs(raw: &str) -> Result<PathBuf, String> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Err("empty path".into());
-    }
-    if remote_or_device(raw) {
-        return Err("network and device paths are not opened".into());
-    }
-    let p = PathBuf::from(raw);
-    if plain_local(&p) {
-        Ok(p)
-    } else {
-        Err("path must be absolute".into())
-    }
-}
-
-fn grant_folder(path: &Path) {
-    if !plain_local(path) {
-        return;
-    }
-    let mut roots = vec![];
-    push_root(&mut roots, normalize_lexical(path));
-    if let Ok(mut g) = GRANTED.lock() {
-        for r in roots {
-            if !g.contains(&r) {
-                g.push(r);
-            }
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn pick_folder(app: AppHandle, start: Option<String>) -> Result<Option<String>, String> {
-    let mut builder = app.dialog().file().set_title("Choose a folder");
-    if let Some(dir) = start.filter(|s| plain_local(Path::new(s.trim()))) {
-        builder = builder.set_directory(dir.trim());
-    }
-    let (tx, rx) = oneshot::channel();
-    builder.pick_folder(move |picked| {
-        let _ = tx.send(picked);
-    });
-    let Some(picked) = rx
-        .await
-        .map_err(|_| "the folder dialog closed".to_string())?
-    else {
-        return Ok(None);
-    };
-    let path = picked.into_path().map_err(|e| e.to_string())?;
-    let granted = path.clone();
-    off_thread(move || {
-        grant_folder(&granted);
-        Ok(())
-    })
-    .await?;
-    Ok(Some(path.to_string_lossy().into_owned()))
-}
-
-fn push_root(roots: &mut Vec<PathBuf>, p: PathBuf) {
-    if let Ok(c) = p.canonicalize() {
-        if c != p {
-            roots.push(c);
-        }
-    }
-    roots.push(p);
-}
-
-fn scan_session_roots(store: &SessionStore) -> Vec<PathBuf> {
-    let mut roots = vec![];
-    if let Ok(home) = parzi_core::paths::parzi_dir() {
-        if plain_local(&home) {
-            push_root(&mut roots, normalize_lexical(&home));
-        }
-    }
-    let cwds: std::collections::BTreeSet<String> = store
-        .list()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|m| m.cwd.trim().to_string())
-        .filter(|c| !c.is_empty())
-        .collect();
-    // The person's registered projects are theirs to browse too, before any
-    // session has run in them.
-    let projects = parzi_core::brain::projects()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.folder.trim().to_string())
-        .filter(|f| !f.is_empty());
-    for cwd in cwds.into_iter().chain(projects) {
-        let raw = Path::new(&cwd);
-        if !plain_local(raw) {
-            continue;
-        }
-        let p = normalize_lexical(raw);
-        if p.parent().is_none() {
-            continue;
-        }
-        push_root(&mut roots, p);
-    }
-    roots
-}
-
-fn file_roots(store: &SessionStore, fresh: bool) -> Vec<PathBuf> {
-    let mut roots = GRANTED.lock().map(|g| g.clone()).unwrap_or_default();
-    let mut cache = SESSION_ROOTS.lock().unwrap_or_else(PoisonError::into_inner);
-    match cache.as_ref() {
-        Some((at, cached)) if !fresh && at.elapsed() < ROOTS_TTL => roots.extend_from_slice(cached),
-        _ => {
-            let scanned = scan_session_roots(store);
-            roots.extend_from_slice(&scanned);
-            *cache = Some((Instant::now(), scanned));
-        }
-    }
-    roots
-}
-
 fn normalize_lexical(p: &Path) -> PathBuf {
     use std::path::Component;
     let mut out = PathBuf::new();
@@ -188,77 +45,43 @@ fn normalize_lexical(p: &Path) -> PathBuf {
     out
 }
 
-fn contained_in(target: &Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|r| target.starts_with(r))
-}
-
-fn simplified(p: &Path) -> PathBuf {
-    #[cfg(windows)]
-    {
-        use std::path::{Component, Prefix};
-        let mut parts = p.components();
-        if let Some(Component::Prefix(pre)) = parts.next() {
-            if let Prefix::VerbatimDisk(d) = pre.kind() {
-                let mut out = PathBuf::from(format!("{}:\\", char::from(d)));
-                out.extend(parts.filter(|c| !matches!(c, Component::RootDir)));
-                return out;
-            }
-        }
+fn resolve_path(raw: &str) -> Result<PathBuf, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("empty path".into());
     }
-    p.to_path_buf()
-}
-
-fn lexically_inside(target: &Path, roots: &[PathBuf]) -> bool {
-    let key = |p: &Path| -> Vec<String> {
-        p.components()
-            .map(|c| {
-                let s = c.as_os_str().to_string_lossy();
-                if cfg!(windows) {
-                    s.to_lowercase()
-                } else {
-                    s.into_owned()
-                }
-            })
-            .collect()
-    };
-    let t = key(target);
-    roots.iter().any(|r| {
-        let r = key(&simplified(r));
-        t.len() >= r.len() && t[..r.len()] == r[..]
-    })
-}
-
-fn confine(store: &SessionStore, raw: &str) -> Result<(PathBuf, PathBuf), String> {
-    let normal = normalize_lexical(&local_abs(raw)?);
-    let mut roots = file_roots(store, false);
-    if !lexically_inside(&normal, &roots) {
-        roots = file_roots(store, true);
-        if !lexically_inside(&normal, &roots) {
-            return Err(OUTSIDE.into());
-        }
-    }
-    let canon = normal
-        .ancestors()
-        .find_map(|q| q.canonicalize().ok())
-        .ok_or_else(|| "cannot resolve path".to_string())?;
-    if contained_in(&canon, &roots) {
-        Ok((normal, canon))
-    } else {
-        Err(OUTSIDE.into())
-    }
-}
-
-pub(crate) fn confined_path(store: &SessionStore, raw: &str) -> Result<PathBuf, String> {
-    confine(store, raw).map(|(normal, _)| normal)
+    Ok(normalize_lexical(Path::new(raw)))
 }
 
 #[tauri::command]
-pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<String, String> {
+pub async fn pick_folder(app: AppHandle, start: Option<String>) -> Result<Option<String>, String> {
+    let mut builder = app.dialog().file().set_title("Choose a folder");
+    if let Some(dir) = start
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        builder = builder.set_directory(dir);
+    }
+    let (tx, rx) = oneshot::channel();
+    builder.pick_folder(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let Some(picked) = rx
+        .await
+        .map_err(|_| "the folder dialog closed".to_string())?
+    else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+pub async fn git_branch(cwd: String) -> Result<String, String> {
     if cwd.is_empty() {
         return Ok(String::new());
     }
-    let orch = state.orch.clone();
-    let cwd = off_thread(move || confined_path(orch.store(), &cwd)).await?;
+    let cwd = resolve_path(&cwd)?;
     let mut cmd = tokio::process::Command::new("git");
     cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&cwd)
@@ -273,27 +96,70 @@ pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<Strin
 }
 
 #[tauri::command]
-pub async fn git_branches(
-    state: State<'_, AppState>,
-    cwd: String,
-) -> Result<crate::worktree::Branches, String> {
+pub async fn git_branches(cwd: String) -> Result<crate::worktree::Branches, String> {
     if cwd.is_empty() {
         return Ok(crate::worktree::Branches::default());
     }
-    let orch = state.orch.clone();
     off_thread(move || {
-        let dir = confined_path(orch.store(), &cwd)?;
+        let dir = resolve_path(&cwd)?;
         Ok(crate::worktree::branches(&dir))
     })
     .await
 }
 
 #[tauri::command]
-pub async fn list_files(
-    state: State<'_, AppState>,
-    root: String,
-    query: String,
-) -> Result<Vec<String>, String> {
+pub async fn git_worktrees(cwd: String) -> Result<Vec<crate::worktree::WorktreeEntry>, String> {
+    if cwd.is_empty() {
+        return Ok(vec![]);
+    }
+    off_thread(move || {
+        let dir = resolve_path(&cwd)?;
+        Ok(crate::worktree::list_worktrees(&dir))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_switch_branch(cwd: String, branch: String) -> Result<String, String> {
+    if cwd.is_empty() {
+        return Err("No workspace folder.".into());
+    }
+    off_thread(move || {
+        let dir = resolve_path(&cwd)?;
+        crate::worktree::switch_branch(&dir, &branch)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_create_worktree(
+    cwd: String,
+    base: String,
+    name: String,
+) -> Result<String, String> {
+    if cwd.is_empty() {
+        return Err("No workspace folder.".into());
+    }
+    off_thread(move || {
+        let dir = resolve_path(&cwd)?;
+        let base_ref = if base.trim().is_empty() {
+            "HEAD"
+        } else {
+            base.trim()
+        };
+        let label = if name.trim().is_empty() {
+            "session"
+        } else {
+            name.trim()
+        };
+        let path = crate::worktree::create(&dir, base_ref, label)?;
+        Ok(path.display().to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_files(root: String, query: String) -> Result<Vec<String>, String> {
     const SKIP: &[&str] = &[
         ".git",
         "node_modules",
@@ -305,10 +171,9 @@ pub async fn list_files(
     if root.is_empty() {
         return Ok(vec![]);
     }
-    let orch = state.orch.clone();
     let q = query.to_lowercase();
     off_thread(move || {
-        let root_path = confined_path(orch.store(), &root)?;
+        let root_path = resolve_path(&root)?;
         let mut out = vec![];
         let mut stack = vec![(root_path.clone(), 0u8)];
         let mut visited = 0usize;
@@ -358,9 +223,8 @@ const READ_IMAGE_MAX: u64 = 8 * 1024 * 1024;
 const READ_TEXT_MAX: u64 = 1_000_000;
 
 #[tauri::command]
-pub async fn read_text_file(state: State<'_, AppState>, path: String) -> Result<String, String> {
-    let orch = state.orch.clone();
-    off_thread(move || read_text(&confined_path(orch.store(), &path)?)).await
+pub async fn read_text_file(path: String) -> Result<String, String> {
+    off_thread(move || read_text(&resolve_path(&path)?)).await
 }
 
 /// A text file's contents, refusing what is too large or not text.
@@ -380,11 +244,7 @@ fn read_text(p: &Path) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn read_image_data_url(
-    state: State<'_, AppState>,
-    path: String,
-    cwd: String,
-) -> Result<String, String> {
+pub async fn read_image_data_url(path: String, cwd: String) -> Result<String, String> {
     let abs = if Path::new(&path).is_absolute() || remote_or_device(&path) {
         path
     } else if cwd.trim().is_empty() {
@@ -396,9 +256,8 @@ pub async fn read_image_data_url(
             path.trim().trim_start_matches(['/', '\\'])
         )
     };
-    let orch = state.orch.clone();
     off_thread(move || {
-        let p = confined_path(orch.store(), &abs)?;
+        let p = resolve_path(&abs)?;
         let meta = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         if !meta.is_file() {
             return Err(format!("{} is not a file", p.display()));
@@ -424,9 +283,6 @@ pub async fn tool_image(
     session: String,
     path: String,
 ) -> Result<String, String> {
-    if remote_or_device(&path) {
-        return Err("pictures on network paths are not shown".into());
-    }
     let orch = state.orch.clone();
     off_thread(move || {
         let fold = |s: &str| s.replace('\\', "/").to_lowercase();
@@ -445,37 +301,17 @@ pub async fn tool_image(
         if !named {
             return Err("no tool in this session made that picture".into());
         }
-        let p = Path::new(&path);
-        let allowed = confined_path(orch.store(), &path).is_ok() || {
-            let real = std::fs::canonicalize(p).ok();
-            let under = |dir: PathBuf| {
-                real.as_ref().is_some_and(|r| {
-                    std::fs::canonicalize(dir)
-                        .ok()
-                        .is_some_and(|base| r.starts_with(&base))
-                })
-            };
-            parzi_core::paths::parzi_dir().ok().is_some_and(|root| {
-                under(root.join("shots").join(&session))
-                    || under(root.join("attachments"))
-                    || under(orch.store().artifact_dir(&session))
-            })
-        };
-        if !allowed {
-            return Err("pictures outside the workspace are not shown".into());
-        }
-        let meta = std::fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
+        let p = resolve_path(&path)?;
+        let meta = std::fs::metadata(&p).map_err(|e| format!("{path}: {e}"))?;
         if !meta.is_file() || meta.len() > READ_IMAGE_MAX {
             return Err(format!("{path} is not a picture Parzi can show"));
         }
-        let img = parzi_core::context::encode_picture_file(p)
+        let img = parzi_core::context::encode_picture_file(&p)
             .ok_or_else(|| format!("{path} is not a supported image"))?;
         Ok(img.data_url())
     })
     .await
 }
-
-static SAVED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 fn file_name_for(name: &str) -> String {
     let clean: String = name
@@ -540,9 +376,6 @@ pub async fn save_as(
     let target = path.clone();
     off_thread(move || {
         std::fs::write(&target, &bytes).map_err(|e| format!("couldn't save: {e}"))?;
-        let mut saved = SAVED.lock().unwrap_or_else(PoisonError::into_inner);
-        saved.retain(|p| p != &target);
-        saved.push(target);
         Ok(())
     })
     .await?;
@@ -551,15 +384,11 @@ pub async fn save_as(
 
 #[tauri::command]
 pub async fn reveal_saved(path: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    let known = SAVED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .contains(&path);
-    if !known {
-        return Err("Parzi didn't save that file".into());
-    }
-    off_thread(move || launch(&reveal(&path, false))).await
+    off_thread(move || {
+        let target = resolve_path(&path)?;
+        launch(&reveal(&target, false))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -618,153 +447,13 @@ pub async fn open_confirmed_url(url: String) -> Result<(), String> {
     off_thread(move || launch(&open_with_default(url.into()))).await
 }
 
-const RUNS_CODE: &[&str] = &[
-    "exe",
-    "bat",
-    "cmd",
-    "com",
-    "ps1",
-    "psm1",
-    "psd1",
-    "ps1xml",
-    "vbs",
-    "vbe",
-    "js",
-    "jse",
-    "wsf",
-    "wsh",
-    "ws",
-    "msi",
-    "msp",
-    "mst",
-    "lnk",
-    "scr",
-    "hta",
-    "jar",
-    "reg",
-    "cpl",
-    "pif",
-    "application",
-    "gadget",
-    "appref-ms",
-    "url",
-    "website",
-    "msc",
-    "scf",
-    "sct",
-    "inf",
-    "chm",
-    "hlp",
-    "settingcontent-ms",
-    "library-ms",
-    "searchconnector-ms",
-    "theme",
-    "themepack",
-    "deskthemepack",
-    "appx",
-    "appxbundle",
-    "msix",
-    "msixbundle",
-    "diagcab",
-    "xbap",
-    "py",
-    "pyw",
-    "pyz",
-    "pyc",
-    "pl",
-    "rb",
-    "sh",
-    "bash",
-    "zsh",
-    "command",
-    "tool",
-    "desktop",
-    "app",
-];
-
-fn runs_code(p: &Path) -> bool {
-    let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
-        return false;
-    };
-    let name = name.trim_end_matches(['.', ' ']);
-    let Some((_, ext)) = name.rsplit_once('.') else {
-        return false;
-    };
-    RUNS_CODE.contains(&ext)
-        || std::env::var("PATHEXT").is_ok_and(|all| {
-            all.split(';')
-                .any(|x| x.trim().trim_start_matches('.').eq_ignore_ascii_case(ext))
-        })
-}
-
-fn openable(store: &SessionStore, raw: &str) -> Result<(PathBuf, bool), String> {
-    let (normal, canon) = confine(store, raw)?;
-    let meta = std::fs::metadata(&normal)
-        .map_err(|_| format!("path does not exist: {}", normal.display()))?;
-    let dir = meta.is_dir();
-    let launches = if dir {
-        normal
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("app"))
-    } else {
-        runs_code(&normal) || runs_code(&canon)
-    };
-    if launches {
-        return Err(format!(
-            "{} is a program or script; Parzi does not open those",
-            normal.display()
-        ));
-    }
-    Ok((normal, dir))
-}
-
-fn shown_path(p: &Path) -> String {
-    p.display()
-        .to_string()
-        .chars()
-        .map(|c| {
-            if matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-            {
-                '?'
-            } else {
-                c
-            }
-        })
-        .collect()
-}
-
 #[tauri::command]
-pub async fn open_file_path(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<(), String> {
-    let (orch, raw) = (state.orch.clone(), path.clone());
-    let (target, dir) = off_thread(move || openable(orch.store(), &raw)).await?;
-    let msg = format!(
-        "Open this {}?\n\n{}",
-        if dir { "folder" } else { "file" },
-        shown_path(&target)
-    );
-    let allow = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(msg)
-            .title("Parzi: open from your disk")
-            .buttons(MessageDialogButtons::OkCancel)
-            .blocking_show()
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-    if !allow {
-        return Err("open cancelled".into());
-    }
-    let orch = state.orch.clone();
+pub async fn open_file_path(path: String) -> Result<(), String> {
     off_thread(move || {
-        let (again, still_dir) = openable(orch.store(), &path)?;
-        if again != target || still_dir != dir {
-            return Err("the file changed while the dialog was open".into());
-        }
-        let opener = if dir {
+        let target = resolve_path(&path)?;
+        let meta = std::fs::metadata(&target)
+            .map_err(|_| format!("path does not exist: {}", target.display()))?;
+        let opener = if meta.is_dir() {
             reveal(&target, true)
         } else {
             open_with_default(target.into_os_string())
@@ -883,23 +572,22 @@ mod tests {
     }
 
     #[test]
-    fn containment_is_prefix_based() {
-        // A path in this platform's own form: C:\parzi on Windows, /parzi elsewhere.
-        let at = |s: &str| {
-            if cfg!(windows) {
-                PathBuf::from(format!("C:\\{}", s.replace('/', "\\")))
-            } else {
-                PathBuf::from(format!("/{s}"))
-            }
-        };
-        let roots = vec![at("parzi")];
-        assert!(contained_in(&at("parzi/a.md"), &roots));
-        assert!(!contained_in(&at("other/a.md"), &roots));
-        assert!(!contained_in(&at("parzi-evil/a.md"), &roots));
+    fn resolve_path_accepts_any_non_empty_path() {
+        assert!(resolve_path("").is_err());
+        assert!(resolve_path("   ").is_err());
+        #[cfg(windows)]
+        assert_eq!(
+            resolve_path("  D:\\Repos\\Parzi\\a\\..\\b.txt  ").unwrap(),
+            PathBuf::from("D:\\Repos\\Parzi\\b.txt")
+        );
+        assert_eq!(
+            resolve_path("/tmp/foo/../bar.md").unwrap(),
+            PathBuf::from("/tmp/bar.md")
+        );
     }
 
     #[test]
-    fn network_and_device_paths_are_refused_on_the_text() {
+    fn remote_or_device_recognizes_unc_and_nt_paths() {
         for bad in [
             r"\\attacker\s\a.png",
             "//attacker/s/a.png",
@@ -912,88 +600,9 @@ mod tests {
             r"  \\attacker\s",
         ] {
             assert!(remote_or_device(bad), "{bad}");
-            assert!(local_abs(bad).is_err(), "{bad}");
-            assert!(!plain_local(Path::new(bad)), "{bad}");
         }
         assert!(!remote_or_device(r"C:\proj\a.png"));
         assert!(!remote_or_device("/home/me/a.png"));
         assert!(!remote_or_device("a/b.png"));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn only_drive_paths_are_plain_on_windows() {
-        assert!(plain_local(Path::new(r"C:\proj\a.png")));
-        assert!(plain_local(Path::new("d:/proj/a.png")));
-        assert!(!plain_local(Path::new(r"C:proj\a.png")), "drive-relative");
-        assert!(!plain_local(Path::new(r"\proj\a.png")), "rooted, no drive");
-        assert!(
-            !plain_local(Path::new(r"C:\proj\a.txt:evil.exe")),
-            "data stream"
-        );
-        assert!(local_abs("relative.png").is_err());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn textual_containment_ignores_case_and_verbatim_roots() {
-        let roots = vec![PathBuf::from(r"\\?\C:\Users\Me\proj")];
-        assert!(lexically_inside(
-            Path::new(r"c:\users\me\proj\a.png"),
-            &roots
-        ));
-        assert!(lexically_inside(Path::new(r"C:\Users\Me\proj"), &roots));
-        assert!(!lexically_inside(
-            Path::new(r"C:\Users\Me\proj-evil\a"),
-            &roots
-        ));
-        assert!(!lexically_inside(Path::new(r"C:\Users\Me"), &roots));
-        assert!(!lexically_inside(Path::new(r"D:\Users\Me\proj\a"), &roots));
-    }
-
-    #[test]
-    fn programs_and_scripts_are_not_opened() {
-        for bad in [
-            "a.exe",
-            "a.EXE",
-            "a.bat",
-            "a.cmd",
-            "a.ps1",
-            "a.vbs",
-            "a.js",
-            "a.hta",
-            "a.lnk",
-            "a.url",
-            "a.msi",
-            "a.reg",
-            "a.scr",
-            "a.jar",
-            "a.appref-ms",
-            "a.pdf.exe",
-            "a.exe.",
-            "a.exe . ",
-            "a.py",
-            "a.sh",
-            "a.library-ms",
-        ] {
-            assert!(runs_code(Path::new(bad)), "{bad}");
-        }
-        for ok in [
-            "a.pdf",
-            "a.png",
-            "a.md",
-            "a.txt",
-            "a.html",
-            "README",
-            "a.exe.txt",
-        ] {
-            assert!(!runs_code(Path::new(ok)), "{ok}");
-        }
-    }
-
-    #[test]
-    fn dialog_paths_lose_bidi_overrides() {
-        let p = PathBuf::from("C:\\x\\a\u{202e}fdp.exe");
-        assert!(!shown_path(&p).contains('\u{202e}'));
     }
 }

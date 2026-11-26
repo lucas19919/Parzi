@@ -26,6 +26,7 @@
   import { testRunOf, type TestRun } from "./testRuns";
   import { board, nextStep, setupWaits } from "./providerStore";
   import { foldTurns, turnLabel, type Item } from "./turns";
+  import { stepIntent } from "./intentLabel";
 
   function when(at: number | undefined): string {
     if (!at) return "";
@@ -36,6 +37,10 @@
   export let liveText = "";
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
+  $: liveAction = (() => {
+    const active = [...liveTools].reverse().find((t) => t.running);
+    return active ? stepIntent(active.label, true) : "";
+  })();
   export let streaming = false;
   export let session = "";
   export let liveArtifacts: { id: string; title: string; artifact_kind: string; version: number; payload: unknown }[] = [];
@@ -58,6 +63,7 @@
     voted: { key: string };
     answered: { key: string; session?: string; text?: string };
     proposal: { session: string };
+    reviseProposal: void;
     edited: { text: string };
     forked: void;
     startDraft: void;
@@ -492,7 +498,7 @@ ${e.text}` : e.text;
     {#if fold}
       {@const canOpen = fold.work || (fold.live && liveWork)}
       <button class="fold" class:live={fold.live} disabled={!canOpen} aria-expanded={canOpen ? openFolds.has(fold.key) : undefined} on:click={() => toggleFold(fold.key)}>
-        <span class="fold-text">{turnLabel(fold, liveSecs(fold.start, now))}</span>
+        <span class="fold-text">{turnLabel(fold, liveSecs(fold.start, now), fold.live ? liveAction : "")}</span>
         {#if canOpen}<span class="chev" class:open={openFolds.has(fold.key)}><Icon name="chevDown" size={12} /></span>{/if}
       </button>
     {/if}
@@ -623,7 +629,7 @@ ${e.text}` : e.text;
     {@const tail = folds.tail}
     {@const canOpen = tail.work || (tail.live && liveWork)}
     <button class="fold" class:live={tail.live} disabled={!canOpen} aria-expanded={canOpen ? openFolds.has(tail.key) : undefined} on:click={() => toggleFold(tail.key)}>
-      <span class="fold-text">{turnLabel(tail, liveSecs(tail.start, now))}</span>
+      <span class="fold-text">{turnLabel(tail, liveSecs(tail.start, now), tail.live ? liveAction : "")}</span>
       {#if canOpen}<span class="chev" class:open={openFolds.has(tail.key)}><Icon name="chevDown" size={12} /></span>{/if}
     </button>
   {/if}
@@ -700,7 +706,7 @@ ${e.text}` : e.text;
     <!-- A proposed plan waits on the session, not on a tool call: the
          window answers it and sends the answer as the next message. -->
     <div transition:fade={spring}>
-      <QuestionCard {proposal} on:accept={() => dispatch("proposal", { session })} />
+      <QuestionCard {proposal} on:accept={() => dispatch("proposal", { session })} on:revise={() => dispatch("reviseProposal")} />
     </div>
   {/if}
 
@@ -893,7 +899,7 @@ ${e.text}` : e.text;
     display: flex;
     flex-direction: column;
     gap: calc(var(--space) * 2);
-    color: color-mix(in srgb, var(--text) 92%, transparent);
+    color: var(--text);
   }
   .actions {
     height: var(--h-sm);

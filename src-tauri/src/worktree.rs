@@ -7,6 +7,13 @@ pub struct Branches {
     pub all: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct WorktreeEntry {
+    pub path: String,
+    pub branch: String,
+    pub current: bool,
+}
+
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.args(args)
@@ -44,6 +51,72 @@ pub fn branches(dir: &Path) -> Branches {
     })
     .unwrap_or_default();
     Branches { current, all }
+}
+
+pub fn list_worktrees(dir: &Path) -> Vec<WorktreeEntry> {
+    let Ok(out) = git(dir, &["worktree", "list", "--porcelain"]) else {
+        return vec![];
+    };
+    let top_canon = git(dir, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .and_then(|p| PathBuf::from(p).canonicalize().ok());
+    let mut entries = Vec::new();
+    let mut cur_path: Option<String> = None;
+    let mut cur_branch = String::new();
+    let flush = |entries: &mut Vec<WorktreeEntry>, path: Option<String>, branch: String| {
+        if let Some(p) = path {
+            let p_canon = PathBuf::from(&p).canonicalize().ok();
+            let is_cur = match (&top_canon, &p_canon) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            };
+            entries.push(WorktreeEntry {
+                path: p,
+                branch: if branch.is_empty() {
+                    "detached".into()
+                } else {
+                    branch
+                },
+                current: is_cur,
+            });
+        }
+    };
+    for line in out.lines() {
+        if line.trim().is_empty() {
+            flush(
+                &mut entries,
+                cur_path.take(),
+                std::mem::take(&mut cur_branch),
+            );
+        } else if let Some(rest) = line.strip_prefix("worktree ") {
+            cur_path = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            let r = rest.trim();
+            cur_branch = r.strip_prefix("refs/heads/").unwrap_or(r).to_string();
+        }
+    }
+    flush(&mut entries, cur_path.take(), cur_branch);
+    entries
+}
+
+pub fn switch_branch(dir: &Path, branch: &str) -> Result<String, String> {
+    let name = branch.trim();
+    if name.is_empty()
+        || name.starts_with('-')
+        || name.contains("..")
+        || name.chars().any(char::is_control)
+    {
+        return Err("Invalid branch name.".into());
+    }
+    let dirty = git(dir, &["status", "--porcelain"]).is_ok_and(|s| !s.is_empty());
+    if dirty {
+        return Err(
+            "Working tree has uncommitted changes — commit, stash, or create a new worktree instead."
+                .into(),
+        );
+    }
+    git(dir, &["checkout", name]).map_err(|e| format!("Could not switch to {name}: {e}"))?;
+    Ok(branches(dir).current)
 }
 
 pub fn root() -> Result<PathBuf, String> {
@@ -202,6 +275,19 @@ mod tests {
             "main",
             "your checkout is untouched"
         );
+        let listed = list_worktrees(&repo);
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|w| w.current && w.branch == "main"));
+        assert!(listed
+            .iter()
+            .any(|w| !w.current && w.branch.starts_with("parzi/try-the-slate-accent-")));
+        git(&repo, &["branch", "feature-test"]).unwrap();
+        assert_eq!(
+            switch_branch(&repo, "feature-test").unwrap(),
+            "feature-test"
+        );
+        assert_eq!(switch_branch(&repo, "main").unwrap(), "main");
+        assert!(switch_branch(&repo, "-bad").is_err());
         assert_eq!(remove_in(&root, &wt), None);
         assert!(!wt.exists(), "gone with its last session");
         assert_eq!(remove_in(&root, &repo), None, "never a folder of yours");

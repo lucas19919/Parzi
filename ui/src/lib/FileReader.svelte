@@ -2,18 +2,36 @@
   import type { ArtifactDoc } from "./tabs";
 
   export const FILE_MIN = 220;
-  export const FILE_MAX = 640;
+  export const FILE_MAX = 960;
   const MD = /\.(md|markdown)$/i;
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i;
   const ABSOLUTE = /^([a-zA-Z]:[\\/]|\/|\\\\)/;
+  const LANG_BY_EXT: Record<string, string> = {
+    rs: "rust", ts: "typescript", mts: "typescript", cts: "typescript", tsx: "tsx",
+    js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "jsx",
+    svelte: "svelte", html: "html", htm: "html", xml: "xml", svg: "svg",
+    css: "css", scss: "scss", py: "python", json: "json", jsonc: "jsonc",
+    toml: "toml", ini: "ini", cfg: "ini", yaml: "yaml", yml: "yaml",
+    sh: "bash", bash: "bash", zsh: "zsh", ps1: "powershell",
+    sql: "sql", go: "go", c: "c", h: "c", cpp: "cpp", cc: "cpp", hpp: "cpp",
+    diff: "diff", patch: "diff",
+  };
+
+  export function langFor(id: string): string {
+    const leaf = id.split(/[\\/]/).pop() ?? "";
+    const dot = leaf.lastIndexOf(".");
+    if (dot <= 0) return "";
+    return LANG_BY_EXT[leaf.slice(dot + 1).toLowerCase()] ?? "";
+  }
 
   /** A file read from disk as a card document: markdown renders, images
-   *  show, the rest stays plain. An image doc's content is its path; the
-   *  data URL loads when it renders, like thread attachments. */
+   *  show, known code files syntax-highlight, the rest stays plain. */
   export function fileDoc(id: string, content: string): ArtifactDoc {
     const name = id.split(/[\\/]/).pop() || id;
     const md = MD.test(name);
-    return { id, title: md ? name.replace(MD, "") || name : name, kind: md ? "markdown" : "text", content, version: 1 };
+    const language = md ? "" : langFor(name);
+    const kind = md ? "markdown" : language === "diff" ? "diff" : language ? "code" : "text";
+    return { id, title: md ? name.replace(MD, "") || name : name, kind, language: language || undefined, content, version: 1 };
   }
 
   export function isImagePath(id: string): boolean {
@@ -160,6 +178,8 @@
           {@html mdHtml(doc.content, $richReady)}
         {:else if diff}
           {@html mdHtml(fenced(doc.content, "diff"), $richReady)}
+        {:else if doc.language || langFor(doc.id)}
+          {@html mdHtml(fenced(doc.content, doc.language || langFor(doc.id)), $richReady)}
         {:else}
           <pre class="plain">{doc.content}</pre>
         {/if}

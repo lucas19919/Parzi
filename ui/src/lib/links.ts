@@ -19,12 +19,12 @@ async function openFile(href: string) {
     toast(link.reason, true);
   } else {
     // The side bar reads text in the workspace; anything else opens outside Parzi.
-    document.dispatchEvent(new CustomEvent<string>("parzi:open-file", { detail: link.path.replace(/:\d+(?::\d+)?$/, "") }));
+    document.dispatchEvent(new CustomEvent<string>("parzi:open-file", { detail: link.path.replace(/:\d+(?:[-:]\d+)?$/, "") }));
   }
 }
 
 function openNote(path: string) {
-  const unlined = path.replace(/:\d+(?::\d+)?$/, "");
+  const unlined = path.split("#")[0].replace(/:\d+(?:[-:]\d+)?$/, "");
   document.dispatchEvent(new CustomEvent<string>("parzi:open-note", { detail: unlined }));
 }
 
@@ -52,7 +52,7 @@ export async function handleLinkClick(e: MouseEvent, folder = "", noteDir: strin
   }
 
   if (href.startsWith("brain://") || href.startsWith("parzi:note/")) {
-    const rawPath = href.replace(/^(brain:\/\/|parzi:note\/)/, "");
+    const rawPath = href.replace(/^(brain:\/\/|parzi:note\/)/, "").split("#")[0];
     openNote(safeDecode(rawPath).replace(/\\/g, "/"));
     return true;
   }
@@ -84,11 +84,11 @@ export async function handleLinkClick(e: MouseEvent, folder = "", noteDir: strin
         await copyText(path, `branch ${path}`);
         return true;
       }
-      const file = path.replace(/:\d+(:\d+)?$/, "");
+      const file = path.replace(/:\d+(?:[-:]\d+)?$/, "");
       const full = /^([a-z]:\/|\/)/i.test(file) ? file : `${folder.replace(/[\\/]+$/, "")}/${file.replace(/^\.\//, "")}`;
       await openFile(`file:///${full.replace(/^\//, "")}`);
     } else if (folder && path && !/^[a-z][a-z0-9+.-]*:(?![/\d])/i.test(path)) {
-      const file = path.replace(/:\d+(:\d+)?$/, "");
+      const file = path.replace(/:\d+(?:[-:]\d+)?$/, "");
       const full = /^([a-z]:\/|\/)/i.test(file) ? file : `${folder.replace(/[\\/]+$/, "")}/${file.replace(/^\.\//, "")}`;
       await openFile(`file:///${full.replace(/^\//, "")}`);
     } else {

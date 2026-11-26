@@ -48,6 +48,8 @@ const MAP = {
   desktop: "monitor",
   xCircle: "circle-x",
   phone: "smartphone",
+  duo: "tablet-smartphone",
+  rotate: "rotate-cw",
   laptop: "laptop",
 };
 

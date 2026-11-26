@@ -41,3 +41,17 @@ test("escaped and spaced dollars are not math", () => {
   assert.deepEqual(spans("A \\$5 fee and a \\$10 fee."), []);
   assert.deepEqual(spans("From $ x $ to y."), []);
 });
+
+test("backslash-paren and backslash-bracket LaTeX delimiters are recognized", () => {
+  assert.deepEqual(spans("Given \\(x^2 + y^2 = r^2\\) and \\(\\alpha + \\beta\\)."), ["x^2 + y^2 = r^2", "\\alpha + \\beta"]);
+  const disp = mathAt("\\[\\int_0^1 x^2 \\, dx = \\frac{1}{3}\\]", 0);
+  assert.ok(disp);
+  assert.equal(disp.display, true);
+  assert.equal(disp.tex, "\\int_0^1 x^2 \\, dx = \\frac{1}{3}");
+  const multi = mathAt("\\[\nE = mc^2\n\\]", 0);
+  assert.ok(multi);
+  assert.equal(multi.display, true);
+  assert.equal(multi.tex.trim(), "E = mc^2");
+  // Escaped backslash before ( does not open math
+  assert.deepEqual(spans("Literal \\\\(not math\\\\)"), []);
+});
