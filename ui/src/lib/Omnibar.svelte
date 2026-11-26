@@ -64,7 +64,6 @@
     stop: void;
     command: { name: string };
     unavailable: { provider: string };
-    usage: void;
     folder: { path: string };
     project: { path?: string };
     remote: { on: boolean };
@@ -642,18 +641,18 @@
       {/if}
       <div class="acts">
         {#if !web && ring}
-          <button
+          <span
             class="icon usage"
             class:hot={ring.used_percent >= 80}
+            role="img"
             use:tooltip={usageRows.join("\n")}
             aria-label={`Plan limits: ${usageRows.join(", ")}`}
-            on:click={() => dispatch("usage")}
           >
             <svg class="ring" viewBox="0 0 16 16" aria-hidden="true">
               <circle class="track" cx="8" cy="8" r="6" pathLength="100" />
               <circle class="fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="{Math.min(100, ring.used_percent)} 100" transform="rotate(-90 8 8)" />
             </svg>
-          </button>
+          </span>
         {/if}
         {#if !web}
           <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="paperclip" /></button>
@@ -937,6 +936,9 @@
   .icon:hover,
   .icon.on {
     color: var(--text);
+  }
+  .usage {
+    cursor: default;
   }
   .usage.hot {
     color: var(--warn-text);

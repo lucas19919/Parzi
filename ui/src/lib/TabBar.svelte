@@ -395,9 +395,10 @@
     color: var(--text);
   }
 
+  /* The open tab is glass like the cards: the same surface and edge. */
   .tab.active {
     background: var(--surface);
-    border-color: transparent;
+    border-color: var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     color: var(--text);
@@ -468,6 +469,8 @@
     padding: 0;
     background: var(--surface);
     border: none;
+    /* The card edge, drawn inside so the shell stays at tab height. */
+    box-shadow: inset 0 0 0 1px var(--edge);
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
     border-radius: var(--radius);

@@ -2185,7 +2185,6 @@
           on:stop={stop}
           on:command={(e) => onCommand(e.detail.name)}
           on:unavailable={() => openSettings(remoteOn ? "remote" : "providers")}
-          on:usage={() => openSettings("providers")}
           on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
           on:project={(e) => loadProject(e.detail.path ?? tab.cwd ?? folder)}
         />

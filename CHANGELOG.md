@@ -6,6 +6,8 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Antigravity's Gemini models show their 5-hour quota in the ring, read from the same model list the agent uses. Settings shows only the limits of models an agent offers, so Antigravity no longer lists a Claude/GPT quota you don't use. The ring is hover only; clicking it no longer opens Settings.
+- The open tab, and a session's stack of tabs, have the cards' glass edge again.
 - Plan limits are a ring in the composer, for the model you're using: it fills with the session (5-hour) window, and hovering it shows every window that applies (weekly, monthly, model-only). The Usage card in the side column is gone. A limit that belongs to other models (Claude's Opus-only week, Antigravity's Claude/GPT quota) no longer shows on yours.
 - Antigravity lists each model once (Gemini 4 Neon, Carbon, Argon…) and the effort picker chooses the variant (Low to Extra high), instead of a row per effort.
 - Files are never opened from network or device paths (`\\host\share`), which on Windows would send your sign-in to that host; any local path still opens.

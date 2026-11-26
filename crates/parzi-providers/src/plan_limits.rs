@@ -203,13 +203,51 @@ fn antigravity() -> Vec<UsageWindow> {
         || serde_json::json!({}),
         |p| serde_json::json!({ "project": p }),
     );
-    antigravity_post(
+    let mut out = antigravity_post(
         "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
         &token,
         &body,
     )
     .map(|v| antigravity_windows(&v))
-    .unwrap_or_default()
+    .unwrap_or_default();
+    // The summary names only some groups; Gemini's own quota is per model in
+    // the catalog the ACP server reads, one shared 5-hour pool.
+    let has_gemini = out.iter().any(|w| w.models.iter().any(|m| m == "gemini"));
+    if !has_gemini {
+        if let Some(w) = antigravity_post(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+            &token,
+            &body,
+        )
+        .and_then(|v| gemini_window(&v))
+        {
+            out.insert(0, w);
+        }
+    }
+    out
+}
+
+/// Gemini's 5-hour quota from the model catalog: the least left across the
+/// Gemini models, resetting when they do. `None` when none carries a quota.
+fn gemini_window(v: &Value) -> Option<UsageWindow> {
+    let quotas: Vec<&Value> = v
+        .get("models")?
+        .as_object()?
+        .iter()
+        .filter(|(id, _)| id.starts_with("gemini-"))
+        .filter_map(|(_, m)| m.get("quotaInfo"))
+        .collect();
+    let left = quotas
+        .iter()
+        .filter_map(|q| q.get("remainingFraction").and_then(Value::as_f64))
+        .reduce(f64::min)?;
+    let resets_at = quotas
+        .iter()
+        .filter_map(|q| q.get("resetTime").and_then(epoch))
+        .min();
+    let mut w = window("Session", (1.0 - left) * 100.0, resets_at);
+    w.models = vec!["gemini".into()];
+    Some(w)
 }
 
 /// A short-lived access token from the Antigravity ACP server's own sign-in.
@@ -350,6 +388,30 @@ mod tests {
         assert!((w[2].used_percent - 6.0).abs() < f64::EPSILON);
         assert_eq!(w[1].resets_at, Some(1_795_996_800));
         assert!(opencode_go_windows(&json!({"error": "nope"})).is_empty());
+    }
+
+    #[test]
+    fn antigravity_reads_gemini_quota_from_the_model_catalog() {
+        let v = json!({"models": {
+            "gemini-3-flash": {"quotaInfo": {"remainingFraction": 0.8, "resetTime": "2026-11-27T02:32:16Z"}},
+            "gemini-4-hydrogen-sonar": {"quotaInfo": {"remainingFraction": 0.35, "resetTime": "2026-11-27T02:32:16Z"}},
+            "claude-opus-5-5-high": {"quotaInfo": {"remainingFraction": 0.1}},
+            "tab_flash_lite_preview": {"quotaInfo": {"remainingFraction": 0.0}}
+        }});
+        let w = gemini_window(&v).expect("a Gemini window");
+        assert_eq!(
+            (w.label.as_str(), w.models.as_slice()),
+            ("Session", ["gemini".to_string()].as_slice())
+        );
+        assert!(
+            (w.used_percent - 65.0).abs() < 1e-9,
+            "the least left counts"
+        );
+        assert_eq!(w.resets_at, Some(1_795_746_736));
+        assert!(gemini_window(
+            &json!({"models": {"claude-x": {"quotaInfo": {"remainingFraction": 1}}}})
+        )
+        .is_none());
     }
 
     #[test]
