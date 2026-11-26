@@ -8,7 +8,7 @@
   import ModelPicker from "./ModelPicker.svelte";
   import ProjectMenu from "./ProjectMenu.svelte";
   import { api, type ComposerMode, type ProviderStatus } from "./api";
-  import { effortLabel, effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
+  import { effortLabel, effortsFor, familyOf, fitEffort, seesImages, shownOf } from "./providerRows";
   import { permissionBlocked } from "./permission";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, shortAttachment as shortName } from "./paths";
@@ -22,6 +22,7 @@
   import type { IconName } from "./icons";
   import { viewImage } from "./imageViewer";
   import { resetsIn } from "./format";
+  import { limitsFor, ringWindow } from "./limits";
   import { setOverlay } from "./overlay";
 
   export let input = "";
@@ -70,14 +71,11 @@
     remoteFolder: { path: string };
   }>();
 
-  // The current provider's limit windows (Claude: Session is the 5-hour
-  // window, Weekly the 7-day one). The board re-renders this when limits
-  // arrive; the pill shows the fullest window, the tooltip them all.
-  $: usageWindows = board.find((b) => b.provider === (model.split("/")[0] || ""))?.usage ?? [];
-  $: worstUsage = [...usageWindows].filter((w) => w.used_percent > 0).sort((a, b) => b.used_percent - a.used_percent)[0] ?? null;
-  $: usageTip = worstUsage
-    ? ["Provider limits — click for details", ...usageWindows.map((w) => `${w.label}: ${Math.round(w.used_percent)}%${resetsIn(w.resets_at) ? `, ${resetsIn(w.resets_at)}` : ""}`)].join("\n")
-    : "";
+  // The plan limits of the model in use: the ring shows the session window,
+  // the tooltip every window that applies (weekly, monthly, model-only).
+  $: usageWindows = limitsFor(board.find((b) => b.provider === (model.split("/")[0] || ""))?.usage ?? [], model);
+  $: ring = ringWindow(usageWindows);
+  $: usageRows = usageWindows.map((w) => `${w.label} ${Math.round(w.used_percent)}%${resetsIn(w.resets_at) ? ` · ${resetsIn(w.resets_at)}` : ""}`);
 
   const PERMS: { id: string; title: string; label: string; icon: IconName }[] = [
 
@@ -163,6 +161,13 @@
   let thumbsKey = "";
   let focused = false;
 
+  $: {
+    const family = familyOf(model, board);
+    if (family) {
+      model = family.model;
+      effort = family.effort;
+    }
+  }
   $: efforts = effortsFor(model, board);
   $: {
     const next = fitEffort(effort, efforts);
@@ -636,16 +641,18 @@
         {/if}
       {/if}
       <div class="acts">
-        {#if !web && worstUsage}
+        {#if !web && ring}
           <button
-            class="usage"
-            class:hot={worstUsage.used_percent >= 80}
-            use:tooltip={usageTip}
-            aria-label={`Provider usage: ${usageTip}`}
+            class="icon usage"
+            class:hot={ring.used_percent >= 80}
+            use:tooltip={usageRows.join("\n")}
+            aria-label={`Plan limits: ${usageRows.join(", ")}`}
             on:click={() => dispatch("usage")}
           >
-            <span class="usage-bar"><span class="usage-fill" style="width:{Math.min(100, worstUsage.used_percent)}%" /></span>
-            <span class="usage-label">{worstUsage.label} {Math.round(worstUsage.used_percent)}%</span>
+            <svg class="ring" viewBox="0 0 16 16" aria-hidden="true">
+              <circle class="track" cx="8" cy="8" r="6" pathLength="100" />
+              <circle class="fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray="{Math.min(100, ring.used_percent)} 100" transform="rotate(-90 8 8)" />
+            </svg>
           </button>
         {/if}
         {#if !web}
@@ -931,47 +938,25 @@
   .icon.on {
     color: var(--text);
   }
-  .usage {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: calc(var(--space) * 1.5);
-    height: calc(var(--space) * 6);
-    padding: 0 calc(var(--space) * 1.5);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-xs);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .usage:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
   .usage.hot {
     color: var(--warn-text);
   }
-  .usage-bar {
-    width: 28px;
-    height: 3px;
-    border-radius: var(--radius-sm);
-    background: var(--line);
-    overflow: hidden;
+  .ring {
+    width: calc(var(--space) * 4);
+    height: calc(var(--space) * 4);
   }
-  .usage-fill {
-    display: block;
-    height: 100%;
-    background: var(--accent);
+  .ring circle {
+    fill: none;
+    stroke-width: 2.2;
   }
-  .usage.hot .usage-fill {
-    background: var(--warn-text);
+  .ring .track {
+    stroke: var(--line);
   }
-  .usage-label {
-    font-weight: 600;
+  .ring .fill {
+    stroke: var(--accent);
+  }
+  .usage.hot .ring .fill {
+    stroke: var(--warn-text);
   }
   .truncate {
     overflow: hidden;

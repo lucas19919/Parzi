@@ -164,11 +164,11 @@ fixed: `harness.rs` now returns `Dispatch::Failed`.
 | 3. One tool per job | Done, first pass | Merge `ask_user` with `ui_offer_replies`, and the session tools, if it holds up |
 | 4. One turn engine | First pass | One shared turn engine behind the three drivers; one meaning for usage; no text matching in `run.rs`; a richer handover than 12k characters. Needs live agents to verify |
 | 5. One send state | Done | |
-| 6. The session layout | Done | Agents' own browser pages are still tabs (the engine tracks them through the tab list) |
+| 6. The session layout | Done | |
 | 7. Plans | Done | |
 | 8. Changeable environment | Project and folder done | Moving a session between this computer and the server |
 | 9. Test on any device | Phone emulator done (Windows) | Dev servers on the server don't show here (SSH port forwarding) |
-| 10. Usage for every agent | Claude, Codex, Grok, OpenCode Go and Antigravity | Cursor has no limits to read |
+| 10. Usage for every agent | Claude, Codex, Grok, OpenCode Go and Antigravity, as a ring in the composer for the model in use | Cursor has no limits to read; Antigravity's Gemini 4 models have no quota Google publishes |
 | 11. A quiet thread | Done | One line per turn; notices and inter-session messages in Running; no tidy display; manager lists sessions by project, no drafts |
 
 Not verified yet: a run of the real app (only the mock window was checked),

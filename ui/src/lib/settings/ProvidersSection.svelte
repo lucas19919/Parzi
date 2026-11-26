@@ -8,6 +8,7 @@
   import { updateConfig } from "../config";
   import { refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "../remote";
   import SegControl from "./SegControl.svelte";
+  import { windowName } from "../limits";
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
@@ -251,9 +252,9 @@
             </span>
           </div>
           {#if p?.state === "ready" && p.usage?.length}
-            {#each p.usage as w (w.label)}
+            {#each p.usage as w (windowName(w))}
               <div class="row">
-                <span class="usage-label">{w.label}</span>
+                <span class="usage-label">{windowName(w)}</span>
                 <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
                 <span class="usage-num">{Math.round(w.used_percent)}%</span>
                 {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
@@ -343,9 +344,9 @@
           {/if}
 
           {#if ready && p?.usage?.length}
-            {#each p.usage as w (w.label)}
+            {#each p.usage as w (windowName(w))}
               <div class="row">
-                <span class="usage-label">{w.label}</span>
+                <span class="usage-label">{windowName(w)}</span>
                 <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
                 <span class="usage-num">{Math.round(w.used_percent)}%</span>
                 {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}

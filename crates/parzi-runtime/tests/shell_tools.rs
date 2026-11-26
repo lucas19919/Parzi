@@ -53,7 +53,7 @@ fn host_with(cwd: &str, full: bool) -> ToolHost {
 }
 
 fn workdir() -> String {
-    let dir = std::env::temp_dir().join(format!("parzi-shell-{}", std::process::id()));
+    let dir = parzi_core::paths::test_home("shell");
     std::fs::create_dir_all(&dir).unwrap();
     dir.display().to_string()
 }
@@ -203,7 +203,7 @@ async fn workdir_outside_the_folder_is_refused() {
 #[tokio::test]
 async fn the_shell_follows_a_project_switch_in_the_same_turn() {
     let h = host_with(&workdir(), true);
-    let there = std::env::temp_dir().join(format!("parzi-switch-{}", std::process::id()));
+    let there = parzi_core::paths::test_home("switch");
     std::fs::create_dir_all(&there).unwrap();
     let there = there.display().to_string();
     let project = parzi_core::brain::project_upsert(None, "Switch target", &there).unwrap();

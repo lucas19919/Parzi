@@ -139,12 +139,16 @@ pub enum State {
     Unchecked,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageWindow {
     pub label: String,
     pub used_percent: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<u64>,
+    /// The models this window limits, as lowercase words a model id
+    /// contains ("opus", "claude"); empty when it limits every model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
 }
 
 impl UsageWindow {
@@ -159,7 +163,7 @@ impl UsageWindow {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
@@ -169,6 +173,10 @@ pub struct ModelInfo {
     pub efforts: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
+    /// One entry for a family the agent lists per effort ("Gemini 4 Neon
+    /// (High)", "(Low)"): the turn runs `{id}-{effort}`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub variants: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

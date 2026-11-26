@@ -21,9 +21,7 @@ pub fn home(tag: &str) -> PathBuf {
     static INIT: std::sync::Once = std::sync::Once::new();
     static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
     INIT.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("parzi-test-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = parzi_core::paths::test_home(tag);
         std::env::set_var("PARZI_HOME", &dir);
         *DIR.lock().unwrap() = Some(dir);
     });
@@ -109,6 +107,7 @@ impl Provider for Fake {
                 is_default: false,
                 efforts: vec![],
                 images: None,
+                ..Default::default()
             })
             .collect();
         s

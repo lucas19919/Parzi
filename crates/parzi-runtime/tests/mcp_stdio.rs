@@ -96,7 +96,7 @@ fn alive(pid: u32) -> bool {
 }
 
 fn scratch(tag: &str, what: &str) -> std::path::PathBuf {
-    let p = std::env::temp_dir().join(format!("parzi-mcp-{tag}-{}.{what}", std::process::id()));
+    let p = parzi_core::paths::test_home("mcp-files").join(format!("{tag}.{what}"));
     let _ = std::fs::remove_file(&p);
     p
 }
@@ -104,7 +104,7 @@ fn scratch(tag: &str, what: &str) -> std::path::PathBuf {
 fn private_home() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("parzi-mcp-stdio-{}", std::process::id()));
+        let dir = parzi_core::paths::test_home("mcp-stdio");
         let _ = std::fs::create_dir_all(&dir);
         std::env::set_var("PARZI_HOME", dir);
     });

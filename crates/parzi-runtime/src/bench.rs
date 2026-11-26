@@ -175,6 +175,7 @@ mod tests {
             is_default,
             efforts: vec![],
             images: None,
+            ..Default::default()
         }
     }
 

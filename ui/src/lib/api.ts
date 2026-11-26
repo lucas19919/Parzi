@@ -68,6 +68,8 @@ export interface UsageWindow {
   label: string;
   used_percent: number;
   resets_at?: number;
+  /** Words a model id contains for this window to apply; none: every model. */
+  models?: string[];
 }
 
 interface ProviderModel {
@@ -76,6 +78,8 @@ interface ProviderModel {
   is_default: boolean;
   efforts: string[];
   images?: boolean;
+  /** One entry for a family the agent lists per effort. */
+  variants?: boolean;
 }
 
 export interface ProviderStatus {

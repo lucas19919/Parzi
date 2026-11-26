@@ -97,6 +97,7 @@ fn window(label: &str, used_percent: f64, resets_at: Option<u64>) -> UsageWindow
         label: label.to_string(),
         used_percent: used_percent.clamp(0.0, 100.0),
         resets_at,
+        ..Default::default()
     }
 }
 
@@ -270,21 +271,28 @@ fn antigravity_windows(v: &Value) -> Vec<UsageWindow> {
                 Some("monthly") => "Monthly",
                 _ => continue,
             };
-            let label = if name.is_empty() {
-                span.to_string()
-            } else {
-                format!("{name} {span}")
-            };
-            out.push(window(
-                &label,
+            // Each group's windows limit only its own models.
+            let mut w = window(
+                span,
                 (1.0 - left) * 100.0,
                 bucket.get("resetTime").and_then(epoch),
-            ));
+            );
+            w.models = group_models(&name);
+            out.push(w);
         }
     }
     // Session before Weekly within each group, as the other agents show them.
-    out.sort_by_key(|w| !w.label.ends_with("Session"));
+    out.sort_by_key(|w| w.label != "Session");
     out
+}
+
+/// The words a group's model ids contain: "Claude/GPT" limits ids with
+/// "claude" or "gpt" in them.
+fn group_models(name: &str) -> Vec<String> {
+    name.split('/')
+        .map(|w| w.trim().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect()
 }
 
 /// "Claude and GPT models" reads as "Claude/GPT".
@@ -357,10 +365,17 @@ mod tests {
             ]}
         ]});
         let w = antigravity_windows(&v);
-        let labels: Vec<&str> = w.iter().map(|w| w.label.as_str()).collect();
+        let rows: Vec<(&str, String)> = w
+            .iter()
+            .map(|w| (w.label.as_str(), w.models.join(",")))
+            .collect();
         assert_eq!(
-            labels,
-            ["Claude/GPT Session", "Gemini Session", "Claude/GPT Weekly"]
+            rows,
+            [
+                ("Session", "claude,gpt".to_string()),
+                ("Session", "gemini".to_string()),
+                ("Weekly", "claude,gpt".to_string())
+            ]
         );
         assert!((w[2].used_percent - 25.0).abs() < 1e-9);
         assert!((w[1].used_percent - 60.0).abs() < 1e-9);

@@ -628,10 +628,7 @@ fn build_host(asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String)
     let store = SessionStore::open().unwrap();
     let sid = store.create("tools", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let folder = std::env::temp_dir()
-        .join(format!("parzi-tools-{}", std::process::id()))
-        .display()
-        .to_string();
+    let folder = parzi_core::paths::test_home("tools").display().to_string();
     std::fs::create_dir_all(&folder).unwrap();
     let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),

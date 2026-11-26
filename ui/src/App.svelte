@@ -31,7 +31,7 @@
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
-  import { board, ensureBoard } from "./lib/providerStore";
+  import { board, ensureBoard, refreshUsage } from "./lib/providerStore";
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { permissionFor } from "./lib/permission";
   import { provideClearSessions } from "./lib/sessions";
@@ -1854,6 +1854,11 @@
     };
     document.addEventListener("parzi:open-file", onOpenFile);
     const unClear = provideClearSessions(clearFinishedSessions);
+    // Plan limits for the composer's ring: read now, then every 5 minutes.
+    void refreshUsage();
+    const usageEvery = setInterval(() => {
+      if (!document.hidden) void refreshUsage();
+    }, 5 * 60_000);
     api
       .getConfig()
       .then((cfg) => {
@@ -1910,6 +1915,7 @@
       unActivity();
       unActions();
       unClear();
+      clearInterval(usageEvery);
       document.removeEventListener("parzi:open-page", onOpenPage);
       document.removeEventListener("parzi:open-artifact", onOpenArtifact);
       document.removeEventListener("parzi:open-note", onOpenNote);
@@ -1999,10 +2005,6 @@
           width={infoWidth}
           open={pageInfoShown}
           on:resize={resizeInfo}
-          tokensIn={0}
-          tokensOut={0}
-          costUsd={0}
-          provider={sideMeta?.model?.split("/")[0] ?? ""}
           on:openSession={(e) => openSession(e.detail.id)}
           on:compact={compact}
           on:moved={(e) => relocated(e.detail.meta)}
@@ -2112,10 +2114,6 @@
             width={infoWidth}
             open={infoShown}
             on:resize={resizeInfo}
-            tokensIn={meta?.tokens_in ?? 0}
-            tokensOut={meta?.tokens_out ?? 0}
-            costUsd={meta?.cost_usd ?? 0}
-            provider={(comp.model || meta?.model || "").split("/")[0]}
             on:openSession={(e) => openSession(e.detail.id)}
             on:compact={compact}
             on:moved={(e) => relocated(e.detail.meta)}

@@ -391,7 +391,7 @@ async fn project_create_outside_the_folder_asks() {
 #[tokio::test]
 async fn moving_to_another_project_needs_a_yes() {
     home("approval");
-    let base = std::env::temp_dir().join(format!("parzi-switch-{}", std::process::id()));
+    let base = parzi_core::paths::test_home("switch");
     let elsewhere = base.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     let folder = elsewhere.display().to_string();

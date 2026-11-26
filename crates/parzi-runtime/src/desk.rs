@@ -808,11 +808,8 @@ mod tests {
     }
 
     fn temp(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "parzi-desk-{tag}-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4().simple()
-        ));
+        let dir = parzi_core::paths::test_home("desk")
+            .join(format!("{tag}-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("gui.json")
     }

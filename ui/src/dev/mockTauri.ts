@@ -335,7 +335,7 @@ function transcript() {
 
 const models = (ids: string[]) => ids.map((id, i) => ({ id, name: "", is_default: i === 0, efforts: ["low", "medium", "high", "xhigh", "max"] }));
 const board = [
-  { provider: "claude", state: "ready", version: "2.4.0", account: "dev@example.com", hint: "", usage: [{ label: "5h", used_percent: 22, resets_at: Math.round(now / 1000) + 2.5 * 3600 }, { label: "Weekly", used_percent: 61, resets_at: Math.round(now / 1000) + 4 * 86400 }], models: models(["claude-opus-5-5", "claude-sonnet-5-5"]), gated: false, checked_at: now / 1000 },
+  { provider: "claude", state: "ready", version: "2.4.0", account: "dev@example.com", hint: "", usage: [{ label: "Session", used_percent: 22, resets_at: Math.round(now / 1000) + 2.5 * 3600 }, { label: "Weekly", used_percent: 61, resets_at: Math.round(now / 1000) + 4 * 86400 }], models: models(["claude-opus-5-5", "claude-sonnet-5-5"]), gated: false, checked_at: now / 1000 },
   { provider: "codex", state: "ready", version: "0.9.1", hint: "", usage: [], models: models(["gpt-5", "gpt-5-mini"]), gated: false, checked_at: now / 1000 },
   { provider: "opencode", state: "signed_out", hint: "Run opencode auth login", usage: [], models: [], gated: false, checked_at: now / 1000 },
   { provider: "grok", state: "not_installed", hint: "", usage: [], models: [], gated: true, checked_at: now / 1000 },
@@ -604,7 +604,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   remote_providers: () =>
     params.get("remote")
       ? [
-          { provider: "claude", state: "ready", version: "2.4.0", hint: "", usage: [{ label: "5h", used_percent: 64 }], models: [], gated: false, checked_at: now / 1000 },
+          { provider: "claude", state: "ready", version: "2.4.0", hint: "", usage: [{ label: "Session", used_percent: 64 }], models: [], gated: false, checked_at: now / 1000 },
           { provider: "codex", state: "signed_out", version: "0.9.1", hint: "Sign in to Codex on box", usage: [], models: [], gated: false, checked_at: now / 1000 },
           { provider: "opencode", state: "not_installed", version: "", hint: "", usage: [], models: [], gated: false, checked_at: now / 1000 },
         ]

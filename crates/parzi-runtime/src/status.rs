@@ -224,6 +224,7 @@ mod tests {
                     label: "Session".into(),
                     used_percent: self.2,
                     resets_at: None,
+                    ..Default::default()
                 }];
             }
             s
@@ -268,6 +269,7 @@ mod tests {
                 label: "Session".into(),
                 used_percent: 55.0,
                 resets_at: Some(1),
+                ..Default::default()
             }],
         );
         board.update_usage(
@@ -276,6 +278,7 @@ mod tests {
                 label: "Weekly".into(),
                 used_percent: 5.0,
                 resets_at: None,
+                ..Default::default()
             }],
         );
         let s = board.get("opencode").unwrap();
@@ -290,6 +293,7 @@ mod tests {
             is_default: true,
             efforts: vec!["low".into(), "high".into()],
             images: None,
+            ..Default::default()
         }]
     }
 
@@ -382,6 +386,7 @@ mod tests {
             label: "Session".into(),
             used_percent: 100.0,
             resets_at,
+            ..Default::default()
         };
         board.update_usage("claude", &[spent(Some(now + 3600))]);
         assert!(

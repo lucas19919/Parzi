@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { resetsIn, tokenCount } from "./format";
+  import { tokenCount } from "./format";
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import RunningCard from "./RunningCard.svelte";
-  import { board, refreshUsage, reloadBoard } from "./providerStore";
+  import { reloadBoard } from "./providerStore";
   import ResizeGrip from "./ResizeGrip.svelte";
-  import { nameOf } from "./providerRows";
   import { api, onRunEvent, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { folderName } from "./tabs";
@@ -28,10 +27,6 @@
   export let contextLimit = 0;
   export let compacting = false;
   export let streaming = false;
-  export let tokensIn = 0;
-  export let tokensOut = 0;
-  export let costUsd = 0;
-  export let provider = "";
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
@@ -120,35 +115,11 @@
     return out.sort((a, b) => (Date.parse(b.updated) || 0) - (Date.parse(a.updated) || 0)).slice(0, 8);
   })();
 
-  $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
-  $: agent = provider ? nameOf(provider) : "";
-  /** Agents whose plan limits Parzi can read (their /usage or /status). */
-  const READS_LIMITS = new Set(["claude", "codex", "grok", "opencode", "antigravity"]);
-  // How the agent bills, from Settings: a plan shows its limits, a key its tokens and cost.
-  let billing: Record<string, string> = {};
-  $: onKey = billing[provider] === "api_key";
-  async function loadBilling() {
-    try {
-      const cfg = await api.getConfig();
-      billing = Object.fromEntries(Object.entries(cfg.providers ?? {}).map(([id, e]) => [id, e.billing ?? "subscription"]));
-    } catch {
-      billing = {};
-    }
-  }
-
-  // The Usage card shows the plan's real limits: read from each agent's own
-  // source when the column shows, then every 5 minutes while it stays open.
-  $: if (open) void refreshUsage();
-  $: if (open) void loadBilling();
   onMount(() => {
     const un = onRunEvent((e) => {
       if (e.kind === "done" || e.kind === "error" || e.kind === "paused") void reloadBoard();
     });
-    const every = setInterval(() => {
-      if (open && !document.hidden) void refreshUsage();
-    }, 5 * 60_000);
     return () => {
-      clearInterval(every);
       un.then((f) => f()).catch(() => {});
     };
   });
@@ -281,30 +252,6 @@
       </div>
     {/if}
   </InfoCard>
-
-  <!-- Plan limits as rows; no prose. Agents Parzi reads limits for show their windows
-       empty until read; an agent with no plan limits has no card. -->
-  {#if provider && (onKey || limits.length || READS_LIMITS.has(provider))}
-    <InfoCard id="usage" title="Usage">
-      <svelte:fragment slot="aside">{onKey ? "API key" : agent}</svelte:fragment>
-      {#if onKey}
-        <div class="info-line"><span class="info-v">Tokens</span><span class="pct">{tokenCount(tokensIn + tokensOut)}</span></div>
-        <div class="info-line"><span class="info-v">Cost</span><span class="pct">${costUsd.toFixed(2)}</span></div>
-      {:else if limits.length}
-        {#each limits as w (w.label)}
-          <div class="info-line">
-            <span class="info-v">{w.label}</span>
-            {#if w.resets_at}<span class="quiet">{resetsIn(w.resets_at)}</span>{/if}
-            <span class="pct">{Math.round(w.used_percent)}%</span>
-          </div>
-        {/each}
-      {:else}
-        {#each ["Session", "Weekly"] as label (label)}
-          <div class="info-line"><span class="info-v">{label}</span><span class="pct quiet">—</span></div>
-        {/each}
-      {/if}
-    </InfoCard>
-  {/if}
 
   <RunningCard {session} {helpers} {notices} {running} {waiting} on:openSession />
   </div>

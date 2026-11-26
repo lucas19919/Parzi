@@ -8,8 +8,7 @@ fn home() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     static HOME: std::sync::Once = std::sync::Once::new();
     HOME.call_once(|| {
-        let dir =
-            std::env::temp_dir().join(format!("parzi-test-theme-change-{}", std::process::id()));
+        let dir = parzi_core::paths::test_home("theme-change");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("PARZI_HOME", &dir);

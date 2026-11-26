@@ -287,6 +287,7 @@ async fn list_models(peer: &Peer) -> Vec<ModelInfo> {
                     })
                     .unwrap_or_default(),
                 images: None,
+                ..Default::default()
             });
         }
         cursor = page
@@ -321,6 +322,7 @@ fn windows(snapshot: &Value) -> Vec<UsageWindow> {
             label,
             used_percent: used.clamp(0.0, 100.0),
             resets_at: w.get("resetsAt").and_then(Value::as_u64),
+            ..Default::default()
         });
     }
     out

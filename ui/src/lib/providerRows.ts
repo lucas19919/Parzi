@@ -149,6 +149,20 @@ export function seesImages(value: string, board: ProviderStatus[]): boolean {
   return board.find((b) => b.provider === p)?.models.find((x) => x.id === id)?.images !== false;
 }
 
+/** A model saved as one effort's variant ("antigravity/gemini-4-neon-high")
+ *  is its family at that effort once the agent lists families. */
+export function familyOf(value: string, board: ProviderStatus[]): { model: string; effort: string } | null {
+  const [p, ...rest] = value.split("/");
+  const id = rest.join("/");
+  const models = board.find((b) => b.provider === p)?.models ?? [];
+  if (!id || models.some((m) => m.id === id)) return null;
+  for (const m of models) {
+    const effort = m.variants && id.startsWith(`${m.id}-`) ? id.slice(m.id.length + 1) : "";
+    if (effort && m.efforts.includes(effort)) return { model: `${p}/${m.id}`, effort };
+  }
+  return null;
+}
+
 export function fitEffort(current: string, efforts: string[]): string {
   if (!efforts.length || efforts.includes(current)) return current;
   if (efforts.includes("medium")) return "medium";

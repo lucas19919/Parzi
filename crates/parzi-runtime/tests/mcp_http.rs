@@ -78,7 +78,7 @@ async fn one_connection_survives_an_ended_session_and_says_goodbye() {
         eprintln!("skipped: node not on PATH");
         return;
     }
-    let home = std::env::temp_dir().join(format!("parzi-mcp-http-{}", std::process::id()));
+    let home = parzi_core::paths::test_home("mcp-http");
     let _ = std::fs::create_dir_all(&home);
     std::env::set_var("PARZI_HOME", &home);
     let mut node = tokio::process::Command::new("node")

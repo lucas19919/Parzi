@@ -270,8 +270,7 @@ mod tests {
 
     #[test]
     fn a_saved_drawing_shows_but_is_never_sent_to_a_model() {
-        let dir = std::env::temp_dir().join(format!("parzi-svg-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::paths::test_home("svg");
         let svg = dir.join("flow.svg");
         std::fs::write(
             &svg,

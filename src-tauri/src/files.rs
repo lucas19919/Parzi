@@ -45,10 +45,17 @@ fn normalize_lexical(p: &Path) -> PathBuf {
     out
 }
 
+/// A local path from the window, tidied. Any local path opens; a network or
+/// device path (`\\host\share`, `\\?\`) never does: on Windows merely
+/// touching one sends the signed-in user's credentials to that host, and a
+/// path in an agent's reply can be one.
 fn resolve_path(raw: &str) -> Result<PathBuf, String> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err("empty path".into());
+    }
+    if remote_or_device(raw) {
+        return Err("network and device paths are not opened".into());
     }
     Ok(normalize_lexical(Path::new(raw)))
 }
@@ -604,5 +611,18 @@ mod tests {
         assert!(!remote_or_device(r"C:\proj\a.png"));
         assert!(!remote_or_device("/home/me/a.png"));
         assert!(!remote_or_device("a/b.png"));
+    }
+
+    #[test]
+    fn network_paths_are_never_opened_but_any_local_one_is() {
+        for bad in [
+            r"\\attacker\s\a.png",
+            "//attacker/s/a.txt",
+            r"\\?\UNC\attacker\s",
+        ] {
+            assert!(resolve_path(bad).is_err(), "{bad}");
+        }
+        assert!(resolve_path(r"C:\anywhere\a.txt").is_ok());
+        assert!(resolve_path("/anywhere/a.txt").is_ok());
     }
 }

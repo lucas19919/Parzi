@@ -187,7 +187,7 @@ fn session_meta_parent_id_defaults_to_none_for_legacy_files() {
 #[test]
 fn subsession_hierarchy_lists_children() {
     use parzi_core::store::SessionStore;
-    let dir = std::env::temp_dir().join(format!("parzi-test-logic-{}", std::process::id()));
+    let dir = parzi_core::paths::test_home("logic");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("PARZI_HOME", &dir);

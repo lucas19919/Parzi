@@ -114,6 +114,30 @@ pub fn scratch_dir(session_id: &str) -> Result<PathBuf> {
     Ok(parzi_dir()?.join("scratch").join(session_id))
 }
 
+/// A folder in the system temp folder for this test run, named
+/// `parzi-test-{name}-{pid}`; tests running at once share it. Folders an
+/// earlier run of the same tests left (over ten minutes old) are cleared
+/// first, so test runs never pile up.
+#[doc(hidden)]
+#[must_use]
+pub fn test_home(name: &str) -> PathBuf {
+    let tmp = std::env::temp_dir();
+    let prefix = format!("parzi-test-{name}-");
+    let stale = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+    for entry in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t < stale);
+        if old && entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+    let dir = tmp.join(format!("{prefix}{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 pub fn sessions_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("sessions"))
 }

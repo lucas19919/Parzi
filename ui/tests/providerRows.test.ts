@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chipOf, effortsFor, modelLabel, prettyModel } from "../src/lib/providerRows.ts";
+import { chipOf, effortsFor, familyOf, modelLabel, prettyModel } from "../src/lib/providerRows.ts";
 
 const status = (provider: string, models: { id: string; efforts: string[]; is_default?: boolean }[]) =>
   ({ provider, state: "ready", models }) as never;
@@ -46,4 +46,20 @@ test("the omnibar chip keeps the model and its version", () => {
 test("an agent's own model name wins", () => {
   assert.equal(modelLabel({ id: "gemini-pro-agent", name: "Gemini 3.1 Pro (High)" }), "Gemini 3.1 Pro (High)");
   assert.equal(modelLabel({ id: "opencode/big-pickle", name: "opencode/big-pickle" }), "Big Pickle");
+});
+
+test("a saved effort variant becomes its family at that effort", () => {
+  const board = [
+    {
+      provider: "antigravity",
+      models: [
+        { id: "gemini-4-neon", name: "Gemini 4 Neon", is_default: true, efforts: ["low", "medium", "high", "xhigh"], variants: true },
+        { id: "solo-high", name: "Solo (High)", is_default: false, efforts: ["low", "high"] },
+      ],
+    },
+  ] as unknown as Parameters<typeof familyOf>[1];
+  assert.deepEqual(familyOf("antigravity/gemini-4-neon-high", board), { model: "antigravity/gemini-4-neon", effort: "high" });
+  assert.equal(familyOf("antigravity/gemini-4-neon", board), null, "already a family");
+  assert.equal(familyOf("antigravity/gemini-4-neon-max", board), null, "an effort the family lacks");
+  assert.equal(familyOf("antigravity/solo-high", board), null, "listed as it is");
 });

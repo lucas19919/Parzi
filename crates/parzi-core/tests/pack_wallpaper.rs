@@ -1,7 +1,7 @@
 use parzi_core::theme;
 
 fn fresh_home() {
-    let dir = std::env::temp_dir().join(format!("parzi-test-pack-art-{}", std::process::id()));
+    let dir = parzi_core::paths::test_home("pack-art");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("PARZI_HOME", &dir);

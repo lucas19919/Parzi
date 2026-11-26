@@ -453,13 +453,82 @@ fn remember_models(agent: &str, models: &[ModelInfo]) {
     let _ = parzi_core::atomic_write(&path, text.as_bytes());
 }
 
+/// Efforts an agent can spell into its model names, lowest first.
+const LEVELS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// "Gemini 4 Neon (High)" listed as `gemini-4-neon-high` is Gemini 4 Neon at
+/// high effort: (`gemini-4-neon`, "Gemini 4 Neon", "high").
+fn split_variant(id: &str, name: &str) -> Option<(String, String, &'static str)> {
+    let open = name.rfind(" (")?;
+    let level = name[open + 2..].strip_suffix(')')?.to_lowercase();
+    let level = *LEVELS.iter().find(|l| **l == level)?;
+    let base = id.strip_suffix(&format!("-{level}"))?;
+    Some((base.to_string(), name[..open].to_string(), level))
+}
+
+/// An agent that lists every effort as a model of its own (Antigravity) shows
+/// one model per family, with those efforts; `variant_for` picks the one to run.
+fn collapse_variants(models: Vec<ModelInfo>) -> Vec<ModelInfo> {
+    let split: Vec<_> = models
+        .iter()
+        .map(|m| split_variant(&m.id, &m.name))
+        .collect();
+    let count = |base: &str| split.iter().flatten().filter(|(b, _, _)| b == base).count();
+    let mut out: Vec<ModelInfo> = vec![];
+    for (m, s) in models.into_iter().zip(&split) {
+        let Some((base, name, level)) = s.as_ref().filter(|(b, _, _)| count(b) > 1) else {
+            out.push(m);
+            continue;
+        };
+        let at = match out.iter().position(|o| o.variants && &o.id == base) {
+            Some(at) => at,
+            None => {
+                out.push(ModelInfo {
+                    id: base.clone(),
+                    name: name.clone(),
+                    images: m.images,
+                    variants: true,
+                    ..Default::default()
+                });
+                out.len() - 1
+            }
+        };
+        let family = &mut out[at];
+        family.is_default |= m.is_default;
+        family.efforts.push((*level).to_string());
+    }
+    for m in out.iter_mut().filter(|m| m.variants) {
+        m.efforts
+            .sort_by_key(|e| LEVELS.iter().position(|l| l == e));
+    }
+    out
+}
+
+/// The model id a turn runs: a family's variant at the chosen effort (or
+/// medium, or its lowest, when that effort isn't one it has); any other id
+/// as it is.
+fn variant_for(models: &[ModelInfo], id: &str, effort: Option<&str>) -> Option<String> {
+    let family = models.iter().find(|m| m.variants && m.id == id)?;
+    let has = |e: &str| family.efforts.iter().any(|x| x == e);
+    let level = effort
+        .filter(|e| has(e))
+        .or_else(|| has("medium").then_some("medium"))
+        .or_else(|| family.efforts.first().map(String::as_str))?;
+    Some(format!("{id}-{level}"))
+}
+
 fn session_models(session: &Value) -> Vec<ModelInfo> {
+    collapse_variants(listed_models(session))
+}
+
+fn listed_models(session: &Value) -> Vec<ModelInfo> {
     let model = |id: &str, name: Option<&str>, current: Option<&str>| ModelInfo {
         id: id.to_string(),
         name: name.unwrap_or(id).to_string(),
         is_default: current == Some(id),
         efforts: default_efforts(),
         images: None,
+        ..Default::default()
     };
     if let Some(list) = session
         .pointer("/models/availableModels")
@@ -732,7 +801,7 @@ impl Provider for Acp {
             Probe::ListedBySession => ProviderStatus::new(self.agent.id, State::Ready, ""),
         };
         if status.models.is_empty() {
-            status.models = cached_models(self.agent.id);
+            status.models = collapse_variants(cached_models(self.agent.id));
             for m in &mut status.models {
                 if m.efforts.is_empty() {
                     m.efforts = default_efforts();
@@ -796,6 +865,18 @@ impl Provider for Acp {
     ) -> Result<TurnEnd, ProviderError> {
         let program = self.program().ok_or_else(|| self.not_installed())?;
         process::existing_folder(&spec.cwd)?;
+        let mut spec = spec;
+        // A family picked with an effort runs as that effort's own model.
+        if let Some(variant) = spec.model.as_deref().and_then(|m| {
+            variant_for(
+                &collapse_variants(cached_models(self.agent.id)),
+                m,
+                spec.effort.as_deref(),
+            )
+        }) {
+            spec.model = Some(variant);
+            spec.effort = None;
+        }
         if let Some(why) = self.refusal(spec.model.as_deref()) {
             return Err(ProviderError::new(ErrorClass::Auth, why));
         }
@@ -1003,6 +1084,7 @@ fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
                 is_default: false,
                 efforts: default_efforts(),
                 images: None,
+                ..Default::default()
             });
         } else if !models.is_empty() {
             details.push_str(line);
@@ -1055,6 +1137,7 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
                 is_default,
                 efforts: default_efforts(),
                 images: None,
+                ..Default::default()
             });
         }
     }
@@ -2139,6 +2222,110 @@ mod tests {
     use super::*;
     use crate::types::ToolServer;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    fn listed(id: &str, name: &str, default: bool) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            name: name.into(),
+            is_default: default,
+            efforts: default_efforts(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_model_listed_per_effort_shows_once_with_its_efforts() {
+        let shown = collapse_variants(vec![
+            listed("gemini-4-neon-high", "Gemini 4 Neon (High)", false),
+            listed("gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)", false),
+            listed("gemini-4-neon-medium", "Gemini 4 Neon (Medium)", true),
+            listed("gemini-4-neon-low", "Gemini 4 Neon (Low)", false),
+            listed("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)", false),
+            listed("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)", false),
+            listed("solo-high", "Solo (High)", false),
+            listed("grok-4.7", "Grok 4.7", false),
+        ]);
+        let rows: Vec<(&str, &str, Vec<&str>, bool)> = shown
+            .iter()
+            .map(|m| {
+                (
+                    m.id.as_str(),
+                    m.name.as_str(),
+                    m.efforts.iter().map(String::as_str).collect(),
+                    m.variants,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "gemini-4-neon",
+                    "Gemini 4 Neon",
+                    vec!["low", "medium", "high", "xhigh"],
+                    true
+                ),
+                (
+                    "gemini-3.8-flash",
+                    "Gemini 3.8 Flash",
+                    vec!["low", "high"],
+                    true
+                ),
+                // A single variant, or a model with no effort in its name, stays as listed.
+                (
+                    "solo-high",
+                    "Solo (High)",
+                    default_efforts().iter().map(String::as_str).collect(),
+                    false
+                ),
+                (
+                    "grok-4.7",
+                    "Grok 4.7",
+                    default_efforts().iter().map(String::as_str).collect(),
+                    false
+                ),
+            ]
+        );
+        assert!(
+            shown[0].is_default,
+            "the default variant makes its family the default"
+        );
+        // Collapsing twice (a cached list) changes nothing.
+        assert_eq!(collapse_variants(shown.clone()), shown);
+    }
+
+    #[test]
+    fn a_family_runs_the_variant_for_the_chosen_effort() {
+        let shown = collapse_variants(vec![
+            listed("gemini-4-neon-high", "Gemini 4 Neon (High)", false),
+            listed("gemini-4-neon-medium", "Gemini 4 Neon (Medium)", false),
+            listed("gemini-4-neon-low", "Gemini 4 Neon (Low)", false),
+            listed("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)", false),
+            listed("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)", false),
+        ]);
+        let pick = |id: &str, effort: Option<&str>| variant_for(&shown, id, effort);
+        assert_eq!(
+            pick("gemini-4-neon", Some("high")).as_deref(),
+            Some("gemini-4-neon-high")
+        );
+        assert_eq!(
+            pick("gemini-4-neon", Some("max")).as_deref(),
+            Some("gemini-4-neon-medium"),
+            "an effort it lacks runs medium"
+        );
+        assert_eq!(
+            pick("gemini-4-neon", None).as_deref(),
+            Some("gemini-4-neon-medium")
+        );
+        assert_eq!(
+            pick("gemini-3.8-flash", None).as_deref(),
+            Some("gemini-3.8-flash-low"),
+            "no medium: its lowest"
+        );
+        // A saved variant id, or any other model, runs as it is.
+        assert_eq!(pick("gemini-4-neon-high", Some("low")), None);
+        assert_eq!(pick("grok-4.7", Some("high")), None);
+    }
 
     struct Gate(PermissionDecision, std::sync::Mutex<Vec<PermissionRequest>>);
 

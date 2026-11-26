@@ -265,6 +265,7 @@ fn models_from_init(init: &Value) -> Vec<ModelInfo> {
                 name,
                 efforts,
                 images: None,
+                ..Default::default()
             })
         })
         .collect()
@@ -1209,6 +1210,7 @@ fn oauth_windows(v: &Value) -> Vec<UsageWindow> {
                 label: "Monthly extra".into(),
                 used_percent: used.clamp(0.0, 100.0),
                 resets_at: None,
+                ..Default::default()
             });
         }
     }
@@ -1216,15 +1218,16 @@ fn oauth_windows(v: &Value) -> Vec<UsageWindow> {
 }
 
 fn plan_windows(v: &Value) -> Vec<UsageWindow> {
+    // The model-only weekly windows limit just those models.
     let named = [
-        ("five_hour", "Session"),
-        ("seven_day", "Weekly"),
-        ("seven_day_opus", "Weekly Opus"),
-        ("seven_day_sonnet", "Weekly Sonnet"),
+        ("five_hour", "Session", ""),
+        ("seven_day", "Weekly", ""),
+        ("seven_day_opus", "Weekly Opus", "opus"),
+        ("seven_day_sonnet", "Weekly Sonnet", "sonnet"),
     ];
     named
         .iter()
-        .filter_map(|(key, label)| {
+        .filter_map(|(key, label, model)| {
             let w = v.get(*key).filter(|w| w.is_object())?;
             let used = w.get("utilization").and_then(Value::as_f64)?;
             let resets_at = w
@@ -1236,6 +1239,11 @@ fn plan_windows(v: &Value) -> Vec<UsageWindow> {
                 label: (*label).to_string(),
                 used_percent: used.clamp(0.0, 100.0),
                 resets_at,
+                models: if model.is_empty() {
+                    vec![]
+                } else {
+                    vec![(*model).to_string()]
+                },
             })
         })
         .collect()
@@ -1253,6 +1261,7 @@ fn usage_windows(info: &Value) -> Vec<(UsageWindow, bool)> {
                 label: window_label(kind),
                 used_percent: (used * 100.0).clamp(0.0, 100.0),
                 resets_at: w.get("resetsAt").and_then(Value::as_u64),
+                models: window_models(kind),
             },
             rejected,
         ))
@@ -1271,9 +1280,18 @@ fn window_label(kind: &str) -> String {
     match kind {
         "five_hour" => "Session".to_string(),
         "seven_day" => "Weekly".to_string(),
-        "seven_day_opus" => "Weekly · Opus".to_string(),
-        "seven_day_sonnet" => "Weekly · Sonnet".to_string(),
+        "seven_day_opus" => "Weekly Opus".to_string(),
+        "seven_day_sonnet" => "Weekly Sonnet".to_string(),
         other => other.replace('_', " "),
+    }
+}
+
+/// A model-only window limits just that model.
+fn window_models(kind: &str) -> Vec<String> {
+    match kind {
+        "seven_day_opus" => vec!["opus".into()],
+        "seven_day_sonnet" => vec!["sonnet".into()],
+        _ => vec![],
     }
 }
 
@@ -1476,8 +1494,9 @@ mod tests {
         assert_eq!(got.len(), 3);
         assert!((find("Session").0.used_percent - 1.0).abs() < 1e-9);
         assert!((find("Weekly").0.used_percent - 97.0).abs() < 1e-9);
-        let (opus, rejected) = find("Weekly · Opus");
+        let (opus, rejected) = find("Weekly Opus");
         assert!(rejected && (opus.used_percent - 100.0).abs() < 1e-9);
+        assert_eq!(opus.models, ["opus"], "it limits Opus only");
         // An older CLI with only the top-level window still counts.
         let old = usage_windows(
             &json!({"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.37}),
