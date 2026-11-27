@@ -20,10 +20,3 @@ export function offeredLimits(windows: UsageWindow[], models: { id: string }[]):
 export function ringWindow(windows: UsageWindow[]): UsageWindow | null {
   return windows.find((w) => w.label === "Session") ?? windows[0] ?? null;
 }
-
-/** A window's name where every model's windows show together (Settings). */
-export function windowName(w: UsageWindow): string {
-  if (!w.models?.length || w.models.some((m) => w.label.toLowerCase().includes(m))) return w.label;
-  const scope = w.models.map((m) => (m.length <= 3 ? m.toUpperCase() : m[0].toUpperCase() + m.slice(1))).join("/");
-  return `${scope} ${w.label}`;
-}

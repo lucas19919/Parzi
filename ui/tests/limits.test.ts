@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { limitsFor, offeredLimits, ringWindow, windowName } from "../src/lib/limits.ts";
+import { limitsFor, offeredLimits, ringWindow } from "../src/lib/limits.ts";
 
 const claude = [
   { label: "Session", used_percent: 22 },
@@ -31,7 +31,7 @@ test("Settings shows only the limits of models the agent offers", () => {
     { label: "Weekly", used_percent: 0, models: ["claude", "gpt"] },
   ];
   const gemini = [{ id: "gemini-4-neon" }, { id: "gemini-3.8-flash" }];
-  assert.deepEqual(offeredLimits(ag, gemini).map(windowName), ["Gemini Session"]);
+  assert.deepEqual(offeredLimits(ag, gemini).map((w) => w.models), [["gemini"]]);
   assert.equal(offeredLimits(ag, []).length, 3, "no model list yet: all of them");
 });
 
@@ -39,10 +39,4 @@ test("the ring shows the session window, else the shortest there is", () => {
   assert.equal(ringWindow(claude)?.label, "Session");
   assert.equal(ringWindow([{ label: "Weekly", used_percent: 18 }])?.label, "Weekly");
   assert.equal(ringWindow([]), null);
-});
-
-test("Settings names a scoped window by its models", () => {
-  assert.equal(windowName({ label: "Session", used_percent: 0, models: ["claude", "gpt"] }), "Claude/GPT Session");
-  assert.equal(windowName({ label: "Weekly", used_percent: 0 }), "Weekly");
-  assert.equal(windowName({ label: "Weekly Opus", used_percent: 0, models: ["opus"] }), "Weekly Opus", "already named");
 });

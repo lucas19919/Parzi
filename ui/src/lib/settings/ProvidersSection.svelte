@@ -4,11 +4,11 @@
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus, type RegistryAgent } from "../api";
   import { formatCommand, splitCommand } from "../acpCommand";
   import { board, checking, ensureBoard, installAgent, nextStep, refreshBoard, refreshStale, setupWaits, signInAgent } from "../providerStore";
-  import { BILLING_OPTIONS, PROVIDER_ORDER, billingNote, isUsable, nameOf, stateLabel, type Billing } from "../providerRows";
+  import { BILLING_OPTIONS, PROVIDER_ORDER, isUsable, nameOf, stateLabel, type Billing } from "../providerRows";
   import { updateConfig } from "../config";
   import { refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "../remote";
   import SegControl from "./SegControl.svelte";
-  import { offeredLimits, windowName } from "../limits";
+  import { offeredLimits } from "../limits";
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
@@ -252,9 +252,9 @@
             </span>
           </div>
           {#if p?.state === "ready" && offeredLimits(p.usage ?? [], p.models).length}
-            {#each offeredLimits(p.usage ?? [], p.models) as w (windowName(w))}
+            {#each offeredLimits(p.usage ?? [], p.models) as w (`${w.label}:${(w.models ?? []).join()}`)}
               <div class="row">
-                <span class="usage-label">{windowName(w)}</span>
+                <span class="usage-label">{w.label}</span>
                 <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
                 <span class="usage-num">{Math.round(w.used_percent)}%</span>
                 {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
@@ -311,7 +311,7 @@
 
           {#if id !== "acp" && entry.enabled}
             <div class="row">
-              <span class="row-label" class:keyed={billing === "api_key"}>{billingNote(id, billing)}</span>
+              <span class="row-label">Billing</span>
               <span class="row-ctl auto">
                 <SegControl label={`What ${nameOf(id)} bills`} options={BILLING_OPTIONS} value={billing} on:pick={(e) => setBilling(id, e.detail)} />
               </span>
@@ -344,9 +344,9 @@
           {/if}
 
           {#if ready && p && offeredLimits(p.usage ?? [], p.models).length}
-            {#each offeredLimits(p.usage ?? [], p.models) as w (windowName(w))}
+            {#each offeredLimits(p.usage ?? [], p.models) as w (`${w.label}:${(w.models ?? []).join()}`)}
               <div class="row">
-                <span class="usage-label">{windowName(w)}</span>
+                <span class="usage-label">{w.label}</span>
                 <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
                 <span class="usage-num">{Math.round(w.used_percent)}%</span>
                 {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
@@ -424,9 +424,6 @@
   .row-label.bad {
     color: var(--bad-text);
   }
-  .row-label.keyed {
-    color: var(--warn);
-  }
   .tin.key {
     flex: 1;
     min-width: 0;
@@ -464,9 +461,13 @@
 
   /* ── Usage: label, bar, percent, reset ── */
 
+  /* The same type as every other row: a label, then muted figures. */
   .usage-label {
     flex: none;
     width: 96px;
+    color: var(--text);
+    font-size: var(--fs-md);
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -492,6 +493,7 @@
     flex: none;
     width: 34px;
     color: var(--muted);
+    font-size: var(--fs-md);
     font-variant-numeric: tabular-nums;
     text-align: right;
   }

@@ -155,7 +155,7 @@ fn grok_windows(v: &Value) -> Vec<UsageWindow> {
         Some("USAGE_PERIOD_TYPE_WEEKLY") => "Weekly",
         Some("USAGE_PERIOD_TYPE_MONTHLY") => "Monthly",
         Some("USAGE_PERIOD_TYPE_DAILY") => "Daily",
-        _ => "Credits",
+        _ => "Quota",
     };
     let resets_at = period
         .and_then(|p| p.get("end"))
