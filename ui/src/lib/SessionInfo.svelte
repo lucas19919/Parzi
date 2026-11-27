@@ -236,24 +236,28 @@
     />
   {/if}
 
-  <InfoCard id="context" title="Context" foldedAside>
-    <svelte:fragment slot="aside">{contextLimit > 0 ? `${pct}%` : ""}</svelte:fragment>
-    {#if contextLimit > 0}
-      <ContextBreakdown
-        used={contextUsed}
-        limit={contextLimit}
-        {folder}
-        {compacting}
-        {streaming}
-        on:compact={() => dispatch("compact")}
-      />
-    {:else}
-      <div class="info-line">
-        <span class="info-v">Used</span>
-        <span class="pct" class:quiet={!contextUsed}>{contextUsed ? tokenCount(contextUsed) : "—"}</span>
-      </div>
-    {/if}
-  </InfoCard>
+  <!-- A card with nothing to say yet stays away: Context once the session
+       has used some, Running once something runs. -->
+  {#if contextUsed > 0}
+    <InfoCard id="context" title="Context" foldedAside>
+      <svelte:fragment slot="aside">{contextLimit > 0 ? `${pct}%` : ""}</svelte:fragment>
+      {#if contextLimit > 0}
+        <ContextBreakdown
+          used={contextUsed}
+          limit={contextLimit}
+          {folder}
+          {compacting}
+          {streaming}
+          on:compact={() => dispatch("compact")}
+        />
+      {:else}
+        <div class="info-line">
+          <span class="info-v">Used</span>
+          <span class="pct">{tokenCount(contextUsed)}</span>
+        </div>
+      {/if}
+    </InfoCard>
+  {/if}
 
   <RunningCard {session} {helpers} {notices} {running} {waiting} on:openSession />
   </div>

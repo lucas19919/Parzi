@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- The side column shows only cards with something in them: Context appears once the session has used some, Running once something runs.
 - Antigravity's Gemini models show their 5-hour quota in the ring, read from the same model list the agent uses. Settings shows only the limits of models an agent offers, so Antigravity no longer lists a Claude/GPT quota you don't use. The ring is hover only; clicking it no longer opens Settings.
 - The open tab, and a session's stack of tabs, have the cards' glass edge again, on Home over the wallpaper too. The Environment card shows a branch only for a git folder.
 - Plan limits are a ring in the composer, for the model you're using: it fills with the session (5-hour) window, and hovering it shows every window that applies (weekly, monthly, model-only). The Usage card in the side column is gone. A limit that belongs to other models (Claude's Opus-only week, Antigravity's Claude/GPT quota) no longer shows on yours.
