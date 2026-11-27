@@ -41,7 +41,6 @@
   import { artifactTab, displayTitle, ensureComposer, hostOf, isExplicitUrl, pageTab, placeTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
-  import { noticesOf } from "./lib/turns";
   import { splitQuotes } from "./lib/oldQuotes";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { freshNotice } from "./lib/notifyPrefs";
@@ -287,8 +286,6 @@
   $: mode = comp.mode;
   $: model = comp.model;
   $: streaming = !!shown && (working.has(shown) || closing === shown);
-  // The thread's notices and messages from other sessions, for the Running card.
-  $: notices = noticesOf(events, (id) => threads.find((t) => t.id === id)?.title || "Agent");
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -2110,7 +2107,6 @@
             running={working}
             {approvals}
             questions={asks}
-            {notices}
             width={infoWidth}
             open={infoShown}
             on:resize={resizeInfo}

@@ -1,4 +1,3 @@
-import type { ChatEvent } from "./api";
 import type { Step } from "./live";
 
 /** What the thread shows of the saved events. */
@@ -95,56 +94,4 @@ export function turnLabel(f: Fold, liveSecs = 0, liveAction = ""): string {
   const took = f.secs >= 1 ? spent(f.secs) : "";
   const head = f.stopped ? (took ? `Stopped after ${took}` : "Stopped") : took ? `Worked ${took}` : "Worked";
   return f.steps ? `${head} · ${f.steps} step${f.steps === 1 ? "" : "s"}` : head;
-}
-
-/** A notice from the transcript, for the Running card. */
-export interface Notice {
-  key: string;
-  /** Milliseconds, or 0 when the event has no time. */
-  at: number;
-  text: string;
-  tip: string;
-  /** The session a message came from, or "". */
-  from: string;
-}
-
-const INTER = "parzi-inter:1";
-
-export function compactedTitle(before?: number, after?: number): string {
-  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
-  if (before && after) return `Conversation compacted · ${k(before)} → ${k(after)} tokens`;
-  if (before) return `Conversation compacted · was ${k(before)} tokens`;
-  return "Conversation compacted";
-}
-
-const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n).trimEnd()}…` : text);
-const firstLine = (text: string) => clip(text.trim().split("\n")[0].trim(), 140);
-
-/** A message another session sent this one, or null. */
-export function interOf(text: string): { from: string; body: string } | null {
-  if (!text.startsWith(INTER)) return null;
-  try {
-    const m = JSON.parse(text.slice(INTER.length));
-    return { from: String(m.from_run ?? ""), body: String(m.body ?? "") };
-  } catch {
-    return null;
-  }
-}
-
-/** The transcript's system notices, compactions and messages from other
- *  sessions, oldest first. */
-export function noticesOf(events: ChatEvent[], title: (session: string) => string): Notice[] {
-  const out: Notice[] = [];
-  events.forEach((e, i) => {
-    const at = (e.at ?? 0) * 1000;
-    const key = `n${i}`;
-    if (e.kind === "checkpoint") {
-      out.push({ key, at, text: compactedTitle(e.before, e.after), tip: clip(e.summary.trim(), 600), from: "" });
-    } else if (e.kind === "system" && e.text.trim()) {
-      const m = interOf(e.text);
-      if (m) out.push({ key, at, text: `${title(m.from)}: ${firstLine(m.body)}`, tip: clip(m.body.trim(), 600), from: m.from });
-      else out.push({ key, at, text: firstLine(e.text), tip: clip(e.text.trim(), 600), from: "" });
-    }
-  });
-  return out;
 }

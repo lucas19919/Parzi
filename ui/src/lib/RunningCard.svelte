@@ -2,22 +2,20 @@
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
-  import ThinkingFace from "./ThinkingFace.svelte";
   import { api, onRunEvent, type SessionMeta, type ShellJob } from "./api";
   import { activity, runLogs } from "./activity";
   import { sessionTone, TONE_WORDS } from "./sessionTone";
   import { tooltip } from "./tooltip";
   import type { LogStep } from "./runLog";
-  import type { Notice } from "./turns";
   import { duration } from "./format";
   import { commandIntent, isShellStepLabel, stepIntent } from "./intentLabel";
 
   /** What the agent is doing in this session, oldest first: the steps of its
-   *  latest run, the commands it ran, the helper sessions it started, and
-   *  the thread's notices and messages from other sessions. */
+   *  latest run, the commands it ran and the helper sessions it started.
+   *  One plain mark each: a spinner while it runs, a check or a cross when
+   *  done, the agent mark for a helper. */
   export let session = "";
   export let helpers: SessionMeta[] = [];
-  export let notices: Notice[] = [];
   export let running: Set<string> = new Set();
   export let waiting: Set<string> = new Set();
 
@@ -45,8 +43,7 @@
   type Row =
     | { key: string; at: number; kind: "step"; step: LogStep }
     | { key: string; at: number; kind: "helper"; helper: SessionMeta }
-    | { key: string; at: number; kind: "job"; job: ShellJob }
-    | { key: string; at: number; kind: "note"; note: Notice };
+    | { key: string; at: number; kind: "job"; job: ShellJob };
 
   $: rawSteps = $runLogs.get(session)?.steps ?? [];
   $: commands = jobs.filter((j) => !j.host_id);
@@ -59,7 +56,6 @@
     ...steps.map((s): Row => ({ key: `s:${s.id}`, at: s.at, kind: "step", step: s })),
     ...helpers.map((h): Row => ({ key: `h:${h.id}`, at: Date.parse(h.created) || 0, kind: "helper", helper: h })),
     ...commands.map((j): Row => ({ key: `j:${j.id}`, at: j.started, kind: "job", job: j })),
-    ...notices.map((n): Row => ({ key: `n:${n.key}`, at: n.at, kind: "note", note: n })),
   ].sort((a, b) => a.at - b.at);
   $: earlier = showAll ? 0 : Math.max(0, rows.length - SHOWN);
   $: busy = helpers.filter((h) => running.has(h.id)).length + commands.filter((j) => j.running).length + steps.filter((s) => s.running).length;
@@ -132,9 +128,9 @@
       {@const short = stepIntent(s.label, s.running)}
       <div class="info-line" class:quiet={!s.running}>
         {#if s.running}
-          <i class="info-dot t-live" />
+          <span class="mark"><svg class="spin" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" /></svg></span>
         {:else}
-          <span class="status" class:bad={!s.ok}><Icon name={s.ok ? "check" : "xCircle"} size={12} /></span>
+          <span class="mark"><Icon name={s.ok ? "check" : "close"} size={12} /></span>
         {/if}
         <span class="info-v" use:tooltip={s.ok || s.running ? s.label : `${s.label} (failed)`}>{short}</span>
         <span class="info-time">{s.running ? span(now - s.at) : s.ms ? duration(s.ms) : ""}</span>
@@ -142,38 +138,18 @@
     {:else if r.kind === "helper"}
       {@const h = r.helper}
       {@const tone = sessionTone(h, running, waiting)}
-      <button class="info-line row" use:tooltip={detail(h, tone, $activity) ? `${TONE_WORDS[tone]}: ${detail(h, tone, $activity)}` : TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
-        {#if tone === "live"}
-          <ThinkingFace size={16} />
-        {:else}
-          <i class="info-dot t-{tone}" />
-        {/if}
-        <span class="helper">
-          <span class="info-v">{h.title || "Untitled"}</span>
-          {#if detail(h, tone, $activity)}<span class="detail">{detail(h, tone, $activity)}</span>{/if}
-        </span>
+      <button class="info-line row" class:quiet={tone !== "live" && tone !== "need"} use:tooltip={detail(h, tone, $activity) ? `${TONE_WORDS[tone]}: ${detail(h, tone, $activity)}` : TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
+        <span class="mark"><Icon name="bot" size={12} /></span>
+        <span class="info-v">{h.title || "Untitled"}</span>
       </button>
-    {:else if r.kind === "note"}
-      {@const n = r.note}
-      {#if n.from}
-        <button class="info-line row quiet" use:tooltip={n.tip} on:click={() => dispatch("openSession", { id: n.from })}>
-          <Icon name="chat" size={12} />
-          <span class="info-v">{n.text}</span>
-        </button>
-      {:else}
-        <div class="info-line quiet" use:tooltip={n.tip}>
-          <i class="info-dot" />
-          <span class="info-v">{n.text}</span>
-        </div>
-      {/if}
     {:else}
       {@const j = r.job}
       {@const short = commandIntent(j.cmd, j.urls, j.running)}
       <div class="info-line job" class:quiet={!j.running}>
         {#if j.running}
-          <i class="info-dot t-live" />
+          <span class="mark"><svg class="spin" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" /></svg></span>
         {:else}
-          <span class="status" class:bad={j.exit !== 0}><Icon name={j.exit === 0 ? "check" : "xCircle"} size={12} /></span>
+          <span class="mark"><Icon name={j.exit === 0 ? "check" : "close"} size={12} /></span>
         {/if}
         <span class="info-v" use:tooltip={j.exit === 0 || j.running ? j.cmd : `${j.cmd} (exit ${j.exit})`}>{short}</span>
         <span class="info-time">{span(took(j))}</span>
@@ -187,20 +163,35 @@
 {/if}
 
 <style>
-  .helper {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    flex: 1;
-    text-align: left;
+  .mark {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
   }
-  .detail {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--fs-xs);
-    color: var(--muted);
+  .spin {
+    width: 12px;
+    height: 12px;
+    animation: spin 0.9s linear infinite;
+  }
+  .spin circle {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-dasharray: 18 10;
+    stroke-linecap: round;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+    }
   }
   .stop {
     width: 20px;
@@ -227,9 +218,6 @@
   .stop:hover .square {
     background: var(--text);
   }
-  .status.bad :global(svg) {
-    color: var(--bad-text);
-  }
   .chev {
     display: inline-flex;
     transform: rotate(-90deg);
@@ -237,17 +225,5 @@
   }
   .chev.open {
     transform: none;
-  }
-  .info-dot.t-live {
-    background: var(--accent);
-  }
-  .info-dot.t-need {
-    background: var(--warn);
-  }
-  .info-dot.t-bad {
-    background: var(--bad);
-  }
-  .info-dot.t-ok {
-    background: var(--ok);
   }
 </style>

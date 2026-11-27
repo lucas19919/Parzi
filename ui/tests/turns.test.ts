@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { foldTurns, noticesOf, spent, turnLabel, type Item } from "../src/lib/turns.ts";
-import type { ChatEvent } from "../src/lib/api.ts";
+import { foldTurns, spent, turnLabel, type Item } from "../src/lib/turns.ts";
 
 const user = (key: string, at?: number): Item => ({ key, kind: "user", text: "hi", at });
 const said = (key: string, at?: number): Item => ({ key, kind: "assistant", text: "ok", at });
@@ -56,24 +55,4 @@ test("time reads short", () => {
   assert.equal(spent(42), "42s");
   assert.equal(spent(125), "2m");
   assert.equal(spent(3900), "1h 5m");
-});
-
-test("notices, compactions and messages from other sessions go to the Running card", () => {
-  const events: ChatEvent[] = [
-    { kind: "user", text: "go" },
-    { kind: "system", text: "Plan saved: 4 items", at: 5 },
-    { kind: "system", text: `parzi-inter:1${JSON.stringify({ from_run: "s2", body: "Done.\nAll tests pass." })}` },
-    { kind: "checkpoint", summary: "Earlier work.", before: 120000, after: 30000 },
-    { kind: "system", text: "  " },
-  ];
-  const got = noticesOf(events, (id) => (id === "s2" ? "Helper" : "?"));
-  assert.deepEqual(
-    got.map((n) => [n.at, n.text, n.from]),
-    [
-      [5000, "Plan saved: 4 items", ""],
-      [0, "Helper: Done.", "s2"],
-      [0, "Conversation compacted · 120k → 30k tokens", ""],
-    ],
-  );
-  assert.equal(got[1].tip, "Done.\nAll tests pass.");
 });
