@@ -41,7 +41,6 @@ mod calls;
 mod desk_text;
 mod notes;
 mod paths;
-pub mod project_plan;
 mod relay;
 
 use calls::{
@@ -283,9 +282,6 @@ impl ToolHost {
         }
         if is_question_tool(name) {
             return self.execute_question(id, args).await;
-        }
-        if name == "project.plan" {
-            return self.execute_project_plan(args);
         }
         if is_project_tool(name) {
             if let Err(why) = self.approved(id, name, args).await {
@@ -593,21 +589,13 @@ impl ToolHost {
             .store
             .create_draft(&title, &me.project, &me.model, &me.cwd, &brief, plan)
         {
-            Ok(d) => {
-                let linked = args
-                    .get("target")
-                    .and_then(Value::as_str)
-                    .filter(|t| !t.trim().is_empty())
-                    .map(|t| self.link_target(t, &d.id))
-                    .unwrap_or_default();
-                (
-                    true,
-                    format!(
-                        "drafted \"{}\" ({}){linked}; the person sees it under Drafts and starts it when they choose",
-                        d.title, d.id
-                    ),
-                )
-            }
+            Ok(d) => (
+                true,
+                format!(
+                    "drafted \"{}\" ({}); the person sees it under Drafts and starts it when they choose",
+                    d.title, d.id
+                ),
+            ),
             Err(e) => (false, e.to_string()),
         }
     }
@@ -655,7 +643,11 @@ impl ToolHost {
                             mode_override: Some(self.child_mode().into()),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
                             approver: Some(self.p.approver.clone()),
-                            target: str_arg("target").filter(|s| !s.trim().is_empty()),
+                            plan: args.get("plan").and_then(|p| {
+                                parzi_core::store::SessionPlan::from_payload(
+                                    &serde_json::json!({ "items": p }),
+                                )
+                            }),
                         },
                     )
                     .await

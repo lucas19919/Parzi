@@ -1,4 +1,4 @@
-import type { HostJob, ProjectPlan } from "./api";
+import type { HostJob } from "./api";
 
 /** A link or popover the session keeps coming back to, shown above the composer. */
 export interface Pin {
@@ -44,18 +44,4 @@ export function sessionPins(hosts: HostJob[], planDoc?: string | null, planItems
     out.push({ kind: "file", label: "Plan", target: planDoc.trim() });
   }
   return out;
-}
-
-export interface TargetsSummary {
-  open: { title: string; working: boolean }[];
-  done: number;
-}
-
-/** What the targets row shows: the targets still to do, in order, and how
- *  many are done. Null when there is no plan or it has no targets. */
-export function targetsSummary(plan: ProjectPlan | null | undefined): TargetsSummary | null {
-  const targets = Array.isArray(plan?.targets) ? plan.targets : [];
-  if (!targets.length) return null;
-  const open = targets.filter((t) => t.state !== "done").map((t) => ({ title: t.title.trim() || "Untitled", working: t.state === "working" }));
-  return { open, done: targets.length - open.length };
 }

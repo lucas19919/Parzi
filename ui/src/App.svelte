@@ -2132,7 +2132,6 @@
         {#if tab.kind === "session" && shown && hasSession}
           <SessionPins
             session={shown}
-            project={sessionProject}
             sessionPlan={meta?.plan ?? null}
             {streaming}
             on:open={(e) => openPin(e.detail)}

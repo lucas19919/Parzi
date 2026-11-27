@@ -823,8 +823,6 @@ fn main() {
             settings::shell_kill,
             brain::brain_dir,
             brain::brain_read,
-            brain::project_plan,
-            brain::project_plan_doc,
             brain::brain_write,
             brain::brain_save_answer,
             brain::brain_delete,

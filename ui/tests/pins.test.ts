@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sessionPins, targetsSummary } from "../src/lib/pins.ts";
+import { sessionPins } from "../src/lib/pins.ts";
 import type { HostJob } from "../src/lib/api.ts";
 
 const host = (id: string, urls: string[], running = true): HostJob => ({ id, cmd: "npm run dev", workdir: "", urls, running, exit: null, started: 0, ms: 0 });
@@ -27,27 +27,6 @@ test("the plan's document comes last, as Plan", () => {
   assert.deepEqual(sessionPins([], "  "), []);
   assert.deepEqual(sessionPins([], null), []);
 });
-
-test("targets: the open ones in order, which are being worked on, and a done count", () => {
-  const s = targetsSummary({
-    goal: "Ship",
-    targets: [
-      { title: "One", state: "done" },
-      { title: "Two", state: "working" },
-      { title: " ", state: "todo" },
-      { title: "Four", state: "done" },
-    ],
-  });
-  assert.deepEqual(s, { open: [{ title: "Two", working: true }, { title: "Untitled", working: false }], done: 2 });
-});
-
-test("no plan, or a plan with no targets, shows no row", () => {
-  assert.equal(targetsSummary(null), null);
-  assert.equal(targetsSummary(undefined), null);
-  assert.equal(targetsSummary({ goal: "Ship", targets: [] }), null);
-  assert.deepEqual(targetsSummary({ goal: "", targets: [{ title: "A", state: "done" }] }), { open: [], done: 1 });
-});
-
 
 test("a session plan with steps pins as a live checklist even without a doc path", () => {
   const items = [

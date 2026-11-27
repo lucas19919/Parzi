@@ -449,7 +449,6 @@ impl Orchestrator {
             "project.switch",
             "project.archive",
             "project.delete",
-            "project.plan",
             "plan.read",
             "plan.write",
             "session.rename",

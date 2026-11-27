@@ -1,58 +1,41 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
-  import { api, onRunEvent, type HostJob, type ProjectPlan, type SessionMeta } from "./api";
-  import { sessionPins, targetsSummary, type Pin } from "./pins";
+  import { api, onRunEvent, type HostJob, type SessionMeta } from "./api";
+  import { sessionPins, type Pin } from "./pins";
   import { coalesce } from "./threadList";
-  import { toastError } from "./toast";
   import { tooltip } from "./tooltip";
 
-  /** One quiet row above the composer: dev servers, the session's live plan,
-   *  and the project's targets, with interactive popovers. */
+  /** One quiet row above the composer: dev servers and the session's live
+   *  plan, which opens in a popover. */
   export let session = "";
-  export let project = "";
   export let sessionPlan: SessionMeta["plan"] = null;
   export let streaming = false;
 
   const dispatch = createEventDispatcher<{ open: Pin }>();
 
   let hosts: HostJob[] = [];
-  let plan: ProjectPlan | null = null;
   let key = "";
-  let openPop: "plan" | "targets" | null = null;
+  let openPop: "plan" | null = null;
   let wrapEl: HTMLDivElement | null = null;
 
   $: planItems = sessionPlan?.items ?? [];
   $: planDoc = sessionPlan?.doc ?? null;
   $: planDone = planItems.filter((i) => i.state === "done").length;
   $: pins = sessionPins(hosts, planDoc, planItems);
-  $: summary = targetsSummary(plan);
   $: pendingHostUrl = hosts.some((h) => h.running && h.urls.length === 0);
   $: anyRunningHost = hosts.some((h) => h.running);
 
-  $: targetsTip = [
-    plan?.goal ?? "",
-    ...(summary?.open ?? []).map((t) => `${t.working ? "Working: " : ""}${t.title}`),
-    "Click to view project targets",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
   const reload = coalesce(async () => {
-    const [sid, slug] = [session, project];
-    const [h, p] = await Promise.all([
-      sid ? api.shellHosts(sid).catch(() => [] as HostJob[]) : [],
-      slug ? api.projectPlan(slug).catch(() => null) : null,
-    ]);
-    if (sid !== session || slug !== project) return;
+    const sid = session;
+    const h = sid ? await api.shellHosts(sid).catch(() => [] as HostJob[]) : [];
+    if (sid !== session) return;
     hosts = h;
-    plan = p;
   }, 250);
 
-  $: if (`${session}\n${project}` !== key) {
-    key = `${session}\n${project}`;
+  $: if (session !== key) {
+    key = session;
     hosts = [];
-    plan = null;
     openPop = null;
     void reload();
   }
@@ -91,16 +74,6 @@
     dispatch("open", { kind: "file", label: "Plan", target: doc });
   }
 
-  async function openProjectPlanDoc() {
-    openPop = null;
-    try {
-      const path = await api.projectPlanDoc(project);
-      if (path) dispatch("open", { kind: "file", label: "Project plan", target: path });
-    } catch (e) {
-      toastError(e);
-    }
-  }
-
   function onWindowPointerDown(e: PointerEvent) {
     if (openPop && wrapEl && !wrapEl.contains(e.target as Node)) {
       openPop = null;
@@ -135,7 +108,7 @@
 
 <svelte:window on:pointerdown={onWindowPointerDown} on:keydown={onWindowKeydown} />
 
-{#if pins.length || summary}
+{#if pins.length}
   <div class="pins-wrap" bind:this={wrapEl}>
     {#if openPop === "plan" && planItems.length}
       <div class="popover" role="dialog" aria-label="Session plan">
@@ -166,36 +139,6 @@
           {/each}
         </ul>
       </div>
-    {:else if openPop === "targets" && summary}
-      <div class="popover" role="dialog" aria-label="Project targets">
-        <div class="pop-head">
-          <span class="pop-title">Project targets</span>
-          <span class="pop-badge">{summary.done}/{summary.done + summary.open.length}</span>
-          <button class="pop-link" on:click={openProjectPlanDoc}>Open plan</button>
-        </div>
-        {#if plan?.goal}
-          <p class="pop-sub">{plan.goal}</p>
-        {/if}
-        {#if summary.open.length}
-          <ul class="pop-list">
-            {#each summary.open as t, i (i)}
-              <li class="pop-item" class:active={t.working}>
-                <span class="mark" class:active={t.working} aria-hidden="true">
-                  {#if t.working}
-                    <i class="dot" />
-                  {:else}
-                    <i class="ring" />
-                  {/if}
-                </span>
-                <span class="pop-text">{t.title}</span>
-                {#if t.working}<span class="tag">Working</span>{/if}
-              </li>
-            {/each}
-          </ul>
-        {:else}
-          <p class="pop-empty">All {summary.done} targets done.</p>
-        {/if}
-      </div>
     {/if}
 
     <div class="pins">
@@ -216,19 +159,6 @@
           <span class="text">{p.label}</span>
         </button>
       {/each}
-      {#if summary}
-        <button
-          class="pin targets"
-          class:on={openPop === "targets"}
-          aria-expanded={openPop === "targets"}
-          use:tooltip={targetsTip}
-          on:click={() => (openPop = openPop === "targets" ? null : "targets")}
-        >
-          <Icon name="project" size={12} />
-          {#if summary.open.some((t) => t.working)}<i class="working" aria-label="Being worked on" />{/if}
-          <span class="text">{summary.done}/{summary.done + summary.open.length}</span>
-        </button>
-      {/if}
     </div>
   </div>
 {/if}
@@ -293,11 +223,6 @@
     color: var(--text);
   }
   .pop-sub,
-  .pop-empty {
-    margin: 0;
-    color: var(--muted);
-    line-height: 1.5;
-  }
   .pop-list {
     margin: 0;
     padding: 0;
@@ -348,14 +273,6 @@
     flex: 1;
     min-width: 0;
   }
-  .tag {
-    flex: none;
-    padding: 0 calc(var(--space) * 1.5);
-    background: var(--fill);
-    border-radius: var(--radius-sm);
-    color: var(--muted);
-    font-size: var(--fs-xs);
-  }
   .pins {
     display: flex;
     align-items: center;
@@ -393,10 +310,6 @@
   }
   .pin :global(svg) {
     flex: none;
-  }
-  .targets {
-    flex: 0 1 auto;
-    max-width: none;
   }
   .text {
     min-width: 0;

@@ -100,8 +100,9 @@ pub struct SpawnSpec {
     /// Who answers the child's approval cards: the parent's own approver, so
     /// the person sees them. Without one, the child's approvals are refused.
     pub approver: Option<std::sync::Arc<dyn crate::tools::Approver>>,
-    /// A project plan target this helper works on: linked when it starts.
-    pub target: Option<String>,
+    /// The steps the subsession starts with as its own plan, from the
+    /// session that staffs it.
+    pub plan: Option<parzi_core::store::SessionPlan>,
 }
 
 impl std::fmt::Debug for SpawnSpec {

@@ -57,14 +57,11 @@ holds up: one tool per job.
   turn instead of holding a tool call open. The full plan document is kept
   with the session, and the plan pin opens it.
 - **Drafts stay:** sessions that haven't started yet.
-- **Project plans** are a markdown file with a short goal and an ordered list
-  of targets. They are pinned at project scope.
-  - Each target is tied to the drafts and sessions working on it, so it
-    can't drift away from the real work.
-  - The plan also shows inline above the composer, next to the pins, in a
-    simplified form: just the targets, each with an indicator when a
-    session is working on it.
-  - Agents can add, reorder and finish targets, and edit the goal.
+- **Session plans only** (decided 2026-11-27). Project plans with ordered
+  targets were built and then dropped: a session works as the orchestrator,
+  holds the plan, and hands each subsession its own steps through
+  `session.spawn`'s `plan`. `models.list` shows how much of each agent's
+  plan is used, so the orchestrator staffs work where there is room.
 
 ## Where the sprawl is
 
@@ -165,7 +162,7 @@ fixed: `harness.rs` now returns `Dispatch::Failed`.
 | 4. One turn engine | First pass | One shared turn engine behind the three drivers; one meaning for usage; no text matching in `run.rs`; a richer handover than 12k characters. Needs live agents to verify |
 | 5. One send state | Done | |
 | 6. The session layout | Done | |
-| 7. Plans | Done | |
+| 7. Plans | Done: session plans only, handed to subsessions on spawn | |
 | 8. Changeable environment | Project and folder done | Moving a session between this computer and the server |
 | 9. Test on any device | Phone emulator done (Windows) | Dev servers on the server don't show here (SSH port forwarding) |
 | 10. Usage for every agent | Claude, Codex, Grok, OpenCode Go and Antigravity, as a ring in the composer for the model in use | Cursor has no limits to read; Antigravity's Gemini 4 models have no quota Google publishes |
@@ -274,10 +271,9 @@ leaving its tab.
 ### 7. Plans
 
 - The session plan document is kept with the session and opened by its pin.
-- Project plans: a markdown file with a goal and ordered targets, each tied
-  to its drafts and sessions. The targets row sits above the composer with
-  "being worked on" indicators. Every agent edit to the plan appears in
-  Running.
+- Session plans only: an orchestrating session hands subsessions their
+  steps with `session.spawn`'s `plan` and reads their progress with
+  `plan.read`.
 
 ### 8. Changeable environment
 

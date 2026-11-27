@@ -495,20 +495,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     if (a.project) s.project = String(a.project);
     return { ...s };
   },
-  // ?targets=none: the project has no plan.
-  project_plan: (a) =>
-    a.project === "parzi" && params.get("targets") !== "none"
-      ? {
-          goal: "A calmer window: four cards, pins above the composer, links full screen.",
-          targets: [
-            { title: "Cut the side column to four cards", state: "done" },
-            { title: "Pins above the composer", state: "working" },
-            { title: "Open links full screen", state: "todo" },
-            { title: "Drop page tabs", state: "todo" },
-          ],
-        }
-      : null,
-  project_plan_doc: () => "D:\\Repos\\Parzi\\.parzi\\plan.md",
   provider_statuses: () => board,
   refresh_providers: () => board,
   refresh_usage: () => board,

@@ -142,7 +142,7 @@ impl Pump {
             mode_override,
             effort,
             approver,
-            target,
+            plan,
         } = spec;
         let caller = self.store.get(caller_id)?;
         let title: String = match title.trim() {
@@ -171,22 +171,11 @@ impl Pump {
         if !caller.cwd.is_empty() {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
-        // Linked before it runs, so the project plan shows the target as
-        // worked on while the helper works, not once it is done.
-        let linked = target
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty() && !caller.project.is_empty() && caller.project != "default")
-            .map(|t| parzi_core::project_plan::link_session(&caller.project, &t, &meta.id));
-        let tag = |reply: String| -> String {
-            let Some(note) = &linked else { return reply };
-            match serde_json::from_str::<serde_json::Value>(&reply) {
-                Ok(mut v) if v.is_object() => {
-                    v["target"] = note.clone().into();
-                    v.to_string()
-                }
-                _ => reply,
-            }
-        };
+        // The plan the staffing session handed over is the child's own
+        // before it runs, so it starts on the first step.
+        if plan.is_some() {
+            self.store.set_plan(&meta.id, plan)?;
+        }
         if !wait {
             set_report_to(&meta.id, caller_id);
         }
@@ -221,18 +210,18 @@ impl Pump {
                 if crippled {
                     o["warning"] = crippled_note.into();
                 }
-                return Ok(tag(o.to_string()));
+                return Ok(o.to_string());
             }
             Dispatch::Busy => {
                 take_report_to(&meta.id);
                 let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
-                return Ok(tag(serde_json::json!({
+                return Ok(serde_json::json!({
                     "session_id": meta.id,
                     "status": "idle",
                     "title": meta.title,
                     "note": "no run slot free and queueing is off; retry the spawn when a slot frees",
                 })
-                .to_string()));
+                .to_string());
             }
             Dispatch::Failed(e) => {
                 take_report_to(&meta.id);
@@ -251,23 +240,19 @@ impl Pump {
             if crippled {
                 o["note"] = crippled_note.into();
             }
-            return Ok(tag(o.to_string()));
+            return Ok(o.to_string());
         }
         match self.await_settled(&meta.id).await {
-            Some(done) => Ok(tag(self.reply_json(
-                &meta.id,
-                &done,
-                crippled.then_some(crippled_note),
-            ))),
+            Some(done) => Ok(self.reply_json(&meta.id, &done, crippled.then_some(crippled_note))),
             None => {
                 self.report_later(caller_id, &meta.id).await;
-                Ok(tag(serde_json::json!({
+                Ok(serde_json::json!({
                     "session_id": meta.id,
                     "status": "timeout",
                     "note": "child still running",
                     "report": REPORTS,
                 })
-                .to_string()))
+                .to_string())
             }
         }
     }

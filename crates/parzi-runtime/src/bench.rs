@@ -3,13 +3,17 @@
 //! subsession only starts on something that can run.
 
 use parzi_core::config::ParziConfig;
-use parzi_providers::{canonical_id, display_name, split_spec, ModelInfo, ProviderStatus, State};
+use parzi_providers::{
+    canonical_id, display_name, split_spec, ModelInfo, ProviderStatus, State, UsageWindow,
+};
 
 const SEE_LIST: &str = "models.list shows what can run";
 
 struct Seat {
     id: &'static str,
     models: Vec<ModelInfo>,
+    /// The plan limits its models are under, as last read.
+    limits: Vec<UsageWindow>,
     /// Why it can't run. A failed or pending status check is not a reason:
     /// the agent may well work, so only a definite no closes a seat.
     closed: Option<&'static str>,
@@ -56,7 +60,15 @@ fn seats(cfg: &ParziConfig, statuses: &[ProviderStatus]) -> Vec<Seat> {
                 .map(|s| s.models.clone())
                 .filter(|m| !m.is_empty())
                 .unwrap_or_else(|| parzi_providers::cached_models(id));
-            Seat { id, models, closed }
+            let limits = status
+                .map(|s| offered(&s.usage, &models))
+                .unwrap_or_default();
+            Seat {
+                id,
+                models,
+                limits,
+                closed,
+            }
         })
         .collect()
 }
@@ -71,8 +83,18 @@ pub(crate) fn text(cfg: &ParziConfig, statuses: &[ProviderStatus], own: &str) ->
             "Pass one of these ids as `model` to session.spawn. Leave `model` out to use your own: {own}."
         )
     }];
+    lines.push(
+        "Each agent shows how much of the person's plan is used: give long or heavy work to one with room left, and keep one near its limit for small jobs."
+            .into(),
+    );
+    let now = chrono::Utc::now().timestamp();
     for seat in seats.iter().filter(|s| s.closed.is_none()) {
-        lines.push(format!("{}:", display_name(seat.id)));
+        let used = limits_text(&seat.limits, now);
+        lines.push(if used.is_empty() {
+            format!("{}:", display_name(seat.id))
+        } else {
+            format!("{} ({used}):", display_name(seat.id))
+        });
         if seat.models.is_empty() {
             lines.push(format!("- {} (it picks its own model)", seat.id));
         }
@@ -99,6 +121,46 @@ pub(crate) fn text(cfg: &ParziConfig, statuses: &[ProviderStatus], own: &str) ->
         lines.push(format!("Not available: {}.", closed.join(", ")));
     }
     lines.join("\n")
+}
+
+/// The windows that limit at least one of these models: a window scoped to
+/// models the agent doesn't offer says nothing about it.
+fn offered(windows: &[UsageWindow], models: &[ModelInfo]) -> Vec<UsageWindow> {
+    windows
+        .iter()
+        .filter(|w| {
+            w.models.is_empty()
+                || models.is_empty()
+                || models.iter().any(|m| {
+                    let id = m.id.to_lowercase();
+                    w.models.iter().any(|word| id.contains(word.as_str()))
+                })
+        })
+        .cloned()
+        .collect()
+}
+
+/// "Session 22% used, resets in 2 h; Weekly 61% used, resets in 4 d".
+fn limits_text(windows: &[UsageWindow], now: i64) -> String {
+    windows
+        .iter()
+        .map(|w| {
+            let mut s = format!("{} {}% used", w.label, w.used_percent.round());
+            if let Some(at) = w.resets_at.and_then(|t| i64::try_from(t).ok()) {
+                let left = (at - now).max(0);
+                let when = if left < 3600 {
+                    format!("{} min", (left + 59) / 60)
+                } else if left < 86_400 {
+                    format!("{} h", (left + 1800) / 3600)
+                } else {
+                    format!("{} d", (left + 43_200) / 86_400)
+                };
+                s.push_str(&format!(", resets in {when}"));
+            }
+            s
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Turns what an agent asked for into a spec that can run, or says why not.
@@ -209,6 +271,41 @@ mod tests {
         ]
     }
 
+    #[test]
+    fn the_list_says_how_much_of_each_plan_is_left() {
+        let mut b = board();
+        b[0].usage = vec![
+            UsageWindow {
+                label: "Session".into(),
+                used_percent: 22.4,
+                resets_at: Some(10_800),
+                ..Default::default()
+            },
+            UsageWindow {
+                label: "Weekly".into(),
+                used_percent: 61.0,
+                resets_at: Some(4 * 86_400),
+                ..Default::default()
+            },
+            // Scoped to models Claude doesn't list here: left out.
+            UsageWindow {
+                label: "Weekly Haiku".into(),
+                used_percent: 99.0,
+                models: vec!["haiku".into()],
+                ..Default::default()
+            },
+        ];
+        let seats = seats(&ParziConfig::default(), &b);
+        let claude = seats.iter().find(|s| s.id == "claude").unwrap();
+        assert_eq!(
+            limits_text(&claude.limits, 0),
+            "Session 22% used, resets in 3 h; Weekly 61% used, resets in 4 d"
+        );
+        let listed = text(&ParziConfig::default(), &b, "");
+        assert!(listed.contains("room left"), "{listed}");
+        assert!(!listed.contains("Haiku"), "{listed}");
+    }
+
     fn ask(spec: &str, own: &str) -> Result<String, String> {
         resolve(spec, &ParziConfig::default(), &board(), own)
     }
@@ -294,6 +391,7 @@ mod tests {
         let seats = [Seat {
             id: "grok",
             models: vec![],
+            limits: vec![],
             closed: None,
         }];
         let cfg = ParziConfig::default();

@@ -6,6 +6,7 @@ a full release moves it under its version. See `docs/releasing.md`.
 
 ## Unreleased
 
+- Plans are per session only: the project plan, its targets chip above the composer and the `project_plan` tool are gone. A session that staffs a helper can hand it a plan (`session_spawn` with `plan`), which the helper starts with and ticks off. `models_list` now shows how much of each agent's plan limits is used, so an orchestrating session gives long work to an agent with room left.
 - The Running card is plain: a spinner while something runs, a check or a cross when it's done, and the agent mark for a helper session, all in the text colour. Notices, messages from other sessions and the second line under helpers are gone (what a helper is doing is in its tooltip).
 - Settings, Providers is plainer: one type for every row, a Billing row instead of a line repeating the status, and limits named Session, Weekly, Monthly (or Quota) without the model in front.
 - The side column shows only cards with something in them: Context appears once the session has used some, Running once something runs.

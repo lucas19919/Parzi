@@ -259,9 +259,7 @@ export const api = {
   setSessionEnvironment: (id: string, cwd: string, project?: string | null) =>
     invoke<SessionMeta>("set_session_environment", { id, cwd, project: project || null }),
   /** A project's plan: its goal and ordered targets, or null when it has none. */
-  projectPlan: (project: string) => invoke<ProjectPlan | null>("project_plan", { project }),
   /** The path of a project plan's markdown file. */
-  projectPlanDoc: (project: string) => invoke<string>("project_plan_doc", { project }),
   approveTool: (key: string, session: string, allow: boolean) =>
     invoke<void>("approve_tool", { key, session, allow }),
   answerQuestion: (key: string, session: string, answer: string) =>
@@ -346,11 +344,6 @@ export const api = {
     invoke<void>("browser_nav", { tab, action }),
   windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
-
-export interface ProjectPlan {
-  goal: string;
-  targets: { title: string; state: "todo" | "working" | "done" }[];
-}
 
 export interface ShellJob {
   id: string;

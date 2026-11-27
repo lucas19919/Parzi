@@ -117,6 +117,44 @@ fn makers_and_readers_are_advertised() {
 }
 
 #[tokio::test]
+async fn a_subsession_starts_with_the_plan_it_was_handed() {
+    let (orch, store) = team(4, answer());
+    let parent = store.create("orchestrator", "t", "claude/model").unwrap();
+    let plan = parzi_core::store::SessionPlan::from_payload(&serde_json::json!({
+        "items": [{"title": "Write the parser"}, {"title": "Test it", "detail": "edge cases too"}]
+    }));
+    let sub_id = id_of(
+        &orch
+            .harness()
+            .spawn(
+                &parent.id,
+                SpawnSpec {
+                    title: "parser".into(),
+                    prompt: "build the parser".into(),
+                    is_subsession: true,
+                    model: None,
+                    wait: false,
+                    mode_override: None,
+                    effort: None,
+                    approver: None,
+                    plan,
+                },
+            )
+            .await
+            .unwrap(),
+    );
+    let got = store
+        .get(&sub_id)
+        .unwrap()
+        .plan
+        .expect("the child has the plan");
+    let titles: Vec<&str> = got.items.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(titles, ["Write the parser", "Test it"]);
+    assert_eq!(got.items[1].detail.as_deref(), Some("edge cases too"));
+    orch.kill(&sub_id).await.ok();
+}
+
+#[tokio::test]
 async fn spawn_subsession_nests_but_full_session_stays_top_level() {
     let (orch, store) = team(4, answer());
     let parent = store.create("boss", "t", "claude/model").unwrap();
@@ -133,7 +171,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 mode_override: None,
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         )
         .await
@@ -161,7 +199,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 mode_override: None,
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         )
         .await
@@ -189,7 +227,7 @@ async fn spawn_wait_collects_child_reply() {
                 mode_override: None,
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         ),
     )
@@ -460,7 +498,7 @@ async fn a_follow_up_to_an_ask_child_still_reaches_the_person() {
                 wait: true,
                 mode_override: Some("ask".into()),
                 approver: Some(spawner.clone()),
-                target: None,
+                plan: None,
                 ..SpawnSpec::default()
             },
         )
@@ -544,7 +582,7 @@ async fn read_and_list_inspect_sessions() {
                 mode_override: None,
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         )
         .await
@@ -584,7 +622,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 mode_override: None,
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         )
         .await
@@ -603,7 +641,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 mode_override: None,
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         )
         .await
@@ -752,7 +790,7 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
                     mode_override: None,
                     effort: None,
                     approver: None,
-                    target: None,
+                    plan: None,
                 },
             )
             .await
@@ -803,7 +841,7 @@ async fn a_subsession_on_a_model_nobody_offers_never_starts() {
                 mode_override: Some("auto".into()),
                 effort: None,
                 approver: None,
-                target: None,
+                plan: None,
             },
         )
         .await

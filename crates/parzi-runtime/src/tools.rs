@@ -895,7 +895,7 @@ pub(crate) fn is_question_tool(name: &str) -> bool {
 pub(crate) fn is_project_tool(name: &str) -> bool {
     matches!(
         name,
-        "project.create" | "project.switch" | "project.archive" | "project.delete" | "project.plan"
+        "project.create" | "project.switch" | "project.archive" | "project.delete"
     )
 }
 
@@ -1080,7 +1080,12 @@ fn session_defs() -> Vec<ToolDef> {
                     "model": {"type": "string", "description": "An id from models.list, such as claude/opus. Leave it out to use your own model."},
                     "effort": {"type": "string"},
                     "wait": {"type": "boolean"},
-                    "target": {"type": "string", "description": "a project plan target this works on"},
+                    "plan": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "description": "The steps the subsession works through: it starts with them as its own plan and ticks them off; read its progress with plan.read.",
+                        "items": {"type": "object", "properties": {"title": {"type": "string"}, "detail": {"type": "string"}}, "required": ["title"]},
+                    },
                 },
                 "required": ["prompt"],
             }),
@@ -1134,7 +1139,6 @@ fn session_defs() -> Vec<ToolDef> {
                         "maxItems": 20,
                         "items": {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]},
                     },
-                    "target": {"type": "string", "description": "a project plan target this works on"},
                 },
                 "required": ["title", "brief"],
             }),
@@ -1361,13 +1365,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Archiving project {}",
             one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)
         ),
-        "project.plan" => {
-            if args.get("goal").is_some() || args.get("targets").is_some() {
-                "Updating the project plan".into()
-            } else {
-                "Reading the project plan".into()
-            }
-        }
         "project.delete" => format!(
             "Deleting project {}",
             one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)
