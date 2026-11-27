@@ -2334,6 +2334,9 @@
     -webkit-backdrop-filter: var(--blur);
     backdrop-filter: var(--blur);
   }
+  .over-art :global(.tabs .tab.active) {
+    border-color: var(--edge);
+  }
   .over-art :global(.tabs .tab:hover:not(.active)),
   .over-art :global(.panel-btn:hover:not(.active)) {
     background: var(--fill-hover);

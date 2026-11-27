@@ -164,7 +164,8 @@
         <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
         {#if movable}<span class="row-chev" aria-hidden="true"><Icon name="chevDown" size={12} /></span>{/if}
       </button>
-      {#if folder}
+      <!-- Only a git folder has a branch to show. -->
+      {#if folder && branch}
         <button
           bind:this={branchBtn}
           class="info-line row"
@@ -188,7 +189,8 @@
         <Icon name={project ? "project" : "folder"} size={12} />
         <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
       </div>
-      {#if folder}
+      <!-- Only a git folder has a branch to show. -->
+      {#if folder && branch}
         <button
           bind:this={branchBtn}
           class="info-line row"
