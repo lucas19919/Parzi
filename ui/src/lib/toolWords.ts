@@ -323,20 +323,36 @@ export function groupLine(kind: ToolKind, items: { done: string; active: string;
     case "edit":
       return `${running ? "Editing" : "Edited"} ${n} ${noun}`;
     case "search":
-      return `${running ? "Searching" : "Searched"} · ${n} ${noun}`;
+      return `${running ? "Searching" : "Searched"} ${n === 1 ? "once" : `${n} times`}`;
     case "list":
       return `${running ? "Listing" : "Listed"} ${n} ${noun}`;
     case "run":
       return `${running ? "Running" : "Ran"} ${n} ${noun}`;
     case "web":
-      return `${running ? "Browsing" : "Browsed"} the web · ${n} ${noun}`;
+      return `${running ? "Browsing" : "Browsed"} ${n} ${noun}`;
     case "browser":
-      return `${running ? "Using" : "Used"} the browser · ${n} ${noun}`;
+      return `${running ? "Using" : "Used"} the browser`;
     case "helper":
-      return `${running ? "Working" : "Worked"} with helpers · ${n} ${noun}`;
+      return `${running ? "Working" : "Worked"} with helpers`;
     case "plan":
       return running ? "Updating the plan" : "Updated the plan";
     default:
       return `${running ? "Using" : "Used"} ${n} ${noun}`;
   }
+}
+
+/** One line for a stretch of mixed work, most of it first: "Read 7 files,
+ *  ran 9 commands, searched code". Up to three kinds are named. */
+export function runLine(groups: { tool: ToolKind; items: { done: string; active: string; target: string; full: string }[] }[]): string {
+  const byKind = new Map<ToolKind, { done: string; active: string; target: string; full: string }[]>();
+  for (const g of groups) byKind.set(g.tool, [...(byKind.get(g.tool) ?? []), ...g.items]);
+  const ranked = [...byKind].sort((a, b) => b[1].length - a[1].length);
+  const parts = ranked.slice(0, 3).map(([kind, items]) => {
+    const line = groupLine(kind, items, false);
+    return line.charAt(0).toLowerCase() + line.slice(1);
+  });
+  const rest = ranked.slice(3).reduce((n, [, items]) => n + items.length, 0);
+  if (rest) parts.push(`${rest} more step${rest === 1 ? "" : "s"}`);
+  const text = parts.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

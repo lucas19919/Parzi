@@ -18,12 +18,37 @@ export type Block =
   | { key: string; kind: "text"; text: string; at?: number }
   | { key: string; kind: "thinking"; text: string }
   | { key: string; kind: "group"; tool: ToolKind; items: ToolItem[] }
+  /** A stretch of work between two pieces of text with more than one group
+   *  in it: one line ("Read 7 files, ran 9 commands") over its groups. */
+  | { key: string; kind: "run"; blocks: RunPart[] }
   /** An agent's echo of a tool call, said as text. */
   | { key: string; kind: "echo"; text: string }
   | { key: string; kind: "stop"; at?: number }
   | { key: string; kind: "error"; class: string; message: string; at?: number }
   | { key: string; kind: "widget"; fence: string; payload: unknown }
   | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown; at?: number };
+
+/** What a run holds: its groups, thinking and echoes, in order. */
+export type RunPart = Extract<Block, { kind: "group" | "thinking" | "echo" }>;
+
+const inRun = (b: Block): b is RunPart => b.kind === "group" || b.kind === "thinking" || b.kind === "echo";
+
+/** Folds each stretch of work with two or more groups into one run, so a
+ *  long back-and-forth of reads and commands is one line once it is over. */
+export function foldRuns(blocks: Block[]): Block[] {
+  const out: Block[] = [];
+  for (let i = 0; i < blocks.length; ) {
+    if (!inRun(blocks[i])) {
+      out.push(blocks[i++]);
+      continue;
+    }
+    const parts: RunPart[] = [];
+    while (i < blocks.length && inRun(blocks[i])) parts.push(blocks[i++] as RunPart);
+    if (parts.filter((p) => p.kind === "group").length > 1) out.push({ key: `run-${parts[0].key}`, kind: "run", blocks: parts });
+    else out.push(...parts);
+  }
+  return out;
+}
 
 export interface Turn {
   key: string;
@@ -68,6 +93,7 @@ export function buildTurns(events: ChatEvent[], base = 0): Turn[] {
   const close = () => {
     if (!turn) return;
     turn.secs = first && last > first ? last - first : 0;
+    turn.blocks = foldRuns(turn.blocks);
     turns.push(turn);
   };
   const open = (key: string, user: Turn["user"]) => {

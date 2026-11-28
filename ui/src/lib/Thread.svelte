@@ -10,6 +10,7 @@
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Viz from "./viz/Viz.svelte";
   import WorkGroup from "./WorkGroup.svelte";
+  import WorkRun from "./WorkRun.svelte";
   import Thinking from "./Thinking.svelte";
   import Icon from "./Icon.svelte";
   import { api, type AgentRequest, type ChatEvent, type Proposal, type ProviderStatus, type Question } from "./api";
@@ -139,6 +140,7 @@
   $: waiting = !!liveTurn && !atWork(liveTurn.blocks[liveTurn.blocks.length - 1]);
   function atWork(b: Block | undefined): boolean {
     if (!b) return false;
+    if (b.kind === "run") return atWork(b.blocks[b.blocks.length - 1]);
     return b.kind === "text" || b.kind === "thinking" || (b.kind === "group" && b.items.some((i) => i.running));
   }
   // Takes the live turn as an argument so the template re-runs it when the turn ends.
@@ -413,6 +415,15 @@
             <WorkGroup tool={b.tool} items={b.items} live={isLive(turn, i, liveTurn)} />
             {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
             <ToolPictures {session} paths={picturesIn(b.items.map((t) => t.output ?? ""))} />
+          </div>
+        {:else if b.kind === "run"}
+          <!-- A test result and pictures the work made stay in view when the run folds. -->
+          {@const items = b.blocks.flatMap((p) => (p.kind === "group" ? p.items : []))}
+          {@const tests = lastTestRun(items.filter((t) => t.kind === "run"))}
+          <div class="work">
+            <WorkRun blocks={b.blocks} live={isLive(turn, i, liveTurn)} />
+            {#if tests}<TestCard run={tests.run} command={tests.command} />{/if}
+            <ToolPictures {session} paths={picturesIn(items.map((t) => t.output ?? ""))} />
           </div>
         {:else if b.kind === "echo"}
           <div class="work echo">{b.text}</div>

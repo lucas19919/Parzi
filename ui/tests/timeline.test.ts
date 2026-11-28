@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ChatEvent } from "../src/lib/api.ts";
 import { buildTurns, workedLine } from "../src/lib/timeline.ts";
-import { describeTool, groupLine } from "../src/lib/toolWords.ts";
+import { describeTool, groupLine, runLine } from "../src/lib/toolWords.ts";
 import { addCall, addReasoning, addResult, addText, emptyLive, reconcile, reveal, settle } from "../src/lib/liveEvents.ts";
 
 const call = (id: string, name: string, args: unknown = {}): ChatEvent => ({ kind: "tool_call", id, name, args });
@@ -22,13 +22,18 @@ test("steps of one kind in a row are one group, narration stays as text", () => 
     say("Here is how it flows.", 160),
   ];
   const [t] = buildTurns(ev);
-  assert.deepEqual(t.blocks.map((b) => b.kind), ["text", "group", "thinking", "group", "text"]);
-  const reads = t.blocks[1];
+  // Mixed work between two pieces of text folds into one run.
+  assert.deepEqual(t.blocks.map((b) => b.kind), ["text", "run", "text"]);
+  const run = t.blocks[1];
+  assert.ok(run.kind === "run");
+  assert.deepEqual(run.blocks.map((b) => b.kind), ["group", "thinking", "group"]);
+  assert.equal(runLine(run.blocks.flatMap((b) => (b.kind === "group" ? [b] : []))), "Read 2 files, searched once");
+  const reads = run.blocks[0];
   assert.ok(reads.kind === "group");
   assert.equal(reads.items.length, 2);
   assert.deepEqual(reads.items.map((i) => i.target), ["composer.rs", "shell.rs"]);
   assert.equal(groupLine("read", reads.items, false), "Read 2 files");
-  const search = t.blocks[3];
+  const search = run.blocks[2];
   assert.ok(search.kind === "group" && search.items[0].running);
   assert.equal(workedLine(t), "Worked 1m · 3 steps");
 });
@@ -92,4 +97,16 @@ test("a fresh read keeps what came after it and drops what it saved", () => {
   const all = settle(r.live).events[0];
   assert.ok(all.kind === "assistant");
   assert.equal(all.text, "First Second half");
+});
+
+test("a single group stays a group; back-and-forth work is one line", () => {
+  const one = buildTurns([{ kind: "user", text: "go" }, call("1", "Read", { path: "a" }), call("2", "Read", { path: "b" }), say("done")]);
+  assert.deepEqual(one[0].blocks.map((b) => b.kind), ["group", "text"]);
+  const ev: ChatEvent[] = [{ kind: "user", text: "go" }];
+  for (let i = 0; i < 6; i++) ev.push(call(`r${i}`, "Read", { path: `f${i % 3}` }), call(`b${i}`, "Bash", { command: "ls" }));
+  const [t] = buildTurns(ev);
+  assert.equal(t.blocks.length, 1);
+  const run = t.blocks[0];
+  assert.ok(run.kind === "run");
+  assert.equal(runLine(run.blocks.flatMap((b) => (b.kind === "group" ? [b] : []))), "Read 3 files, ran 6 commands");
 });
