@@ -16,12 +16,16 @@ pub enum RunEvent {
         id: String,
         name: String,
         label: String,
+        /// The call's arguments, so the window words it the same live and saved.
+        args: serde_json::Value,
     },
     ToolResult {
         id: String,
         name: String,
         ok: bool,
         ms: u64,
+        /// The start of the output, so a live step opens like a saved one.
+        output: String,
     },
     Usage {
         tokens_in: u64,
@@ -190,11 +194,22 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
         RunEvent::Reasoning { text } => {
             json!({ "kind": "reasoning", "session": session, "text": text })
         }
-        RunEvent::ToolCall { id, name, label } => {
-            json!({ "kind": "tool_call", "session": session, "id": id, "name": name, "label": label })
+        RunEvent::ToolCall {
+            id,
+            name,
+            label,
+            args,
+        } => {
+            json!({ "kind": "tool_call", "session": session, "id": id, "name": name, "label": label, "args": args })
         }
-        RunEvent::ToolResult { id, name, ok, ms } => {
-            json!({ "kind": "tool_result", "session": session, "id": id, "name": name, "ok": ok, "ms": ms })
+        RunEvent::ToolResult {
+            id,
+            name,
+            ok,
+            ms,
+            output,
+        } => {
+            json!({ "kind": "tool_result", "session": session, "id": id, "name": name, "ok": ok, "ms": ms, "output": output })
         }
         RunEvent::Notice { text } => json!({ "kind": "notice", "session": session, "text": text }),
         RunEvent::Todo { todo } => json!({ "kind": "todo", "session": session, "todo": todo }),

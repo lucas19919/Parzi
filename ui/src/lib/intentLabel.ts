@@ -86,6 +86,8 @@ const RULES: { test: RegExp; active: string; done: string }[] = [
   { test: /^docker\b/i, active: "Running Docker", done: "Ran Docker" },
 ];
 
+const SETUP = /^(?:\$[\w:]+\s*=|\$ErrorActionPreference|cd\b|set-location\b|push-location\b|pushd\b|write-output\b|write-host\b|echo\b|start-sleep\b|sleep\b|@['"])/i;
+
 /** Maps a raw shell command (and optional detected URLs) to a short human-intent label. */
 export function commandIntent(cmd: string, urls?: string[], running = false): string {
   const host = localHostOf(urls);
@@ -95,16 +97,17 @@ export function commandIntent(cmd: string, urls?: string[], running = false): st
   const segments = cmd
     .split(/\s*(?:&&|;)\s*/)
     .map(coreCommand)
-    .filter(Boolean);
+    // Setup (a variable, a cd, an echo, a pause) says nothing about the work.
+    .filter((seg) => seg && !SETUP.test(seg));
   for (const seg of segments) {
     for (const rule of RULES) {
       if (rule.test.test(seg)) return verb(running, rule.active, rule.done);
     }
   }
 
-  const first = segments[0] ?? coreCommand(cmd);
+  const first = segments[0] ?? "";
   const prog = first.split(/\s+/)[0]?.replace(/^.*[/\\]/, "").replace(/\.exe$/i, "") ?? "";
-  if (!prog) return verb(running, "Running command", "Ran command");
+  if (!prog || !/^[A-Za-z][\w.+-]*$/.test(prog)) return verb(running, "Running command", "Ran command");
   return verb(running, `Running ${prog}`, `Ran ${prog}`);
 }
 
@@ -156,4 +159,11 @@ export function stepIntent(label: string, running = false): string {
 /** True when a run-log step appears to be a shell execution matching a ShellJob row. */
 export function isShellStepLabel(label: string): boolean {
   return /^(?:\$\s+|(?:Run|Shell|Bash|Terminal|Exec)[:\s]+)/i.test(label.trim());
+}
+
+/** The part of a command line that does the work, past any setup: what a
+ *  step's chip shows. */
+export function mainCommand(cmd: string): string {
+  const parts = cmd.split(/\s*(?:&&|;|\r?\n)\s*/).map(coreCommand).filter(Boolean);
+  return parts.find((p) => !SETUP.test(p)) ?? parts[0] ?? cmd.trim();
 }

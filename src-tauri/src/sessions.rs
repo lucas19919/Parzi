@@ -42,16 +42,55 @@ pub async fn get_thread(
     tauri::async_runtime::spawn_blocking(move || {
         let meta = store.get(&id).map_err(|e| e.to_string())?;
         let stamped = store.events_with_times(&id).map_err(|e| e.to_string())?;
-        Ok((
-            meta,
-            stamped
-                .into_iter()
-                .map(|(e, at)| stamped_of(&e, at))
-                .collect(),
-        ))
+        let mut events: Vec<serde_json::Value> = stamped
+            .into_iter()
+            .map(|(e, at)| stamped_of(&e, at))
+            .collect();
+        // Read after the store: a step in between saves these words and
+        // clears them, so they are never lost; what the store already has of
+        // them is cut off the front.
+        let unsaved = crate::unsaved_reply(&id).and_then(|t| unsaved_tail(&events, &t));
+        if let Some((text, upto)) = unsaved {
+            events.push(serde_json::json!({
+                "kind": "assistant", "text": text, "done": false, "unsaved": true, "upto": upto,
+            }));
+        }
+        Ok((meta, events))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The part of a running reply the store does not have yet, and the whole
+/// reply's length in UTF-16 units (what the window counts text events by).
+/// The store saves each finished message of a reply, so the messages saved
+/// since the last step are what it already has.
+fn unsaved_tail(events: &[serde_json::Value], unsaved: &str) -> Option<(String, usize)> {
+    let upto = unsaved.encode_utf16().count();
+    let since = events
+        .iter()
+        .rposition(|e| {
+            matches!(
+                e["kind"].as_str(),
+                Some("tool_call" | "tool_result" | "user")
+            )
+        })
+        .map_or(0, |i| i + 1);
+    let saved: String = events[since..]
+        .iter()
+        .filter(|e| e["kind"] == "assistant")
+        .filter_map(|e| e["text"].as_str())
+        .collect();
+    let rest = if let Some(rest) = unsaved.strip_prefix(saved.as_str()) {
+        rest
+    } else {
+        let head = saved.trim();
+        match unsaved.find(head) {
+            Some(at) if !head.is_empty() => &unsaved[at + head.len()..],
+            _ => unsaved,
+        }
+    };
+    (!rest.trim().is_empty()).then(|| (rest.to_string(), upto))
 }
 
 fn stamped_of(event: &Event, at: Option<i64>) -> serde_json::Value {
@@ -493,5 +532,29 @@ pub async fn approve_tool(
             Err("approval is for another session".into())
         }
         None => Err("approval expired or unknown".into()),
+    }
+}
+
+#[cfg(test)]
+mod unsaved_tests {
+    use super::unsaved_tail;
+    use serde_json::json;
+
+    #[test]
+    fn only_the_words_the_store_lacks_are_added() {
+        let events = vec![
+            json!({"kind": "user", "text": "hi"}),
+            json!({"kind": "tool_call", "id": "1"}),
+            json!({"kind": "assistant", "text": "First part. "}),
+        ];
+        assert_eq!(
+            unsaved_tail(&events, "First part. Second"),
+            Some(("Second".into(), 18))
+        );
+        // Words from before the last step were saved with it.
+        let fresh = vec![json!({"kind": "user", "text": "hi"})];
+        assert_eq!(unsaved_tail(&fresh, "Hé"), Some(("Hé".into(), 2)));
+        // All of it saved already: nothing to add.
+        assert_eq!(unsaved_tail(&events, "First part. "), None);
     }
 }

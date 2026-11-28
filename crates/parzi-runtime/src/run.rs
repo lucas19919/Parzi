@@ -42,6 +42,8 @@ Keep: the goal and what the person asked for, decisions made and why, files and 
 what is done, what is in progress, open questions, and the next step. Be specific (names, paths, \
 numbers), drop chit-chat and anything already superseded. Use no tools. Reply with the summary only.";
 const OUTPUT_CHARS: usize = 20_000;
+/// What the window shows of a step's output (it shows no more saved either).
+const LIVE_OUTPUT_CHARS: usize = 6_000;
 
 pub struct EngineRunParts {
     pub session_id: String,
@@ -816,13 +818,14 @@ impl EngineRun {
                     &Event::ToolCall {
                         id: id.clone(),
                         name: shown.clone(),
-                        args: input,
+                        args: input.clone(),
                     },
                 );
                 self.p.sink.emit(RunEvent::ToolCall {
                     id,
                     name: shown,
                     label,
+                    args: input,
                 });
             }
             ProviderEvent::ToolFinished {
@@ -837,6 +840,7 @@ impl EngineRun {
                 let shown = display_name(&name);
                 self.tally(|t| t.tool_finished(&id, ok));
                 let output: String = output.chars().take(OUTPUT_CHARS).collect();
+                let live: String = output.chars().take(LIVE_OUTPUT_CHARS).collect();
                 let _ = self.p.store.append(
                     sid,
                     &Event::ToolResult {
@@ -852,6 +856,7 @@ impl EngineRun {
                     name: shown,
                     ok,
                     ms,
+                    output: live,
                 });
             }
             ProviderEvent::Usage {

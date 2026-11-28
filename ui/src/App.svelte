@@ -51,7 +51,8 @@
   import { echoOf, initialSends, isBusy, isPaused, isWorking, phaseOf, step, tabKey, workingSet, type Effect, type Outcome, type SendEvent, type Sends, type Step } from "./lib/sendState";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
-  import type { Approval, LiveTool } from "./lib/live";
+  import type { Approval } from "./lib/live";
+  import { addCall, addEvent, addReasoning, addResult, addText, emptyLive, isUnsaved, reconcile, reveal, type Live } from "./lib/liveEvents";
   import { deskRows, type DeskCmd } from "./lib/desk";
   import { attachedPaths } from "./lib/format";
 
@@ -106,11 +107,8 @@
   let compacting = false;
   let branch = "";
 
-  let live = "";
-  let liveReasoning = "";
-  let liveArtifacts: Extract<UiEvent, { kind: "artifact" }>[] = [];
-  let liveTools: LiveTool[] = [];
-  let pending = "";
+  /** What the running turn on screen sent that the store may not have yet. */
+  let live: Live = emptyLive();
   let revealing = 0;
 
   let model = "";
@@ -478,12 +476,7 @@
     cancelAnimationFrame(revealing);
     revealing = 0;
     revealAt = 0;
-    thinking = false;
-    pending = "";
-    live = "";
-    liveReasoning = "";
-    liveTools = [];
-    liveArtifacts = [];
+    live = emptyLive();
   }
 
   const follow = follower();
@@ -519,7 +512,8 @@
   function cacheThread(id: string, m: SessionMeta, ev: ChatEvent[]) {
     if (!id) return;
     threadCache.delete(id);
-    threadCache.set(id, { meta: m, events: ev });
+    // Only what the store has: a reply being written is live, not kept.
+    threadCache.set(id, { meta: m, events: ev.filter((e) => !isUnsaved(e)) });
     while (threadCache.size > THREAD_CACHE_MAX) {
       const oldest = threadCache.keys().next().value;
       if (oldest) threadCache.delete(oldest);
@@ -594,8 +588,15 @@
   // "Thinking" showed.
   const usersIn = (ev: ChatEvent[]) => ev.filter((e) => e.kind === "user").length;
   function showStored(id: string, ev: ChatEvent[]) {
-    act({ type: "stored", key: id, users: usersIn(ev) });
-    stored = ev;
+    // A read while a turn runs: what it saved leaves the live turn, and the
+    // reply it was writing (the store does not have it yet) carries on live.
+    const r = reconcile(ev, id === shown ? live : emptyLive());
+    act({ type: "stored", key: id, users: usersIn(r.stored) });
+    stored = r.stored;
+    if (id === shown) {
+      live = r.live;
+      if (live.pending && !revealing) revealing = requestAnimationFrame(revealLive);
+    }
   }
   /** User messages the store had for a session when last read. */
   function usersOf(id: string): number {
@@ -1440,17 +1441,13 @@
   // not frames: at least 600 characters a second, faster when behind so the
   // backlog clears in about a tenth of a second. Same speed at 60 or 120Hz.
   let revealAt = 0;
-  let thinking = false;
   function revealLive(now: number) {
     revealing = 0;
-    if (!pending) return;
+    if (!live.pending) return;
     const dt = Math.min(64, revealAt ? now - revealAt : 16);
     revealAt = now;
-    let cut = Math.min(pending.length, Math.max(1, Math.ceil(dt * 0.6), Math.ceil((pending.length * dt) / 100)));
-    if (cut < pending.length && /[\uD800-\uDBFF]/.test(pending[cut - 1])) cut++;
-    live += pending.slice(0, cut);
-    pending = pending.slice(cut);
-    if (pending) revealing = requestAnimationFrame(revealLive);
+    live = reveal(live, Math.max(Math.ceil(dt * 0.6), Math.ceil((live.pending.length * dt) / 100)));
+    if (live.pending) revealing = requestAnimationFrame(revealLive);
     else revealAt = 0;
   }
 
@@ -1564,41 +1561,19 @@
     if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
-      thinking = false;
-      pending += e.text;
+      live = addText(live, e.text, e.upto);
       if (!revealing) revealing = requestAnimationFrame(revealLive);
     } else if (e.kind === "reasoning") {
-      // A new spell of thinking after a step or after narration starts its
-      // own paragraph instead of running on from the last sentence.
-      if (!thinking && liveReasoning) liveReasoning += "\n\n";
-      thinking = true;
-      liveReasoning += e.text;
+      live = addReasoning(live, e.text);
     } else if (e.kind === "artifact") {
-      liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
+      live = addEvent(live, { kind: "artifact", id: e.id, title: e.title, artifact_kind: e.artifact_kind, version: e.version, payload: e.payload, at: Math.floor(Date.now() / 1000) });
+    } else if (e.kind === "todo") {
+      // The store keeps the plan card in the same place; it is not shown.
+      live = addEvent(live, { kind: "widget", fence: "parzi-todo", payload: e.todo });
     } else if (e.kind === "tool_call") {
-      thinking = false;
-      // What the agent said before a step is narration ("I'll check the
-      // plan..."), not its reply: it joins the folded working, and the reply
-      // starts again after the step. Cards and reply buttons come after the
-      // final text, so they leave it be.
-      const said = (live + pending).trim();
-      const keeps = e.name.startsWith("ui.") || /^todo[._]?write$/i.test(e.name);
-      if (said && !keeps) {
-        liveReasoning = liveReasoning ? `${liveReasoning}\n\n${said}` : said;
-        thinking = false;
-        live = "";
-        pending = "";
-      } else if (said) {
-        // The reply goes on after the card; the next words start a new
-        // paragraph instead of running on from the last one.
-        pending += "\n\n";
-        if (!revealing) revealing = requestAnimationFrame(revealLive);
-      }
-      if (!liveTools.some((t) => t.id === e.id)) {
-        liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
-      }
+      live = addCall(live, e.id, e.name, e.args);
     } else if (e.kind === "tool_result") {
-      liveTools = liveTools.map((t) => (t.running && t.id === e.id ? { ...t, running: false, ok: e.ok, ms: e.ms } : t));
+      live = addResult(live, e.id, e.name, e.ok, e.ms, e.output ?? "");
     } else if (e.kind === "context") {
       context = { used: e.used, limit: e.limit };
     } else if (e.kind === "notice") {
@@ -2047,14 +2022,11 @@
               <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} use:follow.attach>
                 <Thread
                   {events}
-                  liveText={live}
-                  {liveReasoning}
-                  {liveArtifacts}
+                  liveEvents={live.events}
                   draft={meta?.status === "draft" ? { title: meta.title, brief: meta.brief ?? "" } : null}
                   draftStarting={sending}
                   on:startDraft={startDraft}
                   on:removeDraft={() => shown && void remove(shown)}
-                  {liveTools}
                   {approval}
                   question={openQuestion}
                   {proposal}

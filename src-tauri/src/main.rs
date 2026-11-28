@@ -55,6 +55,9 @@ pub(crate) enum UiEvent {
     Text {
         session: String,
         text: String,
+        /// How long the unsaved reply is with this piece, in UTF-16 units,
+        /// so a window that read it in `get_thread` skips what it has.
+        upto: usize,
     },
     Reasoning {
         session: String,
@@ -65,6 +68,7 @@ pub(crate) enum UiEvent {
         id: String,
         name: String,
         label: String,
+        args: serde_json::Value,
     },
     ToolResult {
         session: String,
@@ -72,6 +76,7 @@ pub(crate) enum UiEvent {
         name: String,
         ok: bool,
         ms: u64,
+        output: String,
     },
     Notice {
         session: String,
@@ -366,18 +371,31 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
         | RunEvent::Reasoning { .. }
         | RunEvent::Usage { .. }
         | RunEvent::ApprovalRequest { .. } => return None,
-        RunEvent::ToolCall { id, name, label } => UiEvent::ToolCall {
+        RunEvent::ToolCall {
+            id,
+            name,
+            label,
+            args,
+        } => UiEvent::ToolCall {
             session,
             id,
             name,
             label,
+            args,
         },
-        RunEvent::ToolResult { id, name, ok, ms } => UiEvent::ToolResult {
+        RunEvent::ToolResult {
+            id,
+            name,
+            ok,
+            ms,
+            output,
+        } => UiEvent::ToolResult {
             session,
             id,
             name,
             ok,
             ms,
+            output,
         },
         RunEvent::Notice { text } => UiEvent::Notice { session, text },
         RunEvent::Todo { todo } => UiEvent::Todo { session, todo },
@@ -407,6 +425,18 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
     })
 }
 
+/// Each running session's reply text that the store does not have yet: the
+/// words since its last step. `get_thread` hands it to a window that opens
+/// the session mid-reply.
+static UNSAVED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The reply `session` is writing that the store does not have yet.
+pub(crate) fn unsaved_reply(session: &str) -> Option<String> {
+    let all = UNSAVED.lock().ok()?;
+    all.get(session).filter(|t| !t.is_empty()).cloned()
+}
+
 async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, RunEvent)>) {
     #[derive(Default)]
     struct Buf {
@@ -419,11 +449,20 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
     fn flush_sid(app: &AppHandle, sid: &str, buf: &mut Buf) {
         if !buf.text.is_empty() {
             let text = std::mem::take(&mut buf.text);
+            // Counted and sent under one lock, so `get_thread` reads a
+            // length every window event agrees with.
+            let mut unsaved = UNSAVED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let so_far = unsaved.entry(sid.to_string()).or_default();
+            so_far.push_str(&text);
+            let upto = so_far.encode_utf16().count();
             let _ = app.emit(
                 "parzi://run-event",
                 UiEvent::Text {
                     session: sid.to_string(),
                     text,
+                    upto,
                 },
             );
         }
@@ -464,8 +503,13 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
             rx.recv().await
         };
         match next {
+            // Thinking and words go out in the order they came: a switch
+            // from one to the other sends what was waiting first.
             Ok((sid, RunEvent::Text(text))) => {
                 let buf = bufs.entry(sid.clone()).or_default();
+                if !buf.reasoning.is_empty() {
+                    flush_sid(&app, &sid, buf);
+                }
                 buf.text.push_str(&text);
                 if buf.text.len() >= 1024 {
                     flush_sid(&app, &sid, buf);
@@ -473,6 +517,9 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
             }
             Ok((sid, RunEvent::Reasoning { text })) => {
                 let buf = bufs.entry(sid.clone()).or_default();
+                if !buf.text.is_empty() {
+                    flush_sid(&app, &sid, buf);
+                }
                 buf.reasoning.push_str(&text);
                 if buf.reasoning.len() >= 1024 {
                     flush_sid(&app, &sid, buf);
@@ -486,6 +533,12 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
                     other,
                     RunEvent::Done { .. } | RunEvent::Paused { .. } | RunEvent::Error(_)
                 );
+                // A step saves the words before it; the end of a run saves the rest.
+                if ended || matches!(other, RunEvent::ToolCall { .. }) {
+                    if let Ok(mut unsaved) = UNSAVED.lock() {
+                        unsaved.remove(&sid);
+                    }
+                }
                 if let Some(ui) = ui_from_run(sid, other) {
                     let _ = app.emit("parzi://run-event", ui);
                 }

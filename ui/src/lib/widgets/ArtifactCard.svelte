@@ -287,18 +287,35 @@
 </div>
 
 <style>
-  /* Reserved under the artifact so showing them moves nothing. */
+  .holder {
+    position: relative;
+  }
+  /* Over the artifact's top corner while the pointer is on it: no row is
+     kept free under it, so artifacts sit in a message like its other blocks. */
   .acts {
+    position: absolute;
+    top: calc(var(--space) * 1.5);
+    right: calc(var(--space) * 1.5);
+    z-index: 2;
     display: flex;
-    justify-content: flex-end;
     gap: var(--space);
-    min-height: var(--h-sm);
+    padding: calc(var(--space) / 2);
+    background: var(--surface-raised);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
+    border-radius: var(--radius);
     opacity: 0;
+    pointer-events: none;
     transition: opacity var(--dur) ease;
   }
   .holder:hover .acts,
   .acts:focus-within {
     opacity: 1;
+    pointer-events: auto;
+  }
+  /* The code's own label and Copy give way to the artifact's actions. */
+  .holder:hover > .code :global(.code-tools) {
+    opacity: 0;
   }
   .acts .tool {
     min-width: var(--h-sm);
@@ -465,11 +482,24 @@
   .doc :global(:first-child) {
     margin-top: 0;
   }
-  .code :global(.codeblock) {
+  /* A document shown inline is part of the message: its text lines up with
+     the message's, with no card padding. */
+  .holder > .doc {
+    padding: 0;
+  }
+  .holder > .doc :global(:last-child) {
+    margin-bottom: 0;
+  }
+  /* Code inside a framed artifact: the frame is the artifact's. */
+  .art .code :global(.codeblock) {
     margin: 0;
     border: none;
     border-radius: 0;
     background: transparent;
+  }
+  /* Code shown inline keeps the code frame every message uses. */
+  .holder > .code :global(.codeblock) {
+    margin: 0;
   }
   .preview {
     width: 100%;

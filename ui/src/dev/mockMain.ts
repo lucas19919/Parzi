@@ -142,46 +142,57 @@ if (new URLSearchParams(location.search).get("stream")) {
     "That keeps typing smooth even in very long drafts. I also added a test that types 300 lines and checks no frame takes longer than 8 ms.",
   ].join("\n");
   const sid = "s1";
-  const burst = async (text: string) => {
+  // What the store would save, in order, so the end of the turn can be
+  // checked to move nothing.
+  const saved: Record<string, unknown>[] = [];
+  const sayText = (text: string) => {
+    const last = saved[saved.length - 1];
+    if (last?.kind === "assistant") last.text = String(last.text) + text;
+    else saved.push({ kind: "assistant", text, done: true });
+  };
+  let upto = 0;
+  const say = async (text: string) => {
     let i = 0;
     while (i < text.length) {
       const n = 4 + Math.floor(Math.random() * 40);
-      await emit("parzi://run-event", { kind: "text", session: sid, text: text.slice(i, i + n) });
+      const piece = text.slice(i, i + n);
+      upto += piece.length;
+      sayText(piece);
+      await emit("parzi://run-event", { kind: "text", session: sid, text: piece, upto });
       i += n;
       await new Promise((r) => setTimeout(r, 20 + Math.random() * 40));
     }
   };
+  const think = async (text: string) => {
+    saved.push({ kind: "reasoning", text });
+    for (const piece of text.match(/.{1,24}/g) ?? []) {
+      await emit("parzi://run-event", { kind: "reasoning", session: sid, text: piece });
+      await new Promise((r) => setTimeout(r, 30));
+    }
+  };
+  const step = async (id: string, name: string, args: Record<string, unknown>, ms: number, output = "ok", ok = true) => {
+    upto = 0;
+    saved.push({ kind: "tool_call", id, name, args });
+    await emit("parzi://run-event", { kind: "tool_call", session: sid, id, name, label: name, args });
+    await new Promise((r) => setTimeout(r, ms));
+    saved.push({ kind: "tool_result", id, name, ok, ms, output });
+    await emit("parzi://run-event", { kind: "tool_result", session: sid, id, name, ok, ms, output });
+  };
   (window as unknown as { __stream: Promise<void> }).__stream = (async () => {
     await new Promise((r) => setTimeout(r, 400));
-    await burst(first);
-    const step = async (id: string, name: string, label: string, ms: number, ok = true) => {
-      await emit("parzi://run-event", { kind: "tool_call", session: sid, id, name, label });
-      await new Promise((r) => setTimeout(r, ms));
-      await emit("parzi://run-event", { kind: "tool_result", session: sid, id, name, ok, ms });
-    };
-    // A subagent works alongside, so its row shows in the thread and the
-    // Running card with the step it is on.
-    const sub = async (label: string, n: number) => emit("parzi://run-event", { kind: "tool_call", session: "s1a", id: `sa${n}`, name: "Bash", label });
-    await emit("parzi://run-event", { kind: "tool_call", session: sid, id: "st0", name: "session.spawn", label: "Starting a subagent: Time autosize on long drafts" });
-    await emit("parzi://run-event", { kind: "tool_result", session: sid, id: "st0", name: "session.spawn", ok: true, ms: 120 });
-    await sub("Writing a 300-line draft", 1);
-    setTimeout(() => void sub("Running the timing script", 2), 1600);
-    setTimeout(() => void emit("parzi://run-event", { kind: "done", session: "s1a" }), 5200);
-    await step("st1", "Read", "Reading ui/src/lib/autosize.ts", 500);
-    await emit("parzi://run-event", { kind: "reasoning", session: sid, text: "It measures scrollHeight on every input event, so long drafts force a layout per key." });
-    await step("st2", "Grep", "Searching for autosize callers", 700);
-    await step("st3", "Bash", "Running npm test", 1400);
-    await burst("Found it: the measure runs on every key.");
-    await step("st4", "Edit", "Editing ui/src/lib/autosize.ts", 600);
-    await burst(reply);
+    await think("The stall is per key, so start where the composer measures itself.");
+    await say(first);
+    const files = ["ui/src/lib/Omnibar.svelte", "ui/src/lib/autosize.ts", "ui/src/lib/md.ts", "ui/src/lib/liveBlocks.ts", "ui/src/App.svelte"];
+    for (const [n, f] of files.entries()) await step(`r${n}`, "Read", { file_path: `D:/Repos/Parzi/${f}` }, 350, `// ${f}`);
+    await think("It measures scrollHeight on every input event, so long drafts force a layout per key.");
+    await step("g1", "Grep", { pattern: "autosize(" }, 600, "ui/src/lib/Omnibar.svelte:212");
+    await step("b1", "Bash", { command: "npm test" }, 1400, ["tests 221", "pass 221", "fail 0"].join("\n"));
+    await say("Found it: the measure runs on every key.");
+    await step("e1", "Edit", { file_path: "D:/Repos/Parzi/ui/src/lib/autosize.ts" }, 600);
+    await step("e2", "Edit", { file_path: "D:/Repos/Parzi/ui/src/lib/Omnibar.svelte" }, 500);
+    await say(reply);
     await new Promise((r) => setTimeout(r, 300));
-    (globalThis as { __mockSaved?: unknown[] }).__mockSaved = [
-      { kind: "user", text: "Why does typing stall?" },
-      { kind: "assistant", text: first, done: true },
-      { kind: "tool_call", id: "st1", name: "Read", label: "Reading ui/src/lib/autosize.ts", args: {} },
-      { kind: "tool_result", id: "st1", name: "Read", ok: true, ms: 300, output: "" },
-      { kind: "assistant", text: reply, done: true },
-    ];
+    (globalThis as { __mockSaved?: unknown[] }).__mockSaved = saved;
     await emit("parzi://run-event", { kind: "done", session: sid });
   })();
 }

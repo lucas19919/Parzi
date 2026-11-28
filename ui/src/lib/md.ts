@@ -272,6 +272,8 @@ const PLAIN_FENCES = new Set([
 ]);
 
 let streamingFence = false;
+/** Lines a code block shows before it folds; theme.css sizes .clamped to the same. */
+const CLAMP_LINES = 20;
 
 function linkWholeLine(l: string): string {
   // Fenced code stays code: only a line that is exactly one vault/file/SHA/
@@ -310,9 +312,12 @@ md.renderer.rules.fence = (tokens, idx) => {
   }
   const label = PLAIN_FENCES.has(lang.toLowerCase()) ? "" : `<span class="code-lang">${safeLang}</span>`;
   const cols = isDiagram(lang, body) ? Math.max(...lines.map((l) => [...l].length)) : 0;
-  const long = !cols && !streamingFence && lines.length > 30;
+  // A long block is clamped while it is written too, showing its newest
+  // lines, so it stops growing at the clamp instead of jumping back up to it
+  // when its fence closes.
+  const long = !cols && lines.length > CLAMP_LINES;
   const expand = long ? `<button class="code-expand" data-expand data-label="Show all ${lines.length} lines">Show all ${lines.length} lines</button>` : "";
-  const cls = cols ? " diagram" : long ? " clamped" : "";
+  const cls = cols ? " diagram" : long ? (streamingFence ? " clamped writing" : " clamped") : "";
   const style = cols ? ` style="--cols:${cols}"` : "";
   return `<div class="codeblock${cls}"${style}><div class="code-tools">${label}<button data-copy>Copy</button></div><pre><code>${code}</code></pre>${expand}</div>`;
 };
@@ -532,7 +537,7 @@ export function mdHtml(src: string, _rev: unknown, cache = true): string {
 export { splitSegments } from "./segments";
 
 /** True while the fence being rendered is still open: it stays plain and
- *  unclamped until it closes, so it neither recolours nor collapses mid-way. */
+ *  plain until it closes, so it does not recolour mid-way. */
 function fenceOpen(text: string): boolean {
   let mark = "";
   for (const line of text.split("\n")) {

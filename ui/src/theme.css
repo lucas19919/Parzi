@@ -236,6 +236,24 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
 @keyframes breathe { 50% { opacity: 0.45; } }
 @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes shine { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+/* Words for work under way (a step, thinking): light runs through them and
+   nothing else moves. */
+.shine {
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--text) 50%, var(--muted) 60%, var(--muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shine 1.8s linear infinite;
+}
+/* A block that folds open by its height, in CSS: <div class="fold"><div
+   class="fold-in">…</div></div>, with .open on the outer one. A turn that
+   moves on mid-fold leaves nothing half-done. */
+.fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur) var(--ease-out); }
+.fold.open { grid-template-rows: 1fr; }
+.fold-in { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .shine { background: none; color: var(--muted); animation: breathe 1.6s ease-in-out infinite; }
+}
 
 .tin {
   background: var(--fill); border: 1px solid transparent; border-radius: var(--radius);
@@ -486,7 +504,11 @@ a:hover { color: var(--link); }
 .dl-line { display: inline-block; min-width: 100%; }
 .dl-add { background: color-mix(in srgb, var(--ok) 14%, transparent); }
 .dl-del { background: color-mix(in srgb, var(--bad) 14%, transparent); }
-.codeblock.clamped pre { max-height: 420px; position: relative; }
+/* 20 lines (CLAMP_LINES in md.ts) and the padding: a block folds at the
+   height it would reach, so it never grows past it and jumps back. */
+.codeblock.clamped pre { max-height: calc(var(--mono-size) * 1.55 * 20 + var(--space) * 6); position: relative; }
+/* A long block still being written shows its newest lines. */
+.codeblock.writing pre { display: flex; flex-direction: column-reverse; }
 
 .codeblock.diagram { container-type: inline-size; }
 .codeblock.diagram pre, .codeblock.diagram code {

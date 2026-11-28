@@ -123,13 +123,13 @@ export interface AgentRequest {
 }
 
 export type UiEvent =
-  | { kind: "text"; session: string; text: string }
+  | { kind: "text"; session: string; text: string; upto?: number }
   | { kind: "reasoning"; session: string; text: string }
   | { kind: "todo"; session: string; todo: unknown }
   | { kind: "refreshed"; session: string }
   | { kind: "artifact"; session: string; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-  | { kind: "tool_call"; session: string; id: string; name: string; label: string }
-  | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
+  | { kind: "tool_call"; session: string; id: string; name: string; label: string; args?: unknown }
+  | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number; output?: string }
   | { kind: "notice"; session: string; text: string }
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
